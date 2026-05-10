@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "meeting-agent.fullname" . }}-frontend
+  labels:
+    {{- include "meeting-agent.labels" . | nindent 4 }}
+    component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: {{ .Values.frontend.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "meeting-agent.selectorLabels" . | nindent 4 }}
+    component: frontend

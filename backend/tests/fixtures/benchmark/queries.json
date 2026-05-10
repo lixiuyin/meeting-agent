@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "queries": [
+    {
+      "id": "q01",
+      "query": "What were the blockers raised in the Q1 planning meeting?",
+      "category": "factual"
+    },
+    {
+      "id": "q02",
+      "query": "Who attended the Q1 planning meeting?",
+      "category": "factual"
+    },
+    {
+      "id": "q03",
+      "query": "What is the customer retention rate mentioned in the meeting?",
+      "category": "factual"
+    },
+    {
+      "id": "q04",
+      "query": "When is the next Q1 planning meeting scheduled?",
+      "category": "factual"
+    },
+    {
+      "id": "q05",
+      "query": "What are the top engineering priorities for Q1?",
+      "category": "factual"
+    },
+    {
+      "id": "q06",
+      "query": "Summarize the Q1 planning meeting.",
+      "category": "summary"
+    },
+    {
+      "id": "q07",
+      "query": "Give me an overview of the engineering roadmap.",
+      "category": "summary"
+    },
+    {
+      "id": "q08",
+      "query": "What were the main discussion points in the meeting?",
+      "category": "summary"
+    },
+    {
+      "id": "q09",
+      "query": "Describe the action items from the Q1 planning session.",
+      "category": "summary"
+    },
+    {
+      "id": "q10",
+      "query": "What is the status of the mobile app launch?",
+      "category": "summary"
+    },
+    {
+      "id": "q11",
+      "query": "Find information about the database migration from PDF files.",
+      "category": "filter",
+      "file_types": ["pdf"]
+    },
+    {
+      "id": "q12",
+      "query": "What does the presentation say about blockers?",
+      "category": "filter",
+      "file_types": ["pptx"]
+    },
+    {
+      "id": "q13",
+      "query": "Summarize meetings from January 2026.",
+      "category": "filter",
+      "date_from": "2026-01-01",
+      "date_to": "2026-01-31"
+    },
+    {
+      "id": "q14",
+      "query": "List action items from PDF documents in January.",
+      "category": "filter",
+      "file_types": ["pdf"],
+      "date_from": "2026-01-01",
+      "date_to": "2026-01-31"
+    },
+    {
+      "id": "q15",
+      "query": "What are the engineering priorities from presentations?",
+      "category": "filter",
+      "file_types": ["pptx"]
+    },
+    {
+      "id": "q16",
+      "query": "hi",
+      "category": "casual"
+    },
+    {
+      "id": "q17",
+      "query": "hello",
+      "category": "casual"
+    },
+    {
+      "id": "q18",
+      "query": "thanks",
+      "category": "casual"
+    },
+    {
+      "id": "q19",
+      "query": "ok",
+      "category": "casual"
+    },
+    {
+      "id": "q20",
+      "query": "good morning",
+      "category": "casual"
+    }
+  ]
+}

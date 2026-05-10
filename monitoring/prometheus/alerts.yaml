@@ -1,0 +1,131 @@
+groups:
+  - name: meeting-agent-slo
+    rules:
+      - alert: ChatLatencyP95High
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{path="/api/v1/chat"}[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Chat endpoint latency P95 above 5s"
+          description: "The 95th percentile latency for the chat endpoint has been above 5 seconds for 10 minutes."
+
+      - alert: ErrorRateHigh
+        expr: rate(http_request_duration_seconds_count{status=~"5.."}[5m]) / rate(http_request_duration_seconds_count[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate above 5%"
+          description: "More than 5% of requests are returning 5xx errors."
+
+      - alert: CircuitBreakerOpen
+        expr: traffic_controller_breaker_state == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM circuit breaker is open"
+          description: "The traffic controller circuit breaker is open. LLM requests are being rejected."
+
+      - alert: DBPoolExhausted
+        expr: rate(sqlite_busy_timeouts_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SQLite busy timeouts detected"
+          description: "SQLite is experiencing busy timeouts, indicating connection pool pressure."
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes > 3.5e9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backend memory usage above 3.5 GB"
+          description: "The backend process is using more than 3.5 GB of resident memory."
+
+      - alert: DiskUsageHigh
+        expr: |
+          (node_filesystem_size_bytes{mountpoint="/data"} -
+           node_filesystem_free_bytes{mountpoint="/data"}) /
+           node_filesystem_size_bytes{mountpoint="/data"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PVC disk usage above 80%"
+          description: "The persistent volume mounted at /data is more than 80% full. Consider scaling or cleaning up old data."
+
+      - alert: WALCheckpointFailing
+        expr: rate(wal_checkpoint_failures_total[1h]) > 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAL checkpoint failures detected"
+          description: "SQLite WAL checkpoint has been failing for 2+ hours. The .db-wal file may be growing. Check for long-held read transactions."
+
+      - alert: LongReadTransaction
+        expr: histogram_quantile(0.99, rate(db_read_tx_age_seconds_bucket[5m])) > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Long read transactions detected"
+          description: "99th percentile read transaction duration exceeds 30s. These block WAL truncation and cause disk bloat."
+
+      - alert: BackgroundTaskStuck
+        expr: bg_task_age_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Background task stuck for >5 minutes"
+          description: "A background task has been running for over 300 seconds. It may be hung or leaking."
+
+      - alert: VectorStoreOrphansGrowing
+        expr: rate(vectorstore_orphan_total[1h]) > 10
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector store orphans accumulating"
+          description: "Vector store is accumulating orphaned vectors faster than cleanup can process. Check Chroma connectivity."
+
+      - alert: SupervisedTaskExhausted
+        expr: rate(background_task_failures_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Background task max_restarts exhausted"
+          description: "A supervised background task has exceeded its max_restarts and stopped permanently. Service is degraded until restart."
+
+      - alert: PerEndpointP99LatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[2m])) by (le, path)) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Endpoint {{ $labels.path }} P99 latency above 5s"
+          description: "The 99th percentile latency for endpoint {{ $labels.path }} has been above 5 seconds for 2 minutes."
+
+      - alert: SSEHeartbeatStalled
+        expr: rate(meeting_agent_sse_heartbeat_stalled_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSE heartbeat stalls detected"
+          description: "The streaming event bus is experiencing heartbeat stalls. Clients may perceive the stream as frozen."
+
+      - alert: VectorDeletionDeadLetters
+        expr: increase(pending_vector_deletions_dead_letter_total[30m]) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector deletion dead letters detected"
+          description: "Some vector deletions have exceeded the max retry attempts and been moved to dead letter. Check Chroma/vector store connectivity and manual cleanup may be needed."

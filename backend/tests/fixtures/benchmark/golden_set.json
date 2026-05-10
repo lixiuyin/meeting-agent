@@ -1,0 +1,105 @@
+{
+  "version": 2,
+  "items": [
+    {
+      "id": "q001",
+      "query": "What were the blockers raised in the Q1 planning meeting?",
+      "source": "hand-written",
+      "fixture_file": "sample.pdf",
+      "expected_chunks": ["chunk_1"],
+      "expected_files": ["sample.pdf"],
+      "expected_answer": "Three blockers were raised: (1) the mobile app is waiting on final UI designs from the design team (ETA January 22); (2) the database migration is blocked by the need for additional cloud storage budget approval; (3) the analytics pipeline depends on a third-party API that has not yet provided production access.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q002",
+      "query": "Who attended the Q1 planning meeting?",
+      "source": "hand-written",
+      "fixture_file": "sample.pdf",
+      "expected_chunks": ["chunk_0"],
+      "expected_files": ["sample.pdf"],
+      "expected_answer": "The attendees were Alice, Bob, Carol, and Dave.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q003",
+      "query": "What is the customer retention rate mentioned in the meeting notes?",
+      "source": "hand-written",
+      "fixture_file": "sample.pdf",
+      "expected_chunks": ["chunk_0"],
+      "expected_files": ["sample.pdf"],
+      "expected_answer": "Customer retention reached an all-time high of 94%.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q004",
+      "query": "What are the top engineering priorities for Q1?",
+      "source": "hand-written",
+      "fixture_file": "sample.pdf",
+      "expected_chunks": ["chunk_1"],
+      "expected_files": ["sample.pdf"],
+      "expected_answer": "The top engineering priorities are: (1) launch the new mobile app by February 15; (2) migrate the legacy database to PostgreSQL by March 1; (3) implement the new analytics pipeline.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q005",
+      "query": "List the action items from the Q1 planning meeting.",
+      "source": "hand-written",
+      "fixture_file": "sample.pdf",
+      "expected_chunks": ["chunk_1"],
+      "expected_files": ["sample.pdf"],
+      "expected_answer": "The action items are: (1) Alice to follow up with the design team for UI deliverables; (2) Bob to submit a budget request for cloud storage by January 18; (3) Carol to contact the third-party API provider and request production credentials.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q006",
+      "query": "What does the presentation say about revenue and retention?",
+      "source": "hand-written",
+      "fixture_file": "sample.pptx",
+      "expected_chunks": ["chunk_0"],
+      "expected_files": ["sample.pptx"],
+      "expected_answer": "Revenue was up 12% quarter-over-quarter, and customer retention was at 94%.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q007",
+      "query": "What are the engineering priorities from the presentation?",
+      "source": "hand-written",
+      "fixture_file": "sample.pptx",
+      "expected_chunks": ["chunk_1"],
+      "expected_files": ["sample.pptx"],
+      "expected_answer": "The engineering priorities are: (1) launch mobile app by Feb 15; (2) migrate to PostgreSQL by Mar 1; (3) implement analytics pipeline.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q008",
+      "query": "Who is responsible for submitting the budget request?",
+      "source": "hand-written",
+      "fixture_file": "sample.pptx",
+      "expected_chunks": ["chunk_2"],
+      "expected_files": ["sample.pptx"],
+      "expected_answer": "Bob is responsible for submitting the budget request.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q009",
+      "query": "What blockers are mentioned in the presentation?",
+      "source": "hand-written",
+      "fixture_file": "sample.pptx",
+      "expected_chunks": ["chunk_2"],
+      "expected_files": ["sample.pptx"],
+      "expected_answer": "The blockers mentioned are: (1) mobile app waiting on UI designs; (2) database migration blocked by budget; (3) analytics pipeline needs API access.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q010",
+      "query": "When is the mobile app supposed to launch?",
+      "source": "hand-written",
+      "fixture_file": "sample.pptx",
+      "expected_chunks": ["chunk_1"],
+      "expected_files": ["sample.pptx"],
+      "expected_answer": "The mobile app is supposed to launch by February 15.",
+      "difficulty": "easy"
+    }
+  ]
+}

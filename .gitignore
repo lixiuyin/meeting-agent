@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+coverage.xml
+.coverage
+*.cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+*.log
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Ruff
+.ruff_cache/
+
+# Runtime data
+data/
+backend/benchmark-results/
+backend/.coverage
+benchmark-results/
+
+# Vector DB
+chroma_db/
+
+# SQLite WAL files
+*.db-wal
+*.db-shm
+
+# Environment
+# backend/.env
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.npm
+
+# TypeScript
+frontend/tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# MCP
+.mcp.json
+
+# Meeting files (user uploads + per-meeting asset directories).
+# Use anchored paths (leading "/") so we only ignore root-level data/
+# and materials/ (large media payloads from local testing) and don't
+# clobber frontend/src/components/materials/ source files.
+/data/
+/materials/
+backend/data/
+backend/materials/
+
+# Internal working docs
+backend/plans.txt
+
+# Claude
+.claude/
+
+# Playwright
+.playwright-mcp/
+
+# Archon
+.archon/
+
+# Benchmarks
+.benchmarks/
+frontend/.benchmarks
+backend/tests/fixtures/Dataset
+
+# Test results
+frontend/test-results
+
+# Deliverables
+deliverables/
+
+# .env
+.env
+
+# node_modules
+node_modules/

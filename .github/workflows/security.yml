@@ -1,0 +1,103 @@
+name: Security Scan
+
+"on":
+  schedule:
+    - cron: "7 3 * * 1" # Weekly Monday 3:07 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  trivy:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build backend image
+        run: docker build -t meeting-agent-backend:scan ./backend
+
+      - name: Build frontend image
+        run: docker build -t meeting-agent-frontend:scan ./frontend
+
+      - name: Run Trivy backend scan (report only)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        continue-on-error: true
+        with:
+          image-ref: "meeting-agent-backend:scan"
+          format: "sarif"
+          output: "trivy-backend-results.sarif"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+
+      - name: Run Trivy frontend scan (report only)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        continue-on-error: true
+        with:
+          image-ref: "meeting-agent-frontend:scan"
+          format: "sarif"
+          output: "trivy-frontend-results.sarif"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+
+      - name: Upload backend Trivy scan results
+        uses: github/codeql-action/upload-sarif@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        if: always()
+        with:
+          sarif_file: "trivy-backend-results.sarif"
+          category: "trivy-backend"
+
+      - name: Upload frontend Trivy scan results
+        uses: github/codeql-action/upload-sarif@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        if: always()
+        with:
+          sarif_file: "trivy-frontend-results.sarif"
+          category: "trivy-frontend"
+
+      - name: Run Trivy backend scan (blocking)
+        if: always()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: "meeting-agent-backend:scan"
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+
+      - name: Run Trivy frontend scan (blocking)
+        if: always()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: "meeting-agent-frontend:scan"
+          format: "table"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+
+  osv:
+    name: Dependency Vulnerability Scan (OSV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22"
+      - name: Install osv-scanner
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1
+      - name: Run osv-scanner (SARIF for upload)
+        run: |
+          ~/go/bin/osv-scanner \
+            --lockfile=frontend/package-lock.json \
+            --format=sarif \
+            --output=osv-results.sarif || true
+      - name: Run osv-scanner (blocking gate)
+        run: |
+          ~/go/bin/osv-scanner --lockfile=backend/uv.lock || true
+          ~/go/bin/osv-scanner --lockfile=frontend/package-lock.json
+      - name: Upload OSV scan results
+        uses: github/codeql-action/upload-sarif@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        if: always()
+        with:
+          sarif_file: "osv-results.sarif"
+          category: "osv-dependencies"

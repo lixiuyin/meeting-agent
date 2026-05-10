@@ -1,0 +1,231 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meeting-agent"
+version = "0.1.0"
+description = "Meeting recording/PDF/PPT agent with RAG-based Q&A"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    {name = "Meeting Agent Contributors"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0,<0.120.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "slowapi>=0.1.9",
+    # Validation & config
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.6.0,<3.0.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+    # LangChain core
+    "langchain-core>=1.3.0,<2.0.0",
+    "langchain-text-splitters>=1.0.0,<2.0.0",
+    # LangChain LLM integrations
+    "langchain-openai>=1.0.0,<2.0.0",
+    "langchain-anthropic>=1.0.0,<2.0.0",
+    "langchain-ollama>=1.0.0,<2.0.0",
+    "langchain-community>=0.4.0,<0.5.0",
+    # LangChain embedding integrations
+    # Note: langchain-huggingface lives in the [huggingface] optional extra — it
+    # pulls sentence-transformers → torch (~3 GB with CUDA on Linux), which is
+    # unnecessary for cloud embeddings (OpenAI / Cohere / Jina / etc).
+    # langchain-google-vertexai lives in the [google] optional extra — it pulls
+    # the google-cloud-aiplatform stack (~150 MB), only needed when
+    # EMBEDDING_BINDING=google.
+    "langchain-cohere>=0.5.0,<0.6.0",
+    # Vector store
+    "langchain-chroma>=1.0.0,<2.0.0",
+    # Caching
+    "cachetools>=5.3",
+    # Web search
+    "duckduckgo-search>=7.0",
+    # httpx[socks] pulls socksio so SOCKS proxies (ALL_PROXY=socks5://…) work.
+    "httpx[socks]>=0.27.0",
+    # Retry logic
+    "tenacity>=8.0.0",
+    # MCP server
+    "mcp>=1.0.0,<2.0.0",
+    # Document parsing
+    "PyMuPDF>=1.24.0",
+    "python-pptx>=1.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    # ASR — transcription is provided exclusively by AssemblyAI (via httpx).
+    # Local Whisper/VibeVoice were removed to keep the Docker image lean and
+    # to avoid pulling PyTorch + CUDA as transitive deps.
+    # Image processing
+    "pillow>=10.4.0",
+    # Token counting
+    "tiktoken>=0.12.0",
+    # Hybrid search uses SQLite FTS5 (no rank-bm25 dep).
+    # Skill matching cosine similarity
+    "scikit-learn>=1.3.0",
+    # Prometheus metrics
+    "prometheus-client>=0.20.0",
+    # Encryption for idempotency response storage
+    "cryptography>=43.0",
+    # raganything (multimodal RAG bridge) lives in the [multimodal] optional
+    # extra — it pulls lightrag + several multimodal model stacks. Needed only
+    # when RAGANYTHING_ENABLED=true.
+]
+
+[project.optional-dependencies]
+# HuggingFace-based providers: HF embeddings (`EMBEDDING_BINDING=huggingface`) +
+# BGE local reranker (`RERANKER_BINDING=bge`). Both pull sentence-transformers
+# → torch, which on Linux x86_64 defaults to the ~3 GB CUDA build. Install only
+# when you actually need local HF models:
+#     uv sync --extra huggingface
+huggingface = [
+    "langchain-huggingface>=1.0.0,<2.0.0",
+]
+# Google Vertex AI embeddings (`EMBEDDING_BINDING=google`). Pulls the
+# google-cloud-aiplatform stack (~150 MB). Install with:
+#     uv sync --extra google
+google = [
+    "langchain-google-vertexai>=2.0.0,<3.0.0",
+]
+# Multimodal RAG via RAGAnything bridge. Pulls lightrag + multimodal model
+# deps. Only needed when RAGANYTHING_ENABLED=true. Install with:
+#     uv sync --extra multimodal
+multimodal = [
+    "raganything>=1.2.0",
+]
+# Everything bundled for fully-local (no cloud API) deployment
+local = [
+    "langchain-huggingface>=1.0.0,<2.0.0",
+    "llama-cpp-python>=0.3.0; platform_system!='Darwin' or platform_machine!='arm64'",
+]
+# Observability integrations (optional)
+observability = [
+    "sentry-sdk[fastapi]>=2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.45b0",
+    "opentelemetry-instrumentation-httpx>=0.45b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+]
+
+# ---------------------------------------------------------------------------
+# Dependency groups (uv / pip 7.3+) — dev tools installed by `uv sync`
+# ---------------------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-benchmark>=4.0",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.130.0",
+    "httpx>=0.27",
+    "ruff>=0.8",
+    "bandit[toml]>=1.8",
+    "alembic>=1.14.0",
+    "mutmut>=3.2.0",
+    "pyright>=1.1.408",
+    "pytest-randomly>=3.16",
+]
+
+[project.urls]
+Repository = "https://github.com/lixiuyin/meeting-agent"
+Issues = "https://github.com/lixiuyin/meeting-agent/issues"
+
+# ---------------------------------------------------------------------------
+# hatchling build — tells uv / hatch where the package source lives
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ---------------------------------------------------------------------------
+# uv — pre-built wheel index for llama-cpp-python (avoids C++ compilation)
+# Applies when installing the [local] extra: uv sync --extra local
+# ---------------------------------------------------------------------------
+[tool.uv]
+extra-index-url = ["https://abetlen.github.io/llama-cpp-python/whl/cpu"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/api/routers/*.py" = ["B008"]
+"src/models/schemas/_common.py" = ["UP046"]
+"src/services/asr/speakers.py" = ["E501", "F841", "RUF002", "RUF003"]
+"src/services/chain/_judge_prompts.py" = ["E501", "RUF002", "RUF003"]
+"src/services/llm/_prompts.py" = ["E501", "RUF002", "RUF003"]
+"tests/**/*.py" = ["E501", "F841", "RUF002", "RUF003", "RUF059", "SIM117"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]
+markers = [
+    "unit: fast unit tests",
+    "integration: integration tests with database/network boundaries",
+    "benchmark: slow component micro-benchmarks (run with -m benchmark)",
+    "property: property-based tests",
+    "chaos: failure injection and resilience scenarios",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*", "scripts/*"]
+
+[tool.coverage.report]
+# Threshold reflects current real coverage (~64%); raise as suite expands.
+fail_under = 60
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "except ImportError:",
+]
+
+# ---------------------------------------------------------------------------
+# Bandit security scanner
+# ---------------------------------------------------------------------------
+[tool.bandit]
+# B608 (hardcoded_sql_expressions) is a false positive throughout this
+# codebase: f-string interpolation is used only for SQL identifiers
+# (table names, column lists, "?,?,?" placeholder strings), while every
+# user-supplied value is bound via ``?`` parameters. Reviewing each call
+# site confirmed this pattern; rather than annotating ~50 lines with
+# ``# nosec B608``, we skip the rule project-wide.
+skips = ["B608"]
+exclude_dirs = ["tests", ".venv", "data"]
+
+# ---------------------------------------------------------------------------
+# Mutation testing (mutmut)
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["src/"]
+tests_dir = ["tests"]
+runner = "python -m pytest -q"
+max_stack_depth = 8
+# Progressive mutation score target: start at 5%, ratchet to 20%.
+# Enforce in CI via: mutmut run --mutation-score=5

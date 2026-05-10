@@ -1,0 +1,60 @@
+{{- include "meeting-agent.validateSingleReplica" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "meeting-agent.fullname" . }}-backend
+  labels:
+    {{- include "meeting-agent.labels" . | nindent 4 }}
+    component: backend
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "meeting-agent.selectorLabels" . | nindent 6 }}
+      component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "meeting-agent.selectorLabels" . | nindent 8 }}
+        component: backend
+    spec:
+      securityContext:
+        {{- toYaml .Values.backend.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "meeting-agent.fullname" . }}-config
+            - secretRef:
+                name: {{ .Values.backend.secretName }}
+            {{- range .Values.backend.extraEnvFromSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.backend.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.backend.readinessProbe | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.backend.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "meeting-agent.fullname" . }}-data
+        {{- else }}
+          emptyDir: {}
+        {{- end }}

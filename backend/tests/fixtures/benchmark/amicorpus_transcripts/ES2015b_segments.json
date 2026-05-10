@@ -1,0 +1,1058 @@
+[
+  {
+    "start": 9.06,
+    "end": 25.04,
+    "text": "This is some great facial expressions, Poppy.",
+    "speaker": "A"
+  },
+  {
+    "start": 25.55,
+    "end": 30.15,
+    "text": "Okay. Just remember, it's not real. Yeah, it's okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 31.76,
+    "end": 34.62,
+    "text": "Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 44.04,
+    "end": 97.13,
+    "text": "You're gonna be the first one on PowerPoint, so I'll just like hook you up with that. Am I starting now? Anytime. Oh, sorry. Okay. Um, all right, welcome back from— to the second meeting, and I hope you had a productive last 30 minutes. Um, and I'll be taking minutes on this one, and, um, being hooked up to the PowerPoint for this meeting isn't very necessary for myself because it'll be more about what you guys are bringing to the meeting today. So the first presentation we'll be looking at is Poppy's presentation. And so, sorry, so take it away, Poppy.",
+    "speaker": "B"
+  },
+  {
+    "start": 97.74,
+    "end": 100.19,
+    "text": "Okay, um, do I need to—",
+    "speaker": "C"
+  },
+  {
+    "start": 100.97,
+    "end": 105.6,
+    "text": "it's, it's plugged in, so, um, Function F8.",
+    "speaker": "B"
+  },
+  {
+    "start": 107.0,
+    "end": 109.55,
+    "text": "Function F8. Sorry about this, guys. No problem.",
+    "speaker": "C"
+  },
+  {
+    "start": 110.79,
+    "end": 113.08,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 113.97,
+    "end": 117.65,
+    "text": "That's it all. Right.",
+    "speaker": "C"
+  },
+  {
+    "start": 118.4,
+    "end": 119.29,
+    "text": "Slide show.",
+    "speaker": "A"
+  },
+  {
+    "start": 122.32,
+    "end": 302.49,
+    "text": "Okay. I'll take this time just to apologize. I only received my emails later on. Because I was too busy carried away doing my own thing, which is obviously not a very good part of a team working thing, but there we go. I'm sure it's fine. So I was looking at how we're going to go about the working design and what we actually need to do and what the remote control needs to do. And it needs to allow a person to have a portable device so they can control the television from wherever they are. They don't need to actually manually to touch the television set. So it gives them much more flexibility and it allows them to be where they want to be. From— on the functional side of things, we found out that from a previous meeting, we decided that there are certain points that will make our product unique. One is the visibility in the dark, which was Genevieve's idea. So we need to think about how we could bring this in, um, technically. And we could use illuminated buttons, which we're all familiar with when we're using a mobile phone or something familiar, automatically lights up at first touch. Or we could use fluorescent materials which would just take in the light during the day, and then as soon as they go off, they would glow in the dark. Also, we could use an alarm. So if we lost the remote control, perhaps there could be a button on the television set itself which you could press, and then alarm from the handset would sound where it was, hopefully in the room, maybe behind a cushion or somewhere. So that would work. Um, oh, go back there. Another thing I think we missed out on, on the last meeting, was the fact that we should consider the environmental impact of our design. Um, from previous research as I've carried out on other projects, we've learned about smart materials where, um, specific alloys of metals have a shape memory, so they can be heated and, um, and cooled and they change the shape of the metal. So for example, a screw that's holding something together could expand and it would force all the components apart. So, um, the benefits of this for our product would be that when it came to the end of its product life, if it was heated, everything would spring apart. So all the individual components could be easily separated, and then some could be reused, some could be recycled. And I think that would be very important for for products now, especially because there's so much responsibility for all the companies who are coming up with new designs, because we all know that our resources are being limited and you have to be very environmentally conscious. Right.",
+    "speaker": "C"
+  },
+  {
+    "start": 302.84,
+    "end": 321.27,
+    "text": "One question. Yeah. This self-destructible metal, it allows for recycling materials so that someone could have this product for as long as they felt felt that they wanted it, and then once they contributed, then that company can break down the part— the parts better.",
+    "speaker": "B"
+  },
+  {
+    "start": 321.69,
+    "end": 375.4,
+    "text": "Yeah, they would, um, you would make the, the product as you normally would, apart from the, the bits that hold it all together would be made out of the shape memory alloy, and that's the part that would allow all the other parts to be separated at the end. I mean, the user would return the product to the company because it's the product's responsibility to get rid of what they've made, and then the company could then just use— make use of this shape memory alloys to split up the components and then either reuse some bits and other bits which are obviously going to wear out with time or not usable, they might be like be able to put into scrap metal or something like the case. If it's scratched or something, you wouldn't want to reuse it, but you might be able to melt it down and reuse it again somewhere else.",
+    "speaker": "C"
+  },
+  {
+    "start": 375.74,
+    "end": 381.28,
+    "text": "Would we be the company that would break down these, or, uh, metals, or would we—",
+    "speaker": "B"
+  },
+  {
+    "start": 381.65,
+    "end": 398.12,
+    "text": "we could probably employ a side company or something to do that for us, but it would be our responsibility to get that done and to dispose of the products that we made for a certain percentage at least. Not every— not 100% of everything we produce.",
+    "speaker": "C"
+  },
+  {
+    "start": 398.59,
+    "end": 420.56,
+    "text": "Okay, this sounds like a really great idea. One thing we have to consider is our 100%, um, turnover goal that we have for our financial sector. Um, so we'll have to investigate how much that will cost us, cost the company, because it sounds very labor-intensive. You would have to hire a number of people and it might be more expensive.",
+    "speaker": "B"
+  },
+  {
+    "start": 420.9,
+    "end": 447.95,
+    "text": "Well, the fact of the shape memory alloys is that they, they don't need to be manually, um, deconstructed. Like, you don't have to individually, um, unscrew all the screws because of this, their properties, a smart material. All you need is just the heat, so they self-destruct themselves. All right, let's have to investigate the financial implications, you know, high quality machinery and very specific machinery.",
+    "speaker": "C"
+  },
+  {
+    "start": 448.02,
+    "end": 453.55,
+    "text": "But all right, I like the environmental approach. We'll have to see if that can meet our financial goals as well.",
+    "speaker": "B"
+  },
+  {
+    "start": 454.73,
+    "end": 464.46,
+    "text": "Also, there are some components. This will be how it will actually work, but I haven't put this plan together yet.",
+    "speaker": "C"
+  },
+  {
+    "start": 464.79,
+    "end": 466.63,
+    "text": "I'm sorry, could you—",
+    "speaker": "B"
+  },
+  {
+    "start": 467.09,
+    "end": 475.27,
+    "text": "sorry, those were, um, this would actually show the circuit diagram. Although I haven't come up with the final circuit yet.",
+    "speaker": "C"
+  },
+  {
+    "start": 475.74,
+    "end": 475.91,
+    "text": "Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 476.3,
+    "end": 478.21,
+    "text": "So I just would put all those components in.",
+    "speaker": "C"
+  },
+  {
+    "start": 478.74,
+    "end": 483.05,
+    "text": "So those are what will construct the remote?",
+    "speaker": "B"
+  },
+  {
+    "start": 483.44,
+    "end": 498.11,
+    "text": "Yeah, it just shows what sort of energy source— it could be a battery, like rechargeable probably— and yeah, well, how the infrared will actually be sent through the chip to be received by the chip on the television set itself.",
+    "speaker": "C"
+  },
+  {
+    "start": 498.29,
+    "end": 498.77,
+    "text": "All right, great.",
+    "speaker": "B"
+  },
+  {
+    "start": 499.0,
+    "end": 503.42,
+    "text": "Okay. So, now is it F8 again to escape?",
+    "speaker": "C"
+  },
+  {
+    "start": 503.64,
+    "end": 506.63,
+    "text": "There we go.",
+    "speaker": "B"
+  },
+  {
+    "start": 507.99,
+    "end": 508.17,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 508.79,
+    "end": 509.75,
+    "text": "All right. Thank you very much.",
+    "speaker": "B"
+  },
+  {
+    "start": 511.26,
+    "end": 511.44,
+    "text": "Thank you.",
+    "speaker": "C"
+  },
+  {
+    "start": 511.58,
+    "end": 518.75,
+    "text": "And the next presenter will be Tara. There you go, Tara.",
+    "speaker": "B"
+  },
+  {
+    "start": 518.79,
+    "end": 560.32,
+    "text": "Thanks. Do you think— is it function 8?",
+    "speaker": "A"
+  },
+  {
+    "start": 560.46,
+    "end": 560.62,
+    "text": "Yeah?",
+    "speaker": "D"
+  },
+  {
+    "start": 560.88,
+    "end": 561.2,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 561.45,
+    "end": 561.78,
+    "text": "Function F8.",
+    "speaker": "D"
+  },
+  {
+    "start": 561.85,
+    "end": 563.01,
+    "text": "Function F8, sorry.",
+    "speaker": "B"
+  },
+  {
+    "start": 563.29,
+    "end": 569.09,
+    "text": "All right. OK. That looks right.",
+    "speaker": "A"
+  },
+  {
+    "start": 569.36,
+    "end": 569.66,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 580.39,
+    "end": 627.65,
+    "text": "OK. I'm the user interface designer. The technical function design of the apparatus is the effect the apparatus should have. In this case, it's the function of the remote control, which is to send messaging to the television, television set. By taking inspiration from other similar designs, we will try and come up with an original trendy remote control which is sellable internationally. There are two functional design options: a multifunctional remote control which can be used for several entertainment devices, and a single-function remote control used specifically for the television.",
+    "speaker": "A"
+  },
+  {
+    "start": 628.25,
+    "end": 630.02,
+    "text": "Sorry, was that last one multifunctional and—?",
+    "speaker": "D"
+  },
+  {
+    "start": 630.28,
+    "end": 713.91,
+    "text": "Sorry, a single function just for the television itself. Oh, I see. Yeah. Multifunction controls can be difficult to use as the multitude of buttons can be confusing. A single function remote control is simpler to use, but it means you have to have other remote controls for your other entertainment devices. Devices. I think that a single-function remote control would be preferable because it's easier to use, it'd be more compatible with the range of television sets, making it more internationally sellable. Um, it will make an original design more obtainable as we have less functional necessities to include in the design, and it would be more profitable as it would be more simplistic and less functions would have to be included. So it would be cheaper to make and probably more sellable just because it's more compatible with a wider range of devices. Does anyone have any questions?",
+    "speaker": "A"
+  },
+  {
+    "start": 719.08,
+    "end": 725.31,
+    "text": "So as far as we know, a single-function television remote control is usable internationally.",
+    "speaker": "D"
+  },
+  {
+    "start": 726.37,
+    "end": 744.49,
+    "text": "Well, it's just that when we're creating it, we have to make it compatible with different brands of devices, right? And it would be easier to make it compatible with just different brands of television devices rather than all the others. Yeah, right.",
+    "speaker": "A"
+  },
+  {
+    "start": 744.6,
+    "end": 754.85,
+    "text": "Other entertainment devices. Does everyone agree with this? Does anyone object and find the multifunctional might be a better way to go?",
+    "speaker": "B"
+  },
+  {
+    "start": 755.66,
+    "end": 777.87,
+    "text": "Um, I was just wondering about the What Genevieve said before about having some hidden controls, like having the outer casing, that would probably— well, what you said before about it being a more profitable, simplistic design, I suppose having that would complicate it a lot more and limit the design in your view.",
+    "speaker": "C"
+  },
+  {
+    "start": 779.0,
+    "end": 789.5,
+    "text": "I think I agree with the single design thing for now, because we're trying to do so much that if we're trying to make a unique, user-friendly da da da, and it's also multifunctional. We're going to go over budget for one thing.",
+    "speaker": "D"
+  },
+  {
+    "start": 789.61,
+    "end": 805.45,
+    "text": "Yeah, that's true. Yeah, yeah. And with this, we'll have more room in the budget probably to make a more original design. Yeah, we'll have more money to go into the design side of it. Okay, all right, sounds great.",
+    "speaker": "A"
+  },
+  {
+    "start": 805.77,
+    "end": 811.21,
+    "text": "Okay, all right, well, um, are you ready for your presentation, Jenna?",
+    "speaker": "B"
+  },
+  {
+    "start": 811.27,
+    "end": 811.89,
+    "text": "Yes. Yes, I am.",
+    "speaker": "D"
+  },
+  {
+    "start": 813.17,
+    "end": 815.93,
+    "text": "Fabulous. Except you're not hooked up to the—",
+    "speaker": "B"
+  },
+  {
+    "start": 815.93,
+    "end": 818.98,
+    "text": "I'm not hooked up, but other than that, completely ready. Great.",
+    "speaker": "D"
+  },
+  {
+    "start": 819.64,
+    "end": 820.05,
+    "text": "Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 838.52,
+    "end": 839.37,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 845.96,
+    "end": 848.48,
+    "text": "Oh, I just lost my microphone.",
+    "speaker": "D"
+  },
+  {
+    "start": 848.53,
+    "end": 849.7,
+    "text": "All right. No problem.",
+    "speaker": "B"
+  },
+  {
+    "start": 849.75,
+    "end": 949.58,
+    "text": "We can— Okay, so I'll be discussing the functional requirements of this remote control. And I'll give you a little briefing on what that means exactly. If you'll remember from the email we got before our very first kickoff meeting with the coffee machine, The functional requirements of that was to produce hot coffee quickly. What I'll be talking about now is the equivalent for remote control. Basically, what needs and desires are to be fulfilled. I've done some marketing research, a lot of interviews with remote control users, and some internet research. I'll show you my findings. Oh, and firstly, I wanted to remind you about our company motto and purpose. We believe in providing international market with fast, fashionable products. Hence our motto, \"We put the fashion in electronics.\" So I think that should be our priority here. And we should also be looking to trends in clothing and interior design, not just in electronic fashion, so that it's something that fits in the household. I'm sorry, what was that last thing that you just said? We should be looking towards trends in both clothing and interior design. Any trends that are going on in the public, even media, you know, who's famous, what TV shows are being watched. To influence our remote control. Okay, so the findings. 75% of users of remote controls find them ugly, which is quite a significant number. The other 25% didn't specify if they love them or found them, you know, neutral. 80% of users would spend more money when a remote control would look fancy. Current remote controls do not match well the operating behavior of the user.",
+    "speaker": "D"
+  },
+  {
+    "start": 949.74,
+    "end": 957.27,
+    "text": "I'm sorry, the 80% of users would spend more money when a remote control would look fancy. You mean that they would spend more money on a fancy-looking remote control?",
+    "speaker": "B"
+  },
+  {
+    "start": 957.32,
+    "end": 985.81,
+    "text": "Yeah, they're willing to spend money on a remote control with personality as opposed to your basic oval, black, all same size button remote control. So it is something that people care about. It's not ignored in the household. 75% of remote control users said that they zap a lot, zapping meaning they go through channels a lot. They're thumb masters. And 50% of users say they only use 10% of the buttons. That's a very small amount. I thought that was interesting.",
+    "speaker": "D"
+  },
+  {
+    "start": 986.02,
+    "end": 1004.51,
+    "text": "All right, so it might be very appealing if we have very concise buttons. And another thing with lots of surfing, we probably have to work on something that could be a lot more durable, because I find with channel changers that a lot of the numbers get rubbed down if they're printed on the button.",
+    "speaker": "B"
+  },
+  {
+    "start": 1005.42,
+    "end": 1072.17,
+    "text": "Actually, to go with that, I'm going to give you some statistics on the relevancy of each of the buttons, how much they're used, and how important the users find them. The power button, obviously, in an hour is only used once. Hopefully the person's not turning on and off the TV. But the relevance of that button is 9 out of 10. People want to be able to turn on the TV with the remote control, as opposed to standing up and turning on the television set. Channel selection is used 168 times on average per hour. That's a huge amount. The most important button. So obviously, when commercials come on, they're changing it. So as you said, we want a durable button that's not going to run down. Relevance of that button, our users found, was 10 out of 10. Ditto for volume selection. It's a 10 out of 10. And it's used, on average, 4 times an hour. Not as much as channel selection, but still significant. Audio settings is used, on average, 0.8 times an hour. Relevance is 2. Screen settings, which means brightness, color, et cetera, 0.5 times an hour. And relevance of 1.5. We're getting to specific statistics here. Teletext. Now I'm not too clear on what that is. I don't know if you can help me. Flipping pages.",
+    "speaker": "D"
+  },
+  {
+    "start": 1074.37,
+    "end": 1077.46,
+    "text": "It's, um, like the news, but like—",
+    "speaker": "C"
+  },
+  {
+    "start": 1077.57,
+    "end": 1084.22,
+    "text": "it has— TV has like information, has information on holidays, the news, entertainment.",
+    "speaker": "A"
+  },
+  {
+    "start": 1084.34,
+    "end": 1085.55,
+    "text": "So like a running banner?",
+    "speaker": "D"
+  },
+  {
+    "start": 1085.84,
+    "end": 1089.55,
+    "text": "No, it's a button that you press and then you, uh, like a menu pops up.",
+    "speaker": "B"
+  },
+  {
+    "start": 1089.61,
+    "end": 1096.94,
+    "text": "I haven't used it before, but And you have page numbers for the menu, and you press the page numbers with your remote.",
+    "speaker": "A"
+  },
+  {
+    "start": 1097.71,
+    "end": 1099.71,
+    "text": "Very basic internet service.",
+    "speaker": "C"
+  },
+  {
+    "start": 1099.79,
+    "end": 1101.73,
+    "text": "Very basic internet, yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1102.05,
+    "end": 1103.27,
+    "text": "Like tells you the weather and—",
+    "speaker": "D"
+  },
+  {
+    "start": 1103.32,
+    "end": 1108.3,
+    "text": "Yeah, but you have no interaction back with it. Like the internet, you can send emails. Yeah. Right.",
+    "speaker": "A"
+  },
+  {
+    "start": 1108.46,
+    "end": 1115.39,
+    "text": "It's just information there on television timetables, what's on now, what's on next on every channel.",
+    "speaker": "C"
+  },
+  {
+    "start": 1115.84,
+    "end": 1116.04,
+    "text": "All right.",
+    "speaker": "A"
+  },
+  {
+    "start": 1116.15,
+    "end": 1132.09,
+    "text": "Well, I guess I'm not with it because I wasn't— but it's being used 14 times an hour. And has a high relevance of 6.5, so it looks like something that we're going to want to do some research on and include on our remote control. Channel settings, 0.01 times an hour, relevance of 3. Channel settings.",
+    "speaker": "D"
+  },
+  {
+    "start": 1133.81,
+    "end": 1144.95,
+    "text": "Probably just tuning in the channels. Sorry, changing the channels? Tuning them in at the very start, you know, if you get a new TV set, you tune in all the channels. Oh, okay. Yeah, yeah, yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1145.53,
+    "end": 1179.87,
+    "text": "OK. So it's not used very often, but people still find it relevant. OK. Biggest frustrations of the people that we interviewed— remote controls are often lost somewhere. So that was already discussed by Poppy, how we can have an alarm system so that people can find it. Takes too much time to learn how to use a new remote control. So it should be very user-friendly. People know what to do very quickly. Remote controls are bad for RSI. Ah, is that what it is? People with arthritis?",
+    "speaker": "D"
+  },
+  {
+    "start": 1179.99,
+    "end": 1180.75,
+    "text": "That's rather sad.",
+    "speaker": "B"
+  },
+  {
+    "start": 1183.83,
+    "end": 1249.88,
+    "text": "Maybe our— yeah, yeah, designers can look into that. Buttons that don't require, you know, very firm pushing if they respond. But we'll have to also avoid, you know, buttons responding to the slightest touch as well. That's a problem. Problem. Yeah. Okay. Did you guys get that one down? Yep. Okay. Here are some ideas for you. A large percentage of the public would pay for voice recognition on the remote controls. So I'll show you some numbers here. So the youngest age group, 15 to 25, 91.2% said that they would pay extra money to have voice voice recognition included on the remote control. You can see that number decreases a bit with the old— interestingly enough, 25 to 35 is the lowest amount that are willing to pay extra. So I guess we're going to have to figure out what age group we're targeting and if voice recognition is something we want to look into and if we have the budget for it. If we are targeting young adults, it looks like something that would pay off, seeing as 90%— over 90% would pay for it.",
+    "speaker": "D"
+  },
+  {
+    "start": 1251.98,
+    "end": 1272.2,
+    "text": "I agree with, um, if we're targeting young adults, then it would be something we should look into, um, financially and functionally. Um, and especially if we are, um, trying to be trendy, go with fashions, things like that. Um, ages like from 35 to 65, which show lower numbers, probably won't be as concerned.",
+    "speaker": "B"
+  },
+  {
+    "start": 1274.03,
+    "end": 1285.26,
+    "text": "So that's a whole other field of research. I don't know if it'd be— if you'd still have a remote or if you're talking to your television and saying, \"Change channel.\" and depending on how many members you have in a household. So it may be too complicated for us, but it's something to keep in mind anyway.",
+    "speaker": "D"
+  },
+  {
+    "start": 1285.58,
+    "end": 1291.32,
+    "text": "And something that might further complicate it is that the TV makes noise itself. Right. I wonder if it would have—",
+    "speaker": "B"
+  },
+  {
+    "start": 1291.98,
+    "end": 1295.87,
+    "text": "and if there was conversation in the room at the same time. Yeah.",
+    "speaker": "C"
+  },
+  {
+    "start": 1296.48,
+    "end": 1332.23,
+    "text": "Although in theory it doesn't tend to be when you're watching television, but yeah, it'd be very difficult to get the specific Yeah, if we're looking for a simplistic design, if we need to decide if that is our intention, is a simplistic design, because if it is, then I think voice activated. It looks like— Yeah, and that would sort of negate the whole remote control thing, because if people can activate the television with their voice, then they won't be using a remote. They won't be talking into a remote.",
+    "speaker": "B"
+  },
+  {
+    "start": 1332.42,
+    "end": 1334.14,
+    "text": "I'm sure.",
+    "speaker": "C"
+  },
+  {
+    "start": 1335.42,
+    "end": 1360.06,
+    "text": "OK, and the last thing here was an LCD screen. So voice recognition might be a little too extreme for us, not practical. An LCD screen, though, might be something that you can shift through pages, kind of the way this PowerPoint is working, so that you don't have so many buttons to deal with. I don't know what an LCD screen is. Oh, sorry, just a screen, like a computer screen. Or like— Mobile phone. Yeah, like an alarm clock. You'd have an LCD versus just a—",
+    "speaker": "D"
+  },
+  {
+    "start": 1360.78,
+    "end": 1362.55,
+    "text": "What would you put on the screen?",
+    "speaker": "C"
+  },
+  {
+    "start": 1362.95,
+    "end": 1364.71,
+    "text": "I have no idea still. I'm sorry.",
+    "speaker": "B"
+  },
+  {
+    "start": 1364.86,
+    "end": 1380.25,
+    "text": "Oh, just like an electronic screen as opposed to just buttons. There'd be like a little— Oh, on the remote? Yeah. Okay. Like on the top of a cell phone, the little LCD screen. Um, no, that's— I don't know what exactly we put on there. I guess the channel that you're on, what the volume setting could—",
+    "speaker": "D"
+  },
+  {
+    "start": 1380.44,
+    "end": 1388.72,
+    "text": "it would be good if it had the actual program that was on and what was next, but that would probably be like linked to with the teletext. Yeah, that would be good.",
+    "speaker": "A"
+  },
+  {
+    "start": 1388.77,
+    "end": 1396.77,
+    "text": "Yeah, teletext at your fingers without having to access that through the television.",
+    "speaker": "C"
+  },
+  {
+    "start": 1396.98,
+    "end": 1400.41,
+    "text": "It might be quite expensive to do that though.",
+    "speaker": "A"
+  },
+  {
+    "start": 1403.36,
+    "end": 1406.98,
+    "text": "Yeah, it could be, right?",
+    "speaker": "B"
+  },
+  {
+    "start": 1407.78,
+    "end": 1454.06,
+    "text": "I guess that's something we can all take back to our respective research. And finally, Whoops. My personal preferences and thoughts. I think our priority really should be unique design. We want something that people want in their home. Every remote control looks the same, so in my opinion, it should be user-friendly and unique. So the other stuff might be a little too gadgety for some people. Myself, voice recognition kind of scares me off. So if we're aiming to make this an international, universally accepted product, And for all— the other thing is age market. I mean, if we wanted to concentrate on 15- to 25-year-olds, we could go with the fancy stuff. But if we want to make €50 million and have everyone want this remote control, we should maybe stick to the basics.",
+    "speaker": "D"
+  },
+  {
+    "start": 1454.78,
+    "end": 1466.82,
+    "text": "And we should keep in mind that 15- to 25-year-olds might not have €25 to spend on a remote control. Like, their priorities might not be a fancy remote control when they're just starting out.",
+    "speaker": "A"
+  },
+  {
+    "start": 1467.45,
+    "end": 1481.68,
+    "text": "Right, and we had to keep in mind the reliability of our research. I mean, you know, a 16-year-old boy would say, \"Yeah, I'd pay extra for Boris Karajan,\" until they realize that's 3 months allowance. Yeah. So I think the older generations we should be catering to a bit more.",
+    "speaker": "D"
+  },
+  {
+    "start": 1482.35,
+    "end": 1485.81,
+    "text": "Early 20s. Yeah. That's the kind of age group.",
+    "speaker": "A"
+  },
+  {
+    "start": 1485.88,
+    "end": 1500.48,
+    "text": "And if one of the largest or most complained about thing is that it takes so long to get to know how to use a remote control, I'm sure that something like an LCD screen or remote control would be just furthering that problem.",
+    "speaker": "B"
+  },
+  {
+    "start": 1500.56,
+    "end": 1502.4,
+    "text": "Yeah, complicated. Yes.",
+    "speaker": "C"
+  },
+  {
+    "start": 1502.82,
+    "end": 1566.68,
+    "text": "Complicating things even a bit. Alright. Okay, that's it for the market research. Okay. Before we go into more discussion on what we want this design to look like, I've received some information from the management that will affect some of our decisions. For one thing, because having controls with DVD, VCR, that sort of thing would really complicate the design of the remote control. We've decided not to include them and make it a specific television function, which is good as we've sort of decided that we would like to go with that anyway for many reasons. We have that decision sort of made for us. Another thing that might affect other decisions is that the management feels that teletext is outdated because more people are using the internet now. And so we won't concern ourselves with navigating the teletext option.",
+    "speaker": "B"
+  },
+  {
+    "start": 1567.43,
+    "end": 1572.16,
+    "text": "Can I just interrupt? Yep. Would you like to plug in— Yeah, maybe we can do the—",
+    "speaker": "C"
+  },
+  {
+    "start": 1572.57,
+    "end": 1572.95,
+    "text": "Okay, sure.",
+    "speaker": "D"
+  },
+  {
+    "start": 1573.05,
+    "end": 1574.83,
+    "text": "Have you got a PowerPoint on— Yeah, I do.",
+    "speaker": "C"
+  },
+  {
+    "start": 1574.89,
+    "end": 1576.99,
+    "text": "I'm looking at— Looking at it right now.",
+    "speaker": "B"
+  },
+  {
+    "start": 1578.59,
+    "end": 1579.95,
+    "text": "There you go. Thank you.",
+    "speaker": "A"
+  },
+  {
+    "start": 1582.99,
+    "end": 1588.68,
+    "text": "Oh, come back, screen.",
+    "speaker": "D"
+  },
+  {
+    "start": 1594.03,
+    "end": 1600.89,
+    "text": "Was the management suggesting use of the internet rather than teletext or just avoiding both altogether?",
+    "speaker": "C"
+  },
+  {
+    "start": 1603.38,
+    "end": 1673.2,
+    "text": "Well, I mean, we don't have the resources or possibility of using the internet with the remote control, but they were just pretty much saying that the teletext would not be used. All right, and another thing, this is for the design, the design of the product, is that we want to create more of a sense that people know that this is from our company. So all the remote controls must have our— will incorporate our logo and color in, in some way. Yeah, so perhaps our logo on the bottom or wherever you feel like it would look good. It doesn't have to be the color of our, of our company, but another thing is that We need to— we probably would have to have that color and logo decided upon. I'm assuming that we already have one, but for the purposes of this meeting, I wasn't offered a type of logo or color. So if that could be somewhere on the design so we can be recognizable.",
+    "speaker": "B"
+  },
+  {
+    "start": 1673.66,
+    "end": 1675.98,
+    "text": "It's probably our RR in yellow. Yes.",
+    "speaker": "A"
+  },
+  {
+    "start": 1676.85,
+    "end": 1716.63,
+    "text": "Yeah, the little RR yellow thing. Okay, Real Reaction. Okay. Yes, those are the changes. So now we need to discuss and come to a decision on our remote control functions of how this is going to be. I'm just going to look at my notes for a second. We have to decide on a target group and the functions of the remote control. We already know that it'll just be for the television, it won't have teletext, but we could discuss those other options that you brought up, Genevieve.",
+    "speaker": "B"
+  },
+  {
+    "start": 1719.96,
+    "end": 1722.25,
+    "text": "So are we going to write off the LCD option?",
+    "speaker": "D"
+  },
+  {
+    "start": 1723.57,
+    "end": 1726.4,
+    "text": "Is that how most people feel about that? Yeah. Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 1726.88,
+    "end": 1731.57,
+    "text": "So no LCD, no teletext, and no voice recognition.",
+    "speaker": "D"
+  },
+  {
+    "start": 1731.93,
+    "end": 1739.05,
+    "text": "I think it would be annoying though if— I don't use teletext that much, but if it was on your TV, you'd want to be able to use it.",
+    "speaker": "A"
+  },
+  {
+    "start": 1740.01,
+    "end": 1754.08,
+    "text": "But another thing is that if we're reaching an international crowd, I know for one that in North America there is no such thing as teletext, so it would be really superfluous. All right. I don't know about other countries besides the UK. Do you know if anywhere else has it?",
+    "speaker": "B"
+  },
+  {
+    "start": 1754.45,
+    "end": 1761.72,
+    "text": "I don't know. More research required, I think. Was it a management decision that we have to—",
+    "speaker": "C"
+  },
+  {
+    "start": 1761.72,
+    "end": 1769.53,
+    "text": "It was a management decision, so it's pretty much out of our hands at this point. OK. OK. So I guess we're looking at something rather simple.",
+    "speaker": "B"
+  },
+  {
+    "start": 1772.01,
+    "end": 1775.39,
+    "text": "Well, I guess just from my findings, it looks like we want to minimize buttons.",
+    "speaker": "D"
+  },
+  {
+    "start": 1776.0,
+    "end": 1776.78,
+    "text": "OK.",
+    "speaker": "C"
+  },
+  {
+    "start": 1779.59,
+    "end": 1780.01,
+    "text": "Minimal.",
+    "speaker": "B"
+  },
+  {
+    "start": 1782.07,
+    "end": 1785.12,
+    "text": "And what was the word they used? Findability is important.",
+    "speaker": "D"
+  },
+  {
+    "start": 1788.65,
+    "end": 1802.36,
+    "text": "Yeah, I think we should definitely go ahead with the alarm system idea that you had, because I'm sure that could be inexpensive because we could use the same kind of infrared. Yeah, the same signaling, the same signal through that, and it could just like make a little beeping noise.",
+    "speaker": "B"
+  },
+  {
+    "start": 1802.4,
+    "end": 1806.21,
+    "text": "It's not that expensive to do, just the same as the mobile phone, like just a—",
+    "speaker": "C"
+  },
+  {
+    "start": 1806.58,
+    "end": 1809.23,
+    "text": "yeah, buzz or something. Yeah, okay, I like that idea.",
+    "speaker": "B"
+  },
+  {
+    "start": 1810.1,
+    "end": 1819.84,
+    "text": "Would you be able to, um, put the little device anywhere? Because isn't there a remote control for all TVs?",
+    "speaker": "A"
+  },
+  {
+    "start": 1821.38,
+    "end": 1830.63,
+    "text": "So if you mean the, the link between them, yeah, the button was actually on there.",
+    "speaker": "C"
+  },
+  {
+    "start": 1831.24,
+    "end": 1832.53,
+    "text": "Minor detail there.",
+    "speaker": "B"
+  },
+  {
+    "start": 1832.61,
+    "end": 1836.3,
+    "text": "Like, could all do one TV set, so it would need to be something like maybe—",
+    "speaker": "A"
+  },
+  {
+    "start": 1836.4,
+    "end": 1847.53,
+    "text": "yeah, yeah, maybe something adhesive that you could like stick onto the back of any set that would be, um, yeah, not very obtrusive. Obviously something small that's— yeah, that's a good point.",
+    "speaker": "C"
+  },
+  {
+    "start": 1847.61,
+    "end": 1856.75,
+    "text": "Yeah, then it wouldn't— it probably wouldn't be able to use— it would be able to use the same reception on the remote control, I guess, but the actual device would have to have its own infrared signal.",
+    "speaker": "B"
+  },
+  {
+    "start": 1856.85,
+    "end": 1859.3,
+    "text": "Okay. Would it need a battery then?",
+    "speaker": "A"
+  },
+  {
+    "start": 1860.62,
+    "end": 1863.76,
+    "text": "Maybe, um, probably.",
+    "speaker": "B"
+  },
+  {
+    "start": 1863.81,
+    "end": 1865.35,
+    "text": "Probably. I mean, unless it—",
+    "speaker": "C"
+  },
+  {
+    "start": 1865.35,
+    "end": 1868.33,
+    "text": "that's your department, you'll have to sort that out.",
+    "speaker": "B"
+  },
+  {
+    "start": 1868.7,
+    "end": 1883.85,
+    "text": "Okay, um, unless some way it could have some universal connection to like the socket, the same socket that the TV's supplied from. I mean, the power for the TV. So yeah, you'll have to—",
+    "speaker": "C"
+  },
+  {
+    "start": 1883.93,
+    "end": 1900.3,
+    "text": "yeah, do some research on that. All right, great. Um, all right, and I'm sure that, um, um, the glow-in-the-dark fluorescent whatever system. Um, so go ahead. Is everyone interested in that?",
+    "speaker": "B"
+  },
+  {
+    "start": 1900.37,
+    "end": 1909.91,
+    "text": "Buttons? I, I like the light-up suggestion. I think that would be better because, you know, the way fluorescent lights lose their brightness after a certain time.",
+    "speaker": "A"
+  },
+  {
+    "start": 1910.08,
+    "end": 1912.29,
+    "text": "Yeah, yeah. Or it doesn't—",
+    "speaker": "B"
+  },
+  {
+    "start": 1912.32,
+    "end": 1925.48,
+    "text": "it could, it could be a tactile thing as well, um, right? If we're minimizing buttons, we might be able to make them actually larger and there's something on it, you know, like a raised up arrow, down arrow for for volume, and I don't know what we could do for channels.",
+    "speaker": "D"
+  },
+  {
+    "start": 1927.59,
+    "end": 1932.35,
+    "text": "Well, just the numbers could be embossed, couldn't it? Like raised? The numbers themselves?",
+    "speaker": "A"
+  },
+  {
+    "start": 1932.44,
+    "end": 1935.72,
+    "text": "Yeah, could be raised. But then the up button and down button for the channel changing.",
+    "speaker": "D"
+  },
+  {
+    "start": 1936.38,
+    "end": 1939.94,
+    "text": "Just little arrows that you could feel, maybe?",
+    "speaker": "A"
+  },
+  {
+    "start": 1940.83,
+    "end": 1944.63,
+    "text": "I just thought that it might be sucking more battery power if it is a light-up.",
+    "speaker": "D"
+  },
+  {
+    "start": 1944.68,
+    "end": 1947.04,
+    "text": "I'm not sure. Yeah, that's true.",
+    "speaker": "A"
+  },
+  {
+    "start": 1947.72,
+    "end": 1968.15,
+    "text": "Also, Heather, you mentioned before how it should be accessible to everybody. Yeah. So big buttons made for people who are visually impaired, glow-in-the-dark or light up, won't make any difference anyway. So like you said, tactile might be better because it'll be more available to everybody. Could we somehow—",
+    "speaker": "C"
+  },
+  {
+    "start": 1968.39,
+    "end": 1991.99,
+    "text": "we could maybe possibly— sorry— incorporate them both so that Yeah, the buttons could maybe be in the shape of the numbers themselves and be made out of some sort of glow-in-the-dark material. I don't think that glow-in-the-dark material, um, like the actual soft plastic, um, costs that much more than other colors. Not these days.",
+    "speaker": "B"
+  },
+  {
+    "start": 1992.1,
+    "end": 1992.83,
+    "text": "I mean, it's quite easy.",
+    "speaker": "C"
+  },
+  {
+    "start": 1992.97,
+    "end": 2013.78,
+    "text": "Yeah, I guess the other option, referring to the battery thing, is you know how cell phones will light up for 15 seconds or something when you're Yeah, and then it goes— so if you're like changing the volume during a movie, I know I'm thinking of most people watching a movie, you turn all the lights off, right? Yeah, you don't turn on the lights to turn it down because there's suddenly an explosion and it's going to wake up the baby. So if you touch the button, it kind of reactivates it, it lights up.",
+    "speaker": "D"
+  },
+  {
+    "start": 2013.83,
+    "end": 2017.88,
+    "text": "Yeah, yeah, that's a good idea. On self-timer, so self-timed lighting.",
+    "speaker": "C"
+  },
+  {
+    "start": 2018.25,
+    "end": 2033.12,
+    "text": "Yeah, all right, we have 5 minutes left, um, for the meeting, but I think we should discuss this light subject a little bit more before we close. What was— I missed the last moment reading that. What were you talking about with the lighting up?",
+    "speaker": "B"
+  },
+  {
+    "start": 2033.65,
+    "end": 2046.78,
+    "text": "Oh, just if it was kind of the same way that a cell— you know how a cell phone will light up for about 10-15 seconds when you touch a button after having not touched it for a while? Yeah. If instead of a constant light up on the remote control, if it lights up for 10 seconds when it's touched again.",
+    "speaker": "D"
+  },
+  {
+    "start": 2047.63,
+    "end": 2049.47,
+    "text": "So it could be any button that would be pressed?",
+    "speaker": "B"
+  },
+  {
+    "start": 2049.53,
+    "end": 2058.92,
+    "text": "Yeah, yeah, you touch it and it just kind of lights up a bit and it gives a faint glow. So if you have all the lights off in your living room. Yeah, you'll temporarily see it because usually not fiddling around with it for more than, what, 10 seconds?",
+    "speaker": "D"
+  },
+  {
+    "start": 2058.96,
+    "end": 2068.35,
+    "text": "Yeah. Okay, so yeah, that's probably feasible. So do you think that we should do the lighting up thing and the glow-in-the-dark thing and the shape of the numbers? You have to kind of decide what we're gonna do with this.",
+    "speaker": "B"
+  },
+  {
+    "start": 2068.71,
+    "end": 2080.16,
+    "text": "I think the shape of the numbers is a really good idea. Yeah, and I think that's unique as well. I mean, I haven't seen that. And as you're saying, like, numbers can wear off if they're just sort of— yeah, painted.",
+    "speaker": "C"
+  },
+  {
+    "start": 2080.63,
+    "end": 2117.27,
+    "text": "And it could maybe give us— if it's that softer rubber material, it'll be better for people with else— no, what's it called? RSI? What was it? Oh yeah, yeah, yeah, instead of like hard buttons. Okay. Did we want to go for the glow-in-the-dark look, or did we want to go for the lighting up instantly? Like, should we do both, or we can have one or the other? Because it might— for design purposes, I mean, the lighting up thing might be better because glow-in-the-dark material has a funny kind of color, and it might not go with different, like, faceplates that we might come up with.",
+    "speaker": "B"
+  },
+  {
+    "start": 2117.42,
+    "end": 2123.98,
+    "text": "Exactly. It might be perceived as tacky, glow-in-the-dark. It's kind of like '80s neon style. Yeah. Whereas we could be trendy and fashionable.",
+    "speaker": "D"
+  },
+  {
+    "start": 2124.06,
+    "end": 2138.28,
+    "text": "Yeah, there are now, like, loads of a huge range of different colors that it could light up in as well, which could, like, link in with the company colors. Like, it could be blue or green or yellow or— right. Like, we're just limited with the just ordinary phosphorescent, so All right, so we've decided on lighting up.",
+    "speaker": "C"
+  },
+  {
+    "start": 2139.47,
+    "end": 2148.12,
+    "text": "I was thinking though, if it was glow-in-the-dark, you could put the, um, real reaction symbol as glow-in-the-dark and then it would be constantly advertised.",
+    "speaker": "A"
+  },
+  {
+    "start": 2148.38,
+    "end": 2153.45,
+    "text": "Yeah, every time that it lit up, that could light up as well.",
+    "speaker": "C"
+  },
+  {
+    "start": 2153.76,
+    "end": 2183.62,
+    "text": "Oh, but with the same thing, I mean, if you touch the button and then it could be— okay, it could be lit up as well. Is Are you okay with that? Yeah. Okay, cool. All right, so I think that completes most of our more practical decisions, and now it's up to designing and making sure that this can be feasible. And do you have any— Oh, sorry. Do you have anything to say?",
+    "speaker": "B"
+  },
+  {
+    "start": 2183.94,
+    "end": 2200.22,
+    "text": "Yeah, well, I was just going to throw out there the thought about personalizing the remote control. 'Cause you mentioned faceplates, so I don't know if there's something that, you know, like 5 different faceplates. I don't know if this will start making it more complicated, but it could increase the popularity of the remote.",
+    "speaker": "D"
+  },
+  {
+    "start": 2200.66,
+    "end": 2204.35,
+    "text": "Okay, like you can have changeable mobile cases?",
+    "speaker": "C"
+  },
+  {
+    "start": 2204.45,
+    "end": 2205.21,
+    "text": "Like an iPad or something?",
+    "speaker": "B"
+  },
+  {
+    "start": 2205.34,
+    "end": 2207.9,
+    "text": "Exactly, like an iPad. Okay. Exactly, or like mobile.",
+    "speaker": "D"
+  },
+  {
+    "start": 2208.02,
+    "end": 2208.95,
+    "text": "Like a cell phone, yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 2209.07,
+    "end": 2212.88,
+    "text": "And I don't know if we'd want to go with TV show themes or something, like a Bart Simpson faceplate.",
+    "speaker": "D"
+  },
+  {
+    "start": 2212.93,
+    "end": 2218.62,
+    "text": "Yeah, and then that would be— more profitable, like as a sideline to the remote design.",
+    "speaker": "A"
+  },
+  {
+    "start": 2219.12,
+    "end": 2223.36,
+    "text": "Yeah, exactly. You could start off with 3, and if, if we hit it big, then we can add someone.",
+    "speaker": "D"
+  },
+  {
+    "start": 2223.93,
+    "end": 2224.99,
+    "text": "Yeah, that's good. Great.",
+    "speaker": "C"
+  },
+  {
+    "start": 2225.07,
+    "end": 2234.48,
+    "text": "Yeah, I think that we should incorporate that interchangeable, and because that wouldn't be very expensive at all. You just get one mold. Yeah, throw some plastic in it, you know.",
+    "speaker": "B"
+  },
+  {
+    "start": 2235.97,
+    "end": 2247.11,
+    "text": "And also possible, I mean, we could gain out of that by advertising certain TV shows or Oh yeah, that might be problematic with, um, copyright issues.",
+    "speaker": "C"
+  },
+  {
+    "start": 2247.22,
+    "end": 2249.89,
+    "text": "Yeah, so if we— if it takes off, then we'll—",
+    "speaker": "B"
+  },
+  {
+    "start": 2250.02,
+    "end": 2256.6,
+    "text": "yeah, we could try that out. Um, the environmental factor, we didn't bring that up again, right?",
+    "speaker": "C"
+  },
+  {
+    "start": 2256.82,
+    "end": 2275.91,
+    "text": "We'll have to do more research. Like, as of yet, that has nothing to do with, um, the way to look. Yeah. Um, does it need to be reached? Do we need to reach a decision on that right now? Um, because we need to investigate the financial implications. Okay. Okay. Does it need to be decided on now, or should we—",
+    "speaker": "B"
+  },
+  {
+    "start": 2275.91,
+    "end": 2278.18,
+    "text": "I think we could probably leave that till later on. Okay.",
+    "speaker": "C"
+  },
+  {
+    "start": 2279.62,
+    "end": 2289.19,
+    "text": "Good. All right then. Anyone else have anything more to say before we close? No. No? All right, well, let's have lunch and we'll discuss this later.",
+    "speaker": "B"
+  },
+  {
+    "start": 2289.65,
+    "end": 2290.41,
+    "text": "Okay. All right? Thank you.",
+    "speaker": "C"
+  }
+]

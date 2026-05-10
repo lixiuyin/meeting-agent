@@ -1,0 +1,161 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a90d9', 'lineColor': '#4a90d9', 'secondaryColor': '#16213e', 'tertiaryColor': '#0f3460', 'noteBkgColor': '#1a1a2e', 'noteTextColor': '#e0e0e0'}}}%%
+
+graph TB
+    subgraph CLIENTS["Clients"]
+        direction LR
+        BROWSER["React SPA<br/>Vite + Ant Design"]
+        MCP_CLIENT["MCP Client<br/>FastMCP (stdio)"]
+    end
+
+    subgraph FRONTEND["Frontend — React 19 + TypeScript"]
+        direction TB
+        PAGES["Pages<br/>Home · Generate · Materials<br/>Memory · History · Settings"]
+        COMP["Components<br/>Chat · Upload · EntityGraph<br/>SessionDetail · TranscriptViewer"]
+        HOOKS["Hooks<br/>useChatStream · useSessionManager<br/>useMeetingDetail · useMemoryActions"]
+        APIC["API Client<br/>client-chat · client-meetings<br/>client-sessions · client-memory<br/>client-settings"]
+        PAGES --- COMP --- HOOKS --- APIC
+    end
+
+    subgraph INGRESS["Ingress"]
+        NGINX["Nginx<br/>:8307 → /api/ → backend:8000"]
+    end
+
+    subgraph MIDDLEWARE["Middleware"]
+        REQID["RequestIdMiddleware"]
+        RATE["Rate Limiter<br/>slowapi"]
+        CORS["CORS"]
+        SEC["Security Headers"]
+    end
+
+    subgraph API["API Layer — FastAPI /api/v1"]
+        direction TB
+        R_CHAT["chat.py<br/>POST /chat · /stream · /search"]
+        R_MTG["meetings/<br/>14 sub-routers + file_download<br/>upload · CRUD · files<br/>signed-url · assets<br/>speakers · timeline"]
+        R_SESS["sessions.py<br/>messages · cite<br/>summarize · summaries<br/>search"]
+        R_MEM["memory.py<br/>CRUD · batch<br/>search · decay<br/>entities · merge"]
+        R_SET["settings.py<br/>get · put · bindings<br/>rebuild-vectors · multimodal<br/>reload-config"]
+        R_WS["websocket.py<br/>WS /ws"]
+        R_HEALTH["health.py<br/>/health + live/ready<br/>traffic · index-consistency"]
+        R_FILE["file_download.py<br/>/meetings/.../files<br/>token + assets"]
+        R_SKILLS["skills.py<br/>POST create · list<br/>match · invoke"]
+    end
+
+    subgraph SERVICES["Service Layer — Business Logic"]
+        direction TB
+
+        CHAIN["chain/<br/>RAG Pipeline Orchestrator<br/>PipelineContext → Steps"]
+        RAG["rag/<br/>Vector + BM25 Hybrid<br/>Chunking · Indexing · Retrieval"]
+        PROC["processor/<br/>File Processing Pipeline<br/>transcribe → parse → index"]
+        LLM["llm/<br/>Multi-Provider LLM<br/>OpenAI · Anthropic · Ollama · ..."]
+        EMB["embedder.py<br/>Multi-Provider Embeddings"]
+        MEM_SVC["memory/<br/>Long-term Memory<br/>Decay · Consolidation · Search"]
+        KG["knowledge_graph/<br/>Entity · Relation<br/>Extraction · Graph"]
+        ASR["asr/<br/>AssemblyAI<br/>Speaker Diarization"]
+        PARSER["parser/<br/>Cascade Parsing<br/>local · marker · mineru · paddle"]
+        SEARCH["search.py<br/>Web Search<br/>DDG · SerpAPI · Tavily"]
+        STREAM["stream_bus.py<br/>SSE Event Bus"]
+        TRAFFIC["traffic_control.py<br/>Rate Limit · Circuit Breaker"]
+    end
+
+    subgraph DATA["Data Layer"]
+        direction LR
+        SQLITE["SQLite (WAL)<br/>meetings · sessions<br/>messages · memories<br/>entities · relations<br/>bm25_index · fts5"]
+        CHROMA["ChromaDB<br/>Vector Store<br/>meeting chunks<br/>memory embeddings"]
+        FS["File System<br/>uploads/<br/>audio · video · docs"]
+    end
+
+    subgraph INFRA["Infrastructure"]
+        direction LR
+        CONFIG["Config<br/>main.yaml → .env → env vars<br/>Three-layer Override"]
+        DBLAYER["Database Layer<br/>Thread-local Pool<br/>Read/Write Split"]
+        OBSERV["Observability<br/>Prometheus · Loki<br/>Structured Logging"]
+    end
+
+    subgraph DEPLOY["Deployment"]
+        direction LR
+        DOCKER["Docker Compose<br/>backend:7008 · frontend:8307"]
+        HELM["Helm Chart<br/>K8s Deployment + HPA"]
+        CI["GitHub Actions CI<br/>Lint · Type Check · Test<br/>Security Scan"]
+    end
+
+    %% Client connections
+    BROWSER --> NGINX
+    MCP_CLIENT --> MCP_SVC
+
+    %% Frontend to Ingress
+    APIC -->|HTTP / SSE / WS| NGINX
+
+    %% Ingress to Middleware
+    NGINX -->|proxy /api/| REQID --> RATE --> CORS --> SEC
+
+    %% Middleware to API
+    SEC --> R_CHAT & R_MTG & R_SESS & R_MEM & R_SET & R_WS & R_HEALTH & R_FILE & R_SKILLS
+
+    %% API to Services
+    R_CHAT --> CHAIN
+    R_MTG --> PROC & RAG
+    R_SESS --> MEM_SVC
+    R_MEM --> MEM_SVC & KG
+    R_SET --> CONFIG
+    R_WS --> STREAM
+    R_FILE --> FS
+    R_SKILLS --> CHAIN
+
+    %% Service interconnections
+    CHAIN -->|retrieve| RAG
+    CHAIN -->|generate| LLM
+    CHAIN -->|context| MEM_SVC
+    CHAIN -->|entities| KG
+    CHAIN -->|web results| SEARCH
+    CHAIN -->|stream| STREAM
+    CHAIN -->|traffic| TRAFFIC
+
+    PROC -->|audio/video| ASR
+    PROC -->|documents| PARSER
+    PROC -->|index| RAG
+
+    RAG -->|embed| EMB
+    RAG -->|vectors| CHROMA
+
+    MEM_SVC -->|embed| EMB
+    KG -->|embed| EMB
+
+    %% Services to Data
+    RAG --> CHROMA
+    MEM_SVC --> SQLITE
+    KG --> SQLITE
+    PROC --> FS
+    ASR --> FS
+
+    %% Data layer connections
+    DBLAYER --> SQLITE
+
+    %% Config feeds everything
+    CONFIG -.->|settings singleton| SERVICES
+
+    %% Observability
+    OBSERV -.->|metrics| SERVICES
+
+    %% MCP
+    MCP_SVC["mcp.py<br/>6 Tools"]
+    MCP_SVC --> CHAIN & RAG & MEM_SVC
+
+    %% Deploy
+    DOCKER & HELM & CI
+
+    %% Styling
+    classDef client fill:#4a90d9,stroke:#2c5f9e,color:#fff
+    classDef frontend fill:#61dafb,stroke:#2196f3,color:#000
+    classDef api fill:#009688,stroke:#00796b,color:#fff
+    classDef service fill:#ff9800,stroke:#e65100,color:#000
+    classDef data fill:#9c27b0,stroke:#6a1b9a,color:#fff
+    classDef infra fill:#607d8b,stroke:#37474f,color:#fff
+    classDef deploy fill:#795548,stroke:#4e342e,color:#fff
+
+    class BROWSER,MCP_CLIENT client
+    class PAGES,COMP,HOOKS,APIC frontend
+    class R_CHAT,R_MTG,R_SESS,R_MEM,R_SET,R_WS,R_HEALTH,R_FILE,R_SKILLS api
+    class CHAIN,RAG,PROC,LLM,EMB,MEM_SVC,KG,ASR,PARSER,SEARCH,STREAM,TRAFFIC service
+    class SQLITE,CHROMA,FS data
+    class CONFIG,DBLAYER,OBSERV infra
+    class DOCKER,HELM,CI deploy

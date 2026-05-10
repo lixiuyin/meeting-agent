@@ -1,0 +1,161 @@
+# Default values for meeting-agent.
+#
+# L-6: Security defaults review:
+# - Services use ClusterIP (internal-only). Avoid changing to NodePort or
+#   LoadBalancer — use the ingress controller for external access instead.
+# - Secrets must be supplied via `--set` or an override file that is NEVER
+#   committed to git.  The secretName references a pre-existing k8s Secret.
+# - Enable TLS on the ingress for production deployments.
+# - Enable NetworkPolicy in multi-tenant clusters to restrict pod-to-pod traffic.
+# - HPA is disabled by default; single-replica is the recommended starting
+#   point (see H-6 in the codebase for multi-worker caveats).
+
+backend:
+  image:
+    repository: ghcr.io/lixiuyin/meeting-agent-backend
+    tag: ""  # Pin to a specific version via --set or override file for reproducible rollbacks
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  livenessProbe:
+    httpGet:
+      path: /api/v1/health/live
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /api/v1/health/ready
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  service:
+    port: 8000
+  # Pod-level security context (applies to all containers in the pod).
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  # Container-level security context (applies to the backend container).
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  config:
+    ENVIRONMENT: production
+  secretName: meeting-agent-secrets
+  # Sensitive env vars — supply via --set or an overrides file (never commit).
+  # Values must be base64-encoded when passed through helm --set.
+  secrets: {}
+  #  API_KEY: <base64>
+  #  LLM_API_KEY: <base64>
+  #  ASSEMBLYAI_API_KEY: <base64>
+  #  MARKER_API_KEY: <base64>
+  #  MINERU_API_KEY: <base64>
+  #  PADDLEOCR_API_KEY: <base64>
+  #  PROMETHEUS_API_KEY: <base64>  # Separate key for /metrics scraper access
+  # ExternalSecrets references — inject secrets from an external provider
+  # (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, etc.) via
+  # the External Secrets Operator.  Each entry maps to an envFrom secretRef.
+  extraEnvFromSecret: []
+  # Example:
+  # extraEnvFromSecret:
+  #   - meeting-agent-llm-keys      # ExternalSecret with LLM_API_KEY, etc.
+  #   - meeting-agent-asr-keys      # ExternalSecret with ASSEMBLYAI_API_KEY
+
+frontend:
+  image:
+    repository: ghcr.io/lixiuyin/meeting-agent-frontend
+    tag: ""  # Pin to a specific version via --set or override file for reproducible rollbacks
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    port: 80
+  # Pod-level security context (applies to all containers in the pod).
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+  # Container-level security context (applies to the frontend container).
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: meeting-agent.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # TLS is required in production. Set `tlsDisabled: true` only for
+  # local testing behind a terminating proxy that handles TLS.
+  tlsDisabled: false
+  # Example TLS configuration:
+  # tls:
+  #   - hosts:
+  #       - meeting-agent.example.com
+  #     secretName: meeting-agent-tls
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+pdb:
+  enabled: true
+  maxUnavailable: 0
+
+networkPolicy:
+  enabled: true
+  ingress:
+    from: []
+    # from:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         name: ingress-nginx
+    #   - podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: ingress-nginx
+  egress: []
+  # egress:
+  #   - to:
+  #       - ipBlock:
+  #           cidr: 0.0.0.0/0
+  #     ports:
+  #       - protocol: TCP
+  #         port: 443
+
+persistence:
+  enabled: true
+  size: 10Gi
+  # storageClassName must be set explicitly for your cluster.
+  # An empty string uses the cluster's default StorageClass.
+  storageClassName: ""
+
+resources: {}

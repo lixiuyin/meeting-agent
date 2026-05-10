@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "scope_type": "unscoped",
+  "modality": "audio",
+  "items": [
+    {
+      "query": "Who introduced the project in Meeting 1, and who presented the component research in Meeting 3?",
+      "expected_answer": "Heather introduced the project in Meeting 1, while Poppy (C) presented the component research in Meeting 3.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        1,
+        3
+      ],
+      "expected_file_ids": [
+        1,
+        3
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_unscoped_001"
+    },
+    {
+      "query": "Summarize the environmental and recycling strategies proposed for the remote control across the meetings.",
+      "expected_answer": "In Meeting 2, the team discussed using shape memory alloys that allow components to separate when heated for easier recycling. Meeting 3 expanded on this by considering energy sources like solar power and materials like rubber for ergonomics and anti-RSI. The team acknowledged the need to balance these environmental goals with financial turnover goals.",
+      "query_type": "summary",
+      "expected_meeting_ids": [
+        2,
+        3
+      ],
+      "expected_file_ids": [
+        2,
+        3
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_unscoped_002"
+    },
+    {
+      "query": "Compare the button layout errors identified in Meeting 4 with the button technology options discussed in Meeting 3.",
+      "expected_answer": "Meeting 4 identified a mistake where a number 10 button was used instead of 0, while Meeting 3 discussed advanced scroll buttons that allow sliding up and down instead of individual buttons.",
+      "query_type": "comparison",
+      "expected_meeting_ids": [
+        3,
+        4
+      ],
+      "expected_file_ids": [
+        3,
+        4
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_unscoped_003"
+    },
+    {
+      "query": "Describe the proposed visibility features for the remote control in the dark and how they relate to the physical prototype design.",
+      "expected_answer": "Meeting 2 proposed visibility features such as illuminated buttons that light up on touch, fluorescent materials that glow after absorbing light, and an alarm system if the remote is lost. In Meeting 4, the physical prototype design based on a mango included an LED located in the middle of one of the little arms, which aligns with the visibility requirements discussed earlier. The team also noted the power button placement and the palm-held design to ensure accessibility from the thumb.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        2,
+        4
+      ],
+      "expected_file_ids": [
+        2,
+        4
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_unscoped_004"
+    },
+    {
+      "query": "What were the key agenda items and design decisions discussed in Meeting 3 compared to the prototype presentation in Meeting 4?",
+      "expected_answer": "Meeting 3 focused on agenda items like presentations on design progress and key decisions on the remote control concept, including component research on circuit boards and energy sources. In contrast, Meeting 4 moved to the prototype presentation, evaluating the mango-based design, finances, and specific button layouts like the palm-held thumb accessibility. The discussion in Meeting 4 also highlighted the need to correct button errors, such as the number 10 button mistake, which was not present in the earlier conceptual phases.",
+      "query_type": "summary",
+      "expected_meeting_ids": [
+        3,
+        4
+      ],
+      "expected_file_ids": [
+        3,
+        4
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_unscoped_005"
+    }
+  ]
+}

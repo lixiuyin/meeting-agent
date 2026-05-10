@@ -1,0 +1,1730 @@
+[
+  {
+    "start": 0.89,
+    "end": 4.0,
+    "text": "Um, yeah, there you go.",
+    "speaker": "A"
+  },
+  {
+    "start": 10.61,
+    "end": 11.94,
+    "text": "Okay, thank you.",
+    "speaker": "B"
+  },
+  {
+    "start": 14.96,
+    "end": 25.81,
+    "text": "Sorry. Oh yeah, why do we have two different microphones?",
+    "speaker": "C"
+  },
+  {
+    "start": 29.54,
+    "end": 42.12,
+    "text": "Okay, what would the difference— yeah, what would the difference be?",
+    "speaker": "A"
+  },
+  {
+    "start": 42.22,
+    "end": 42.72,
+    "text": "Interesting.",
+    "speaker": "B"
+  },
+  {
+    "start": 42.8,
+    "end": 111.09,
+    "text": "Okay, I can't see my own screen. All right. Okay, here we go. All right, the agenda for this— oh, all right, um, the agenda for this meeting is, um, we'll initially have the prototype presentation by our two designers And then we will evaluate it given the criteria that we gave it and talk about our finances, whether we were under or over our budget. I have a spreadsheet where we can calculate our prices for every aspect of what we've made given our options and evaluate the product as a group. And so first we'll have the prototype presentation. Do you need the PowerPoint for this?",
+    "speaker": "A"
+  },
+  {
+    "start": 111.19,
+    "end": 129.21,
+    "text": "Yeah, I just got a few slides. All right, thank you. Um, yeah, here we are.",
+    "speaker": "D"
+  },
+  {
+    "start": 129.45,
+    "end": 153.06,
+    "text": "This is what we came up with. It's a pretty simple design. It's based on a mango. Yeah, mango. Yeah, and we have the company logo here, and this will be the infrared, and this will be the power point, the on/off button.",
+    "speaker": "B"
+  },
+  {
+    "start": 153.22,
+    "end": 153.73,
+    "text": "Oh, okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 153.78,
+    "end": 155.8,
+    "text": "Yeah, so what was it? Where's the LED?",
+    "speaker": "C"
+  },
+  {
+    "start": 156.24,
+    "end": 165.53,
+    "text": "It's in the middle of one of the little arms. And then the other one is the power. And we just have a sample design. We wanted it all to be—",
+    "speaker": "B"
+  },
+  {
+    "start": 165.53,
+    "end": 166.36,
+    "text": "So it's palm held.",
+    "speaker": "D"
+  },
+  {
+    "start": 166.47,
+    "end": 173.25,
+    "text": "Accessible from your thumb. Yeah, palm held. And all the buttons are accessible from your thumb.",
+    "speaker": "B"
+  },
+  {
+    "start": 173.83,
+    "end": 177.7,
+    "text": "I noticed you have a number 10 button.",
+    "speaker": "A"
+  },
+  {
+    "start": 178.65,
+    "end": 179.87,
+    "text": "Oh, that was a mistake, wasn't it?",
+    "speaker": "C"
+  },
+  {
+    "start": 180.0,
+    "end": 181.58,
+    "text": "Right, no baby boy.",
+    "speaker": "D"
+  },
+  {
+    "start": 181.95,
+    "end": 182.59,
+    "text": "Zero.",
+    "speaker": "C"
+  },
+  {
+    "start": 182.98,
+    "end": 183.88,
+    "text": "Take that one off.",
+    "speaker": "D"
+  },
+  {
+    "start": 186.67,
+    "end": 188.96,
+    "text": "Sorry, I was in charge of the numbers.",
+    "speaker": "B"
+  },
+  {
+    "start": 189.24,
+    "end": 190.36,
+    "text": "No problem.",
+    "speaker": "C"
+  },
+  {
+    "start": 190.99,
+    "end": 196.43,
+    "text": "And this is just if you've got like 11 or 12 or 13, the plus.",
+    "speaker": "B"
+  },
+  {
+    "start": 197.43,
+    "end": 198.08,
+    "text": "So 1 1 11.",
+    "speaker": "D"
+  },
+  {
+    "start": 198.13,
+    "end": 200.09,
+    "text": "You can go 1 3 or something.",
+    "speaker": "B"
+  },
+  {
+    "start": 200.38,
+    "end": 202.95,
+    "text": "Oh, you press a plus button and you go 1 3.",
+    "speaker": "A"
+  },
+  {
+    "start": 203.03,
+    "end": 203.22,
+    "text": "Yeah.",
+    "speaker": "C"
+  },
+  {
+    "start": 203.99,
+    "end": 204.36,
+    "text": "Oh, okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 204.41,
+    "end": 205.55,
+    "text": "I've never heard of that kind before.",
+    "speaker": "A"
+  },
+  {
+    "start": 205.94,
+    "end": 213.27,
+    "text": "Well, we just thought we have all the numbers here, so we wanted something representative of numbers larger than 10.",
+    "speaker": "B"
+  },
+  {
+    "start": 213.88,
+    "end": 236.17,
+    "text": "And yeah, yeah, because if you— on your average, um, remote, if you press 1 twice, you just go to, um— oh, I say you wanted channel 12, you press 1 and you go to channel 1, and then 2, then you just go to channel 2 instead of 12. So if you did like 1 plus 2, you could go to channel 12, or 2 plus 2 is channel 20.",
+    "speaker": "D"
+  },
+  {
+    "start": 236.6,
+    "end": 239.35,
+    "text": "Would you have to go 0 1 if you wanted to go to channel 1 or 2?",
+    "speaker": "A"
+  },
+  {
+    "start": 239.41,
+    "end": 248.85,
+    "text": "No, no, that's why we have all these numbers. These numbers, um, these numbers all work independently up to 9.",
+    "speaker": "B"
+  },
+  {
+    "start": 249.28,
+    "end": 255.26,
+    "text": "Yeah, but I mean, if you press it, it'll go to that channel right away. Yeah, because you got to press the plus afterwards.",
+    "speaker": "A"
+  },
+  {
+    "start": 256.24,
+    "end": 260.32,
+    "text": "Oh no, the plus is only for if you're going past the number 9.",
+    "speaker": "B"
+  },
+  {
+    "start": 260.9,
+    "end": 272.6,
+    "text": "Yeah, I know, but if, if I want to go to say number Like 65, channel 65. If I press the 6, it'll go to channel 6, and then I'll press the plus, and then it'll go to 6, and then put the 5, and it'll go to 65.",
+    "speaker": "A"
+  },
+  {
+    "start": 272.65,
+    "end": 273.75,
+    "text": "No, you press the plus first.",
+    "speaker": "B"
+  },
+  {
+    "start": 274.31,
+    "end": 274.47,
+    "text": "Oh.",
+    "speaker": "D"
+  },
+  {
+    "start": 274.87,
+    "end": 281.24,
+    "text": "Well, it doesn't— we haven't really— I would have thought you press the plus first and then the 65, but she says plus first.",
+    "speaker": "B"
+  },
+  {
+    "start": 281.37,
+    "end": 282.38,
+    "text": "Well, I don't know.",
+    "speaker": "D"
+  },
+  {
+    "start": 282.51,
+    "end": 286.07,
+    "text": "What do you think? It's fair to define that.",
+    "speaker": "A"
+  },
+  {
+    "start": 286.55,
+    "end": 291.45,
+    "text": "I wouldn't have thought it would be a problem that it went to channel 6 first. Like on the way to channel 64.",
+    "speaker": "D"
+  },
+  {
+    "start": 291.51,
+    "end": 296.31,
+    "text": "Yeah, it wouldn't be a problem, but I was just wondering, like, as long as we realize that's what it'll do.",
+    "speaker": "A"
+  },
+  {
+    "start": 296.56,
+    "end": 305.3,
+    "text": "There's a delay on remotes, I think, where you can have it— it's like a 5-second input time, so as long as you hit them, da da, it should be fine.",
+    "speaker": "C"
+  },
+  {
+    "start": 305.55,
+    "end": 308.19,
+    "text": "Yeah, as long as it's not a big pause between hitting the two buttons.",
+    "speaker": "A"
+  },
+  {
+    "start": 308.94,
+    "end": 311.15,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 312.9,
+    "end": 317.47,
+    "text": "So on the top there is volume and and channel, which is channel volume up.",
+    "speaker": "D"
+  },
+  {
+    "start": 317.6,
+    "end": 318.0,
+    "text": "Okay, cool.",
+    "speaker": "C"
+  },
+  {
+    "start": 318.08,
+    "end": 321.03,
+    "text": "You could just go like that without thinking about it, right?",
+    "speaker": "D"
+  },
+  {
+    "start": 321.16,
+    "end": 323.19,
+    "text": "Where, um, where's the power button?",
+    "speaker": "A"
+  },
+  {
+    "start": 323.54,
+    "end": 327.63,
+    "text": "It's in the middle of the bigger R. Oh, okay. So it's just like—",
+    "speaker": "D"
+  },
+  {
+    "start": 328.51,
+    "end": 333.25,
+    "text": "yes, it's like accessible without taking your hand off the remote.",
+    "speaker": "B"
+  },
+  {
+    "start": 333.62,
+    "end": 345.57,
+    "text": "Yeah, yeah. And we went for like a circular design for the numbers because we thought that was kind of a more natural movement than just going like that. With your thumb.",
+    "speaker": "D"
+  },
+  {
+    "start": 345.91,
+    "end": 346.54,
+    "text": "Oh, okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 347.18,
+    "end": 348.24,
+    "text": "Ergonomics are all considered.",
+    "speaker": "D"
+  },
+  {
+    "start": 348.3,
+    "end": 349.91,
+    "text": "Ergonomics, definitely ergonomic.",
+    "speaker": "A"
+  },
+  {
+    "start": 350.17,
+    "end": 353.38,
+    "text": "It might actually help with the repetitive stress injury.",
+    "speaker": "B"
+  },
+  {
+    "start": 353.84,
+    "end": 381.72,
+    "text": "It could cause another type of repetitive stress injury, but yeah, no, I mean, it's a different movement, so yeah. And the feel of it, I mean, we've made this out of Play-Doh, which is representing the, you know, the rubber. The spongy rubberness. Because it was said before in the material specification that this anti-RSI material is often used in stress balls. So this has got a bit of give to it.",
+    "speaker": "D"
+  },
+  {
+    "start": 381.8,
+    "end": 383.28,
+    "text": "Yeah, a bit of a stress ball feel.",
+    "speaker": "A"
+  },
+  {
+    "start": 383.35,
+    "end": 386.79,
+    "text": "Do you like feel it yourself? Yes. How it fits in the palm of your hand?",
+    "speaker": "D"
+  },
+  {
+    "start": 387.29,
+    "end": 388.98,
+    "text": "My goodness.",
+    "speaker": "A"
+  },
+  {
+    "start": 389.29,
+    "end": 390.29,
+    "text": "There you go.",
+    "speaker": "D"
+  },
+  {
+    "start": 390.93,
+    "end": 392.03,
+    "text": "Thanks. Ready?",
+    "speaker": "C"
+  },
+  {
+    "start": 392.45,
+    "end": 393.77,
+    "text": "Oh, it's nice.",
+    "speaker": "A"
+  },
+  {
+    "start": 393.9,
+    "end": 395.04,
+    "text": "Oh, I think I killed the 5.",
+    "speaker": "C"
+  },
+  {
+    "start": 395.93,
+    "end": 396.15,
+    "text": "I did.",
+    "speaker": "A"
+  },
+  {
+    "start": 396.33,
+    "end": 396.91,
+    "text": "I killed the 4.",
+    "speaker": "C"
+  },
+  {
+    "start": 397.61,
+    "end": 398.04,
+    "text": "Oh, God.",
+    "speaker": "B"
+  },
+  {
+    "start": 398.11,
+    "end": 440.66,
+    "text": "Okay, as for the colours, we were presented with a limited range. Range of colours for this prototype, but we're thinking that seeing as we're having it in interchangeable casing anyway, that this is not necessarily a representation of the true colours that we would necessarily use, or the combination. Um, and we're thinking to carry on with the fruit and vegetable theme, the colour, um, combination just could be named after different fruit like Oh, banana. It could be black and yellow watermelon, red and green, or vanilla might be the most popular if it just blends in subtle and more subtle cream instead of the other one. Looks a little bit garish.",
+    "speaker": "D"
+  },
+  {
+    "start": 440.93,
+    "end": 442.97,
+    "text": "I think like vanilla and banana would—",
+    "speaker": "A"
+  },
+  {
+    "start": 443.56,
+    "end": 448.72,
+    "text": "banana is more representative of our color scheme, like the company, the yellow and the black. Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 448.93,
+    "end": 449.46,
+    "text": "Oh, okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 449.57,
+    "end": 463.2,
+    "text": "Yeah, so that for corporate identity, that would probably be the most strength. I mean, watermelon you know, probably appealing to Christmas, you know. Yeah, seasonal. Apple green brown, more kind of trendy, you know, khaki.",
+    "speaker": "D"
+  },
+  {
+    "start": 464.6,
+    "end": 468.71,
+    "text": "The pomegranate's kind of girly and funky, kind of.",
+    "speaker": "B"
+  },
+  {
+    "start": 469.01,
+    "end": 469.35,
+    "text": "And cool.",
+    "speaker": "D"
+  },
+  {
+    "start": 469.88,
+    "end": 477.83,
+    "text": "Then the vanilla is more for the more sophisticated customers. Yeah, something that fits in with all decor.",
+    "speaker": "B"
+  },
+  {
+    "start": 479.13,
+    "end": 502.33,
+    "text": "Okay. Yeah, we thought of the components. It was definitely a focus of ergonomics and just a single handheld device. I mean, you don't need to use both hands, one hand to hold this and type in with the other. You can just use your thumb. Yeah. As we said, the rubber is probably used for comfort and anti-RSI. That's about it.",
+    "speaker": "D"
+  },
+  {
+    "start": 502.62,
+    "end": 523.73,
+    "text": "All right, thank you very much. Good work, everyone. All right. And so now that we have a prototype, we need to go over the finances and seeing if this prototype matches what our budget can handle. So I have something I'm going to—",
+    "speaker": "A"
+  },
+  {
+    "start": 526.1,
+    "end": 526.29,
+    "text": "You want that?",
+    "speaker": "D"
+  },
+  {
+    "start": 526.38,
+    "end": 528.37,
+    "text": "Oh, wait a minute. Do you need to do a presentation first?",
+    "speaker": "A"
+  },
+  {
+    "start": 529.49,
+    "end": 530.79,
+    "text": "I don't know what order it goes in.",
+    "speaker": "C"
+  },
+  {
+    "start": 530.84,
+    "end": 538.99,
+    "text": "Yeah, I'm going to check that out for a second. Oh yeah, sorry, you're right, evaluation criteria is next one.",
+    "speaker": "A"
+  },
+  {
+    "start": 539.9,
+    "end": 546.04,
+    "text": "Yeah. Hello.",
+    "speaker": "D"
+  },
+  {
+    "start": 546.13,
+    "end": 548.65,
+    "text": "Oh, there we go.",
+    "speaker": "B"
+  },
+  {
+    "start": 568.91,
+    "end": 571.08,
+    "text": "OK. Come on my computer.",
+    "speaker": "C"
+  },
+  {
+    "start": 571.72,
+    "end": 573.85,
+    "text": "Come on.",
+    "speaker": "B"
+  },
+  {
+    "start": 575.75,
+    "end": 577.79,
+    "text": "Sorry, my computer is giving me technical difficulties.",
+    "speaker": "C"
+  },
+  {
+    "start": 578.3,
+    "end": 579.71,
+    "text": "Just press that button. Should I press it again?",
+    "speaker": "A"
+  },
+  {
+    "start": 580.37,
+    "end": 581.27,
+    "text": "Last time I did that, it—",
+    "speaker": "C"
+  },
+  {
+    "start": 584.64,
+    "end": 589.38,
+    "text": "OK, you're right. And then again, I think. One more time.",
+    "speaker": "A"
+  },
+  {
+    "start": 589.61,
+    "end": 590.43,
+    "text": "Oh, still not there?",
+    "speaker": "C"
+  },
+  {
+    "start": 590.67,
+    "end": 596.43,
+    "text": "Yeah. Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 602.22,
+    "end": 649.36,
+    "text": "OK, now I think for this one, I could— would you guys prefer I use the whiteboard? Or maybe I'll just do it right on the screen where you can see it. We're going to be doing an evaluation report together based on the prototype that we've just seen. Looking back at my notes from both our conceptual and our functional meetings, I made a list of what our original requirements and goals were, back to our kickoff meeting this morning, and we'll evaluate as to whether we've done what we set out to do. We're going to do it on a 1 to 7 scale where 1 is true and 7 is false. Basically, the lower the points, the better. OK, so question number 1. Does the remote— whoops, sorry. Oh, I'll do it on the whiteboard. I can't change it. So I'm going to ask you to push it down once.",
+    "speaker": "C"
+  },
+  {
+    "start": 650.9,
+    "end": 651.06,
+    "text": "OK.",
+    "speaker": "A"
+  },
+  {
+    "start": 651.16,
+    "end": 660.23,
+    "text": "I'll write down our scores up on the— OK, so number 1, do we have a fancy look and feel?",
+    "speaker": "C"
+  },
+  {
+    "start": 661.48,
+    "end": 664.77,
+    "text": "Feel, I think.",
+    "speaker": "D"
+  },
+  {
+    "start": 665.24,
+    "end": 671.93,
+    "text": "We've been quite successful with the rubber coating and the look is a little bit more playful.",
+    "speaker": "A"
+  },
+  {
+    "start": 672.08,
+    "end": 673.46,
+    "text": "Yeah, yeah, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 673.59,
+    "end": 676.06,
+    "text": "I guess it depends on your definition of fancy, but it's definitely different.",
+    "speaker": "C"
+  },
+  {
+    "start": 676.8,
+    "end": 678.52,
+    "text": "It's not traditional. Yeah, yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 680.58,
+    "end": 697.58,
+    "text": "I think the color has a lot to do with it. I mean, the colors we were given for making the prototype aren't the colors that I think we would have necessarily chosen. It's not the kind of Were you only given red and black? Red, black, and yellow, and orange.",
+    "speaker": "D"
+  },
+  {
+    "start": 697.85,
+    "end": 698.11,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 698.27,
+    "end": 699.68,
+    "text": "So— Very sleek.",
+    "speaker": "D"
+  },
+  {
+    "start": 700.56,
+    "end": 708.83,
+    "text": "And we didn't want to go for black because most remote controls are black or grey, so we wanted to stand out that way anyway.",
+    "speaker": "B"
+  },
+  {
+    "start": 709.55,
+    "end": 719.76,
+    "text": "But if you can imagine that in like as just maybe a kind of pale metallic-y finish or something.",
+    "speaker": "D"
+  },
+  {
+    "start": 719.84,
+    "end": 721.02,
+    "text": "Metallic-y finish for a remote control?",
+    "speaker": "B"
+  },
+  {
+    "start": 721.15,
+    "end": 727.95,
+    "text": "Well, I know it's for rubber. You can visualize this in nice colors. I think it would look great.",
+    "speaker": "D"
+  },
+  {
+    "start": 728.06,
+    "end": 738.13,
+    "text": "Yeah, yeah, I kind of— I like the potato look. Oh, well, I'm sorry, the mango. Yeah, fruit or vegetable depends on your mood.",
+    "speaker": "C"
+  },
+  {
+    "start": 738.62,
+    "end": 739.89,
+    "text": "Yeah, totally.",
+    "speaker": "D"
+  },
+  {
+    "start": 740.32,
+    "end": 742.29,
+    "text": "So I myself would say a 1 or a 2.",
+    "speaker": "C"
+  },
+  {
+    "start": 742.95,
+    "end": 744.24,
+    "text": "Yeah, I would say 2.",
+    "speaker": "A"
+  },
+  {
+    "start": 744.43,
+    "end": 745.53,
+    "text": "I would— I'd say 2, I think.",
+    "speaker": "B"
+  },
+  {
+    "start": 745.71,
+    "end": 749.51,
+    "text": "Okay, and fanciness, 1 being true.",
+    "speaker": "C"
+  },
+  {
+    "start": 750.3,
+    "end": 752.62,
+    "text": "So I had 2.",
+    "speaker": "D"
+  },
+  {
+    "start": 753.09,
+    "end": 753.28,
+    "text": "2?",
+    "speaker": "A"
+  },
+  {
+    "start": 753.49,
+    "end": 767.5,
+    "text": "Okay, actually, that's— this might get confusing like that. Okay, so question number 2 was, is it technologically innovative? So I know we have the kinetic energy, which is very innovative.",
+    "speaker": "C"
+  },
+  {
+    "start": 768.19,
+    "end": 768.37,
+    "text": "Yeah, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 768.45,
+    "end": 772.94,
+    "text": "And the use of the rubber, the use of the rubber, use of the RSI LED.",
+    "speaker": "C"
+  },
+  {
+    "start": 774.09,
+    "end": 789.89,
+    "text": "The LED use isn't particularly innovative, and we don't have any scroll buttons. It's all push buttons. There's no LCD control. So if we're thinking about the rest of the market, yeah, it's sort of probably halfway. In some aspects it is.",
+    "speaker": "D"
+  },
+  {
+    "start": 790.16,
+    "end": 791.48,
+    "text": "Yeah, I think we've had 3.",
+    "speaker": "A"
+  },
+  {
+    "start": 793.21,
+    "end": 803.65,
+    "text": "And I think— I mean, it's tough to say because we didn't want it to be any more innovative than this because then I would— yeah, we want to defeat the purpose. So I mean, we'll put 3, but I think we actually reached our goal.",
+    "speaker": "C"
+  },
+  {
+    "start": 804.11,
+    "end": 804.45,
+    "text": "Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 805.17,
+    "end": 809.31,
+    "text": "We didn't want it any more than that. OK, question number 3. Will it be easy to use?",
+    "speaker": "C"
+  },
+  {
+    "start": 810.24,
+    "end": 811.37,
+    "text": "I think so. Yeah. Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 811.51,
+    "end": 811.88,
+    "text": "Very.",
+    "speaker": "D"
+  },
+  {
+    "start": 812.47,
+    "end": 813.08,
+    "text": "I think 1.",
+    "speaker": "B"
+  },
+  {
+    "start": 814.06,
+    "end": 814.64,
+    "text": "Yeah, I think it's—",
+    "speaker": "C"
+  },
+  {
+    "start": 814.64,
+    "end": 814.88,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 814.96,
+    "end": 815.19,
+    "text": "1.",
+    "speaker": "A"
+  },
+  {
+    "start": 815.3,
+    "end": 819.49,
+    "text": "You can't really get confused with that. I mean, there'll be— we have to work out the number—",
+    "speaker": "C"
+  },
+  {
+    "start": 819.68,
+    "end": 820.11,
+    "text": "The plus number.",
+    "speaker": "A"
+  },
+  {
+    "start": 820.16,
+    "end": 822.12,
+    "text": "The plus system. But once that's figured out, it should be fine.",
+    "speaker": "C"
+  },
+  {
+    "start": 822.16,
+    "end": 823.4,
+    "text": "Yeah, it's just turning on.",
+    "speaker": "D"
+  },
+  {
+    "start": 823.53,
+    "end": 829.45,
+    "text": "Number 4, is this a good-looking remote? Remember that 75% of users find most remote controls ugly.",
+    "speaker": "C"
+  },
+  {
+    "start": 831.09,
+    "end": 832.77,
+    "text": "Again, I think the color comes into this.",
+    "speaker": "D"
+  },
+  {
+    "start": 833.0,
+    "end": 838.04,
+    "text": "Yeah, color will definitely be a factor. I think that the logo could be smaller.",
+    "speaker": "A"
+  },
+  {
+    "start": 838.81,
+    "end": 839.04,
+    "text": "Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 839.12,
+    "end": 844.32,
+    "text": "Yeah, and maybe not such a prominent way, but maybe like at the bottom, kind of.",
+    "speaker": "A"
+  },
+  {
+    "start": 844.58,
+    "end": 847.71,
+    "text": "Remember the management said that it had to be prominent?",
+    "speaker": "B"
+  },
+  {
+    "start": 848.74,
+    "end": 848.87,
+    "text": "Whoops.",
+    "speaker": "C"
+  },
+  {
+    "start": 848.98,
+    "end": 850.29,
+    "text": "Well, just had to be on there, I guess.",
+    "speaker": "A"
+  },
+  {
+    "start": 850.34,
+    "end": 860.88,
+    "text": "Just not touch it. This time it's the 3 I killed. I was just wondering if it should be like flatter or—",
+    "speaker": "C"
+  },
+  {
+    "start": 861.8,
+    "end": 862.65,
+    "text": "I suppose I've got quite big fingers.",
+    "speaker": "D"
+  },
+  {
+    "start": 862.76,
+    "end": 866.69,
+    "text": "I like the appeal of it being like a big glob in your hand.",
+    "speaker": "A"
+  },
+  {
+    "start": 867.03,
+    "end": 873.08,
+    "text": "Yeah, but you know what I've just thought of then, right? Where's it going to sit in your living room? Is it not going to fall off the armrest?",
+    "speaker": "B"
+  },
+  {
+    "start": 873.13,
+    "end": 874.86,
+    "text": "Maybe if the bottom was just sort of flat.",
+    "speaker": "A"
+  },
+  {
+    "start": 874.92,
+    "end": 877.28,
+    "text": "Yeah, the bottom of the wrist is like chopped a bit round.",
+    "speaker": "C"
+  },
+  {
+    "start": 877.52,
+    "end": 879.75,
+    "text": "But then it wouldn't sit as comfortably in your hand.",
+    "speaker": "B"
+  },
+  {
+    "start": 880.01,
+    "end": 880.61,
+    "text": "Oh, that's true.",
+    "speaker": "C"
+  },
+  {
+    "start": 880.93,
+    "end": 884.46,
+    "text": "It would still be comfortable, I think. Things like that.",
+    "speaker": "A"
+  },
+  {
+    "start": 884.61,
+    "end": 889.55,
+    "text": "It could be on the bottom so you wouldn't lose— like if it's flat here so it sits up. Yeah, like that.",
+    "speaker": "C"
+  },
+  {
+    "start": 889.82,
+    "end": 890.96,
+    "text": "Oh, that would be nice.",
+    "speaker": "B"
+  },
+  {
+    "start": 891.11,
+    "end": 892.2,
+    "text": "I fall over all the time.",
+    "speaker": "A"
+  },
+  {
+    "start": 892.7,
+    "end": 898.83,
+    "text": "Yeah, it's less, um, if it's weighted maybe. Details, details.",
+    "speaker": "C"
+  },
+  {
+    "start": 898.91,
+    "end": 899.79,
+    "text": "Okay, we're done designing.",
+    "speaker": "A"
+  },
+  {
+    "start": 900.0,
+    "end": 904.72,
+    "text": "Okay, so is this a good looking remote? Would we want to show it off to our friends?",
+    "speaker": "C"
+  },
+  {
+    "start": 905.86,
+    "end": 909.21,
+    "text": "You would though, because it's better— it's more interesting than others? Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 909.42,
+    "end": 914.54,
+    "text": "I think it was another color and it was like, I think it'd look okay, maybe a 2.",
+    "speaker": "A"
+  },
+  {
+    "start": 914.65,
+    "end": 916.95,
+    "text": "I mean, I get, yeah, it's definitely—",
+    "speaker": "C"
+  },
+  {
+    "start": 917.02,
+    "end": 924.63,
+    "text": "I would definitely go for that rather than like your average plain old remote like that, but definitely in another color. I'm not happy with those colors.",
+    "speaker": "D"
+  },
+  {
+    "start": 925.24,
+    "end": 928.01,
+    "text": "Okay, so should we say 2 for that? Sure.",
+    "speaker": "C"
+  },
+  {
+    "start": 928.38,
+    "end": 928.54,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 928.96,
+    "end": 929.28,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 929.52,
+    "end": 929.78,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 931.6,
+    "end": 941.59,
+    "text": "Question number 5 was, will people be willing to spend €25 on this product? Remember that 80% of users were willing to spend more money when remote control looked fancy.",
+    "speaker": "C"
+  },
+  {
+    "start": 941.68,
+    "end": 953.2,
+    "text": "I think we have to market it in the right way, but yeah, to say that it is simplistic so people don't just see it and think, this is so simplistic, I don't want to spend €25. We have to market it.",
+    "speaker": "B"
+  },
+  {
+    "start": 953.28,
+    "end": 954.61,
+    "text": "Yeah, the marketing will have a lot to do with it.",
+    "speaker": "C"
+  },
+  {
+    "start": 955.16,
+    "end": 960.59,
+    "text": "Add the kinetic energy part. Kinetic energy, shake your styley.",
+    "speaker": "D"
+  },
+  {
+    "start": 960.88,
+    "end": 963.07,
+    "text": "Oh no, shake it and the buttons fall off.",
+    "speaker": "C"
+  },
+  {
+    "start": 966.33,
+    "end": 967.06,
+    "text": "Those will be for you.",
+    "speaker": "D"
+  },
+  {
+    "start": 967.22,
+    "end": 968.93,
+    "text": "No, the plus—",
+    "speaker": "B"
+  },
+  {
+    "start": 970.01,
+    "end": 974.75,
+    "text": "no, I guess I don't know much about the remote control industry, how much your average sells for.",
+    "speaker": "C"
+  },
+  {
+    "start": 974.81,
+    "end": 975.98,
+    "text": "But you're a marketing expert.",
+    "speaker": "A"
+  },
+  {
+    "start": 976.19,
+    "end": 976.67,
+    "text": "I know I am.",
+    "speaker": "D"
+  },
+  {
+    "start": 976.77,
+    "end": 981.81,
+    "text": "I think they're quite tampon— tampon, aren't they?",
+    "speaker": "B"
+  },
+  {
+    "start": 982.86,
+    "end": 986.73,
+    "text": "But you don't have to buy batteries, so in the long term this can actually save you money.",
+    "speaker": "C"
+  },
+  {
+    "start": 986.9,
+    "end": 987.74,
+    "text": "Exactly.",
+    "speaker": "A"
+  },
+  {
+    "start": 988.32,
+    "end": 993.28,
+    "text": "Yeah, so yeah, I think with a good marketing scheme and the personalization options.",
+    "speaker": "C"
+  },
+  {
+    "start": 994.02,
+    "end": 995.09,
+    "text": "Yeah, I would give it a 2 still.",
+    "speaker": "A"
+  },
+  {
+    "start": 995.14,
+    "end": 995.88,
+    "text": "Yeah, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 996.66,
+    "end": 998.77,
+    "text": "Okay, number 6. Can someone read it out?",
+    "speaker": "C"
+  },
+  {
+    "start": 999.65,
+    "end": 1003.55,
+    "text": "Does this prototype match the operating behavior of the average user?",
+    "speaker": "D"
+  },
+  {
+    "start": 1004.71,
+    "end": 1005.29,
+    "text": "Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1005.67,
+    "end": 1006.7,
+    "text": "Yeah, so that was mainly that—",
+    "speaker": "C"
+  },
+  {
+    "start": 1006.7,
+    "end": 1007.7,
+    "text": "Yeah, I think it does.",
+    "speaker": "A"
+  },
+  {
+    "start": 1007.76,
+    "end": 1008.92,
+    "text": "A statistic said—",
+    "speaker": "C"
+  },
+  {
+    "start": 1009.59,
+    "end": 1022.02,
+    "text": "Yeah, because the most accessible buttons are the volume and the channel changing, and it's just— you won't have to think about it. You don't have to look down to find them. —clearly there, easy to use.",
+    "speaker": "D"
+  },
+  {
+    "start": 1022.29,
+    "end": 1045.92,
+    "text": "Yeah, yeah, I guess the— I think the keyword there is average because there were some people that use the video input and sound and stuff. Yeah, but they're not you and I really. So, okay, so 1? Yeah. Okay, number 7. Heather, can you push it down? Will this remote control be easy to find when lost? Remember that 50% of users lose their remote regularly. We have the alarm system. Is the alarm system still— was it implemented?",
+    "speaker": "C"
+  },
+  {
+    "start": 1046.49,
+    "end": 1049.49,
+    "text": "When you Press the alarm system, the lights.",
+    "speaker": "B"
+  },
+  {
+    "start": 1049.96,
+    "end": 1061.32,
+    "text": "Yeah, lights on the end will flash as well, but I mean, it's not obviously obvious from the outside that that's gonna happen because you can't particularly see the light from the inside.",
+    "speaker": "D"
+  },
+  {
+    "start": 1061.49,
+    "end": 1065.95,
+    "text": "Yeah, the light, it will, but when the alarm's not—",
+    "speaker": "B"
+  },
+  {
+    "start": 1066.14,
+    "end": 1068.84,
+    "text": "yeah, if you push the button, makes the noise, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 1069.11,
+    "end": 1072.06,
+    "text": "Yeah, yeah, it turns into a duck and starts quacking.",
+    "speaker": "C"
+  },
+  {
+    "start": 1072.34,
+    "end": 1089.15,
+    "text": "Yeah, here I am. Awesome. I think if it had an alarm system, I mean, when it lights up, I mean, it could light up when the alarm went. But if it was hidden underneath the cushion or something, there wouldn't be any point. So you can't see the alarm, but it would light up.",
+    "speaker": "D"
+  },
+  {
+    "start": 1089.93,
+    "end": 1091.04,
+    "text": "I thought it was going to make a noise.",
+    "speaker": "C"
+  },
+  {
+    "start": 1092.17,
+    "end": 1098.78,
+    "text": "Yeah, but you can't see an alarm inside. It's the alarm system itself. Okay.",
+    "speaker": "D"
+  },
+  {
+    "start": 1098.93,
+    "end": 1123.16,
+    "text": "You're just explaining why it's not on the prototype. But yeah, it'll be there. So we could say that— sorry. We could give it a 1 because compared to every other remote, ever made, this one will be easier to find. Yeah. OK. Sorry, Heather. No problem. Question number 8. Will it be easy to learn how to use this remote when brand new? Remember that 34% of users usually found it difficult. Totally. It has to be— yeah. They'll pick it up, and they'll know what to do. The plus thing needs to be worked out.",
+    "speaker": "C"
+  },
+  {
+    "start": 1123.21,
+    "end": 1126.63,
+    "text": "Once that's written down on the page, that will be really simple.",
+    "speaker": "B"
+  },
+  {
+    "start": 1126.67,
+    "end": 1134.76,
+    "text": "Yeah. I think just because we've decided to reduce it down to the basic buttons. I think that in itself makes it so much easier.",
+    "speaker": "D"
+  },
+  {
+    "start": 1134.8,
+    "end": 1142.44,
+    "text": "Does it make more sense for the middle one to be just an enter button? So then you would have to push 2 buttons every time at least. Yeah, so if it's like channel 6.",
+    "speaker": "C"
+  },
+  {
+    "start": 1142.97,
+    "end": 1147.5,
+    "text": "That kind of annoys me though when it's 06 when you have to press. I don't know.",
+    "speaker": "B"
+  },
+  {
+    "start": 1147.62,
+    "end": 1148.68,
+    "text": "Yeah, but you don't have to press 0.",
+    "speaker": "A"
+  },
+  {
+    "start": 1148.78,
+    "end": 1151.12,
+    "text": "You can just press 6, enter. Oh, okay.",
+    "speaker": "C"
+  },
+  {
+    "start": 1151.21,
+    "end": 1155.75,
+    "text": "Or 12, enter. Oh, right. Dai. Yeah, I think that's probably more straightforward.",
+    "speaker": "D"
+  },
+  {
+    "start": 1155.97,
+    "end": 1176.16,
+    "text": "Yeah, good point. Okay, so we can— we'll say yes, it's 1? Yeah. Okay. Question number 9: Will it minimize the effects of RSI, which was repeated strain injury, which affected over a quarter of users?",
+    "speaker": "C"
+  },
+  {
+    "start": 1178.58,
+    "end": 1179.56,
+    "text": "I think so. It's like right in the—",
+    "speaker": "A"
+  },
+  {
+    "start": 1180.75,
+    "end": 1181.32,
+    "text": "but if you're—",
+    "speaker": "B"
+  },
+  {
+    "start": 1181.32,
+    "end": 1182.7,
+    "text": "your thumb might get a little bit—",
+    "speaker": "A"
+  },
+  {
+    "start": 1182.7,
+    "end": 1189.76,
+    "text": "yeah, that's what I was thinking. I don't think it will. We may have to do some more research into other strain injuries that we don't know about.",
+    "speaker": "D"
+  },
+  {
+    "start": 1189.8,
+    "end": 1200.73,
+    "text": "But it is soft. Mm-hmm. It's soft. And that's kind of what the PowerPoint slide thing said would be good for RSI.",
+    "speaker": "A"
+  },
+  {
+    "start": 1201.07,
+    "end": 1218.99,
+    "text": "So I don't know what other options there are. Yeah. That's true. I mean, you could hold it in your left hand and use your index finger. But there's not really any other options unless it's like a keyboard. So yeah, I think we did as much as you can with the remote control. Yeah. So 1 or 2, do you think?",
+    "speaker": "C"
+  },
+  {
+    "start": 1219.71,
+    "end": 1222.1,
+    "text": "I think— I'd say 2. Yeah, I'd say 2.",
+    "speaker": "D"
+  },
+  {
+    "start": 1222.28,
+    "end": 1231.51,
+    "text": "Okay. Okay. Number 10, did we somehow incorporate the company color and logo? Yes, we did. Now, is the color going to be there even if it's like vanilla? Is the yellow—",
+    "speaker": "C"
+  },
+  {
+    "start": 1231.83,
+    "end": 1242.97,
+    "text": "We can't really do that because, for example, on the banana theme, we can't have a with this being yellow, it won't stand out. So it's not always going to be the same color.",
+    "speaker": "B"
+  },
+  {
+    "start": 1243.3,
+    "end": 1244.64,
+    "text": "It sounds like the color is something that we—",
+    "speaker": "C"
+  },
+  {
+    "start": 1244.64,
+    "end": 1249.57,
+    "text": "yeah, the colors are yellow and gray. Gray. So it could be gray on the banana one.",
+    "speaker": "A"
+  },
+  {
+    "start": 1249.63,
+    "end": 1250.53,
+    "text": "Yeah, it could be gray.",
+    "speaker": "B"
+  },
+  {
+    "start": 1251.06,
+    "end": 1261.08,
+    "text": "Yeah, I mean, the yellow— yeah, the yellow is ugly though, depending on that. Yeah, that's right. So I think we'll have to talk to our executive managers and see if we can get away with just the RR.",
+    "speaker": "C"
+  },
+  {
+    "start": 1261.24,
+    "end": 1269.12,
+    "text": "Yeah, I think this is the The fact that we've been least successful in confronting time.",
+    "speaker": "D"
+  },
+  {
+    "start": 1269.17,
+    "end": 1275.86,
+    "text": "Perhaps we could tie our— like, that's grey, and it wouldn't be that expensive to have a little bit of metal.",
+    "speaker": "B"
+  },
+  {
+    "start": 1276.61,
+    "end": 1304.7,
+    "text": "Yeah, and the buttons in the middle. Yeah. Okay. So do you think that's more of a 3 then? 3, 4? 4, I think. 4? Well, I don't know. Well, we have good reasons for it, so we can still put a 4. Okay, okay. And final question, um, do we stay true to our motto and put the fashion into electronics? Current trends of fruits and veggies, desire for sponginess.",
+    "speaker": "C"
+  },
+  {
+    "start": 1306.34,
+    "end": 1313.93,
+    "text": "I would say so, following that brief, but maybe more like 2 because there's no like pictures of fruit, it's just sort of naming it by a fruit.",
+    "speaker": "A"
+  },
+  {
+    "start": 1314.18,
+    "end": 1317.08,
+    "text": "Yeah, yeah, like the colors. Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1317.49,
+    "end": 1319.1,
+    "text": "Now, are the plates interchangeable?",
+    "speaker": "C"
+  },
+  {
+    "start": 1319.18,
+    "end": 1320.54,
+    "text": "I think I missed a few. Yeah, yeah, they are.",
+    "speaker": "D"
+  },
+  {
+    "start": 1320.62,
+    "end": 1328.5,
+    "text": "So you can have banana and kiwi and— Yeah, okay, okay. So that's something that's kind of in the making too, like maybe it'll become more—",
+    "speaker": "C"
+  },
+  {
+    "start": 1329.83,
+    "end": 1332.92,
+    "text": "That's fashionable in itself to have interchangeable plates.",
+    "speaker": "A"
+  },
+  {
+    "start": 1335.2,
+    "end": 1337.25,
+    "text": "I think, yeah, I think one.",
+    "speaker": "B"
+  },
+  {
+    "start": 1338.09,
+    "end": 1349.39,
+    "text": "Well, that was our brief and we thought The thing is, I think if somebody saw that and you said, what was that inspired from? I don't know if you'd instantly say Mango.",
+    "speaker": "D"
+  },
+  {
+    "start": 1351.78,
+    "end": 1355.1,
+    "text": "Maybe if it was scented. Oh yeah, there we go.",
+    "speaker": "A"
+  },
+  {
+    "start": 1355.72,
+    "end": 1357.92,
+    "text": "That was great. Yeah, we have money for that.",
+    "speaker": "D"
+  },
+  {
+    "start": 1359.73,
+    "end": 1363.9,
+    "text": "Um, um, all right, so based on this evaluation, do we average them out?",
+    "speaker": "A"
+  },
+  {
+    "start": 1364.22,
+    "end": 1367.15,
+    "text": "Yes, we do. So what was I going to put for that? 2 for fashion?",
+    "speaker": "C"
+  },
+  {
+    "start": 1368.54,
+    "end": 1370.8,
+    "text": "I would say 2. Yeah, okay, okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 1370.9,
+    "end": 1386.19,
+    "text": "So our average there: 5, 6, 8, 10, 11, 12, 13, 15, 19, 21 divided by 11. It's 1.9 or something. Yeah, I don't know these things.",
+    "speaker": "C"
+  },
+  {
+    "start": 1386.47,
+    "end": 1388.81,
+    "text": "Between 1 and 2. Between 1 and 2.",
+    "speaker": "A"
+  },
+  {
+    "start": 1388.96,
+    "end": 1391.82,
+    "text": "Okay, so that is pretty fantastic.",
+    "speaker": "C"
+  },
+  {
+    "start": 1392.64,
+    "end": 1392.89,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1395.06,
+    "end": 1397.58,
+    "text": "Yeah, that's very good because the highest you could have got is 1.",
+    "speaker": "C"
+  },
+  {
+    "start": 1399.32,
+    "end": 1400.62,
+    "text": "All right. Does that seem right then?",
+    "speaker": "A"
+  },
+  {
+    "start": 1401.57,
+    "end": 1404.26,
+    "text": "Yeah, because we have a 4 to bring down.",
+    "speaker": "B"
+  },
+  {
+    "start": 1405.68,
+    "end": 1409.61,
+    "text": "OK. It seems like it should be more around 2.",
+    "speaker": "D"
+  },
+  {
+    "start": 1409.99,
+    "end": 1413.46,
+    "text": "Yeah. Yeah. Should we add a 5?",
+    "speaker": "A"
+  },
+  {
+    "start": 1419.41,
+    "end": 1420.85,
+    "text": "Do we have an online calculator?",
+    "speaker": "D"
+  },
+  {
+    "start": 1421.42,
+    "end": 1466.53,
+    "text": "I'm attempting to do that. Okay. Yeah, it is 1.9. Oh, wow. Well done. Go, Lisa. All right. Now with that over and done with, our next step is to see if we are under budget. And my computer's frozen. And now it's not. OK. So in our shared folder, if everyone could go there right now. Sorry. I'm going to— Oh, you're going to do that? —steal a cable. OK. Is that the project?",
+    "speaker": "A"
+  },
+  {
+    "start": 1470.16,
+    "end": 1471.64,
+    "text": "It's an Excel file.",
+    "speaker": "C"
+  },
+  {
+    "start": 1472.4,
+    "end": 1512.34,
+    "text": "Oh, production costs. Yeah, okay, there we go. Um, production cost, and, um, I have to access that as well. One moment. Okay, so far I've added what I think Or what is going on? Great. It's blinking at me. It's locked for editing. Read only. I'm going to open up a second one then. Because it's locked for editing, I have the original in my email account.",
+    "speaker": "A"
+  },
+  {
+    "start": 1512.9,
+    "end": 1513.97,
+    "text": "Or is it locked because I'm in it?",
+    "speaker": "C"
+  },
+  {
+    "start": 1515.15,
+    "end": 1520.94,
+    "text": "I don't know. I think it just means that we can't add any more to it now. Have you completed it?",
+    "speaker": "D"
+  },
+  {
+    "start": 1521.84,
+    "end": 1573.0,
+    "text": "No. Oh, right. No, I was hoping that you guys could— Okay. There we go. Okay, here we go. So we need to tally up how much our product will be costing. So if you can look up at the screen, the large screen, I guess looking at your own too and telling me which one you think. Okay, we're using— kinetic, which is quite a large expense at €3. Yeah. We're using a regular chip. Yeah. It's curved. It's double curved. Double curved. So it's curved all around. It's another €3. We're already at €5. We're using plastic and rubber. Yeah. So good thing plastic is free. We're at €8.",
+    "speaker": "A"
+  },
+  {
+    "start": 1573.79,
+    "end": 1577.07,
+    "text": "Um, what about a special color?",
+    "speaker": "B"
+  },
+  {
+    "start": 1577.15,
+    "end": 1612.14,
+    "text": "Yeah, I guess we should do it just for one kind. Yeah, so it's like special color where we'll have two colors, right? Well, one color for the case, one color for the buttons. So we can— yeah, we have push button interface, so that's inexpensive. And, um, we have a special color for the button, and we also have a special form and special material, which puts us just barely under budget. Hooray!",
+    "speaker": "A"
+  },
+  {
+    "start": 1612.46,
+    "end": 1615.26,
+    "text": "Congratulations, guys!",
+    "speaker": "D"
+  },
+  {
+    "start": 1615.37,
+    "end": 1649.49,
+    "text": "So, um, our operating cost is €1,220. Awesome. And back to our PowerPoint. So we've— OK. Yes, we are. So we need to do a project evaluation again, which is probably—",
+    "speaker": "A"
+  },
+  {
+    "start": 1650.84,
+    "end": 1666.51,
+    "text": "I don't know, a different extension of the actual project rather than the product. Yeah, a project. Yeah, because we're talking about how we actually went around about doing it.",
+    "speaker": "D"
+  },
+  {
+    "start": 1666.93,
+    "end": 1676.27,
+    "text": "Yeah. All right, so, um, do you guys feel like there was room for creativity? I think we were pushed.",
+    "speaker": "A"
+  },
+  {
+    "start": 1676.97,
+    "end": 1677.9,
+    "text": "Push for creativity.",
+    "speaker": "C"
+  },
+  {
+    "start": 1678.16,
+    "end": 1689.95,
+    "text": "I mean, we weren't really given a lot of time or materials. Yeah, to go about our design task, so I think we could have done with a bit more time.",
+    "speaker": "D"
+  },
+  {
+    "start": 1691.25,
+    "end": 1704.97,
+    "text": "Yeah, okay, so it'd be like, need more time and materials. Yeah, but you were allowed creativity. Yeah, I think so. It's like, but you were supposed to.",
+    "speaker": "A"
+  },
+  {
+    "start": 1705.13,
+    "end": 1710.89,
+    "text": "Yeah, and like conceptual and functional, like we were very creative in coming up with an idea, I guess.",
+    "speaker": "C"
+  },
+  {
+    "start": 1710.97,
+    "end": 1732.12,
+    "text": "Yeah, but we were just limited by resources when we came down to it. Okay, if we had decided to use the LCD screen and like solar power backup and everything, and we wouldn't have been able to afford that, so that did limit creativity. But yeah, fruit and veg ID. Great.",
+    "speaker": "D"
+  },
+  {
+    "start": 1733.62,
+    "end": 1737.87,
+    "text": "Leadership. Is this me being like, guys, do you like me?",
+    "speaker": "A"
+  },
+  {
+    "start": 1741.47,
+    "end": 1743.06,
+    "text": "Good leadership. I think we stayed on task.",
+    "speaker": "C"
+  },
+  {
+    "start": 1743.34,
+    "end": 1755.07,
+    "text": "Yeah, we did. Seeing as we've come out with what we intended, a product within the budget, I think that's a sign of good leadership. And also our personal coach. Helps along the way.",
+    "speaker": "D"
+  },
+  {
+    "start": 1755.46,
+    "end": 1763.71,
+    "text": "So, you know, and the timing was good. We never were pushed for time or sat around doing nothing. So yeah, yeah, good timing.",
+    "speaker": "C"
+  },
+  {
+    "start": 1763.82,
+    "end": 1765.28,
+    "text": "Oops, personal Coke.",
+    "speaker": "A"
+  },
+  {
+    "start": 1765.66,
+    "end": 1767.55,
+    "text": "I think we worked great as a team.",
+    "speaker": "D"
+  },
+  {
+    "start": 1769.01,
+    "end": 1771.38,
+    "text": "Yeah, yeah, it's good teamwork.",
+    "speaker": "B"
+  },
+  {
+    "start": 1772.67,
+    "end": 1774.01,
+    "text": "I think we are well suited to our roles.",
+    "speaker": "C"
+  },
+  {
+    "start": 1774.51,
+    "end": 1775.88,
+    "text": "Yeah, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1782.12,
+    "end": 1789.13,
+    "text": "All right, how are our means? We needed more Play-Doh colors.",
+    "speaker": "A"
+  },
+  {
+    "start": 1789.47,
+    "end": 1798.94,
+    "text": "Yeah, and more Play-Doh because that was all the red we had. So even if we wanted to make a bigger prototype, we wouldn't have been able to. OK. Whatever.",
+    "speaker": "D"
+  },
+  {
+    "start": 1800.77,
+    "end": 1806.2,
+    "text": "Everything else was satisfactory? Is that— Yeah, the computer programs are good.",
+    "speaker": "A"
+  },
+  {
+    "start": 1806.56,
+    "end": 1816.18,
+    "text": "Yeah, it could be really straightforward for the computer. The only thing was— having to remember to, you know, tick the OKs. I think I was the only one who struggled with that.",
+    "speaker": "D"
+  },
+  {
+    "start": 1817.53,
+    "end": 1820.43,
+    "text": "I'm actually not sure if I've saved my presentations.",
+    "speaker": "B"
+  },
+  {
+    "start": 1821.1,
+    "end": 1825.24,
+    "text": "Yeah, they'll probably still be there.",
+    "speaker": "C"
+  },
+  {
+    "start": 1827.0,
+    "end": 1829.3,
+    "text": "New ideas found. I don't really know what that means.",
+    "speaker": "A"
+  },
+  {
+    "start": 1832.53,
+    "end": 1845.38,
+    "text": "I think we've all learned stuff from each other, like the new Through discussion. Yeah. Just about each different fact. So got new ideas from each other.",
+    "speaker": "D"
+  },
+  {
+    "start": 1845.43,
+    "end": 1847.0,
+    "text": "I'm not sure what new ideas found.",
+    "speaker": "C"
+  },
+  {
+    "start": 1854.35,
+    "end": 1854.49,
+    "text": "Hmm?",
+    "speaker": "B"
+  },
+  {
+    "start": 1856.51,
+    "end": 1862.91,
+    "text": "Yeah, well, I guess we really bounced off of each other, which was cool. Yeah. Like based on marketing stuff, and then you'd say something about interface.",
+    "speaker": "C"
+  },
+  {
+    "start": 1863.98,
+    "end": 1864.49,
+    "text": "Yeah, yeah, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1864.56,
+    "end": 1871.55,
+    "text": "And we were able to modify each other's ideas. Yeah. To fit in with our areas of expertise.",
+    "speaker": "B"
+  },
+  {
+    "start": 1873.26,
+    "end": 1873.77,
+    "text": "Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1874.0,
+    "end": 1877.91,
+    "text": "Oh, does it have smart materials, by the way? Sorry? Does it have smart materials?",
+    "speaker": "C"
+  },
+  {
+    "start": 1878.65,
+    "end": 1886.69,
+    "text": "Oh yeah. Oh yeah. Wow. Did it come into the— I don't know if we counted that in the cost.",
+    "speaker": "D"
+  },
+  {
+    "start": 1887.37,
+    "end": 1888.64,
+    "text": "Viktoria Forges.",
+    "speaker": "B"
+  },
+  {
+    "start": 1894.45,
+    "end": 1918.11,
+    "text": "Okay, well, with that achieved, our last slide is our closing slide. Yes, our costs are within budget. Yes, it's evaluated generally positively. Yeah, and, um, don't forget to complete final questionnaire and meeting summary. Then we celebrate in such a way that I'm watching TV. Idea.",
+    "speaker": "A"
+  },
+  {
+    "start": 1919.91,
+    "end": 1922.14,
+    "text": "Okay, brilliant. All right, thank you very much.",
+    "speaker": "D"
+  },
+  {
+    "start": 1922.72,
+    "end": 1924.55,
+    "text": "Okay, bye. Conclusion.",
+    "speaker": "A"
+  }
+]

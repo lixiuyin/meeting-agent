@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+tests/
+benchmark-results/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+data/
+exports/
+rag_storage/
+.coverage

@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "scope_type": "scoped",
+  "modality": "audio",
+  "items": [
+    {
+      "query": "Who is identified as the project manager in the first meeting?",
+      "expected_answer": "Heather is the project manager.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        1
+      ],
+      "expected_file_ids": [
+        1
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_001"
+    },
+    {
+      "query": "What specific smart material was discussed for making the remote control environmentally friendly?",
+      "expected_answer": "The team discussed using smart materials, specifically specific alloys of metals that have a shape memory. These materials can be heated and cooled to change shape, allowing screws holding components together to expand and force parts apart at the end of the product's life. This enables easy separation of components for reuse or recycling, addressing environmental responsibility and limited resources.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        2
+      ],
+      "expected_file_ids": [
+        2
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_002"
+    },
+    {
+      "query": "Which speaker introduced themselves as the marketing expert?",
+      "expected_answer": "Speaker D introduced themselves as the marketing expert.",
+      "query_type": "speaker",
+      "expected_meeting_ids": [
+        1
+      ],
+      "expected_file_ids": [
+        1
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_003"
+    },
+    {
+      "query": "What is the scheduled duration for the third meeting?",
+      "expected_answer": "The third meeting is scheduled to be 40 minutes long.",
+      "query_type": "temporal",
+      "expected_meeting_ids": [
+        3
+      ],
+      "expected_file_ids": [
+        3
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_004"
+    },
+    {
+      "query": "What functional requirements were discussed for the remote control in the second meeting?",
+      "expected_answer": "The functional requirements discussed included creating a portable device that allows users to control the television from anywhere without touching the set. Specific features mentioned for visibility in the dark included illuminated buttons that light up on touch or fluorescent materials that glow after absorbing light. Additionally, an alarm feature was proposed where a button on the television could trigger a sound from the handset if the remote was lost.",
+      "query_type": "summary",
+      "expected_meeting_ids": [
+        2
+      ],
+      "expected_file_ids": [
+        2
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_005"
+    },
+    {
+      "query": "What button mistake was noticed on the prototype design in the fourth meeting?",
+      "expected_answer": "Speaker A noticed there was a number 10 button instead of a zero button.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        4
+      ],
+      "expected_file_ids": [
+        4
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_006"
+    },
+    {
+      "query": "What role did speaker C claim to have in the first meeting?",
+      "expected_answer": "Speaker C identified themselves as the industrial designer for the project. They stated they would be responsible for the functional design phase, as well as the conceptual design and the detailed design for the final product.",
+      "query_type": "speaker",
+      "expected_meeting_ids": [
+        1
+      ],
+      "expected_file_ids": [
+        1
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_007"
+    },
+    {
+      "query": "What function key did the team suggest using to start the slideshow?",
+      "expected_answer": "The team suggested using the function F8 key to start the slideshow.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        1
+      ],
+      "expected_file_ids": [
+        1
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_008"
+    },
+    {
+      "query": "What energy sources were considered for the remote control in the third meeting?",
+      "expected_answer": "Several energy sources were considered for the remote control, including a basic battery which requires recharging, a hand-powered dynamo similar to old torches, and kinetic energy which transforms shaking into power. Solar power was also mentioned as a renewable option, though its usefulness inside a building was questioned.",
+      "query_type": "summary",
+      "expected_meeting_ids": [
+        3
+      ],
+      "expected_file_ids": [
+        3
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_009"
+    },
+    {
+      "query": "What animal did speaker B mention as their favorite animal during the team building exercise?",
+      "expected_answer": "Speaker B mentioned that their favorite animal changes all the time, but currently, it is an elk. They described it as having big antlers and noted that it looks like holly is growing out of its head. This discussion occurred during a team-building exercise where members were asked to express their favorite animal using its characteristics, which B participated in while their microphone was still attached to their body.",
+      "query_type": "factual",
+      "expected_meeting_ids": [
+        1
+      ],
+      "expected_file_ids": [
+        1
+      ],
+      "source": "Meeting Transcript",
+      "id": "audio_scoped_010"
+    }
+  ]
+}

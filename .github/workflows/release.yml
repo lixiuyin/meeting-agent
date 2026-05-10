@@ -1,0 +1,275 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      rollback_tag:
+        description: "Previous tag to rollback to (e.g., v1.2.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Step 1: Validate migrations ────────────────────────────────────
+  migrate-check:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5.5.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Install backend deps
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Validate migrations (dry-run)
+        working-directory: backend
+        env:
+          ENVIRONMENT: dev
+        run: uv run python -c "from src.core.database import init_db; init_db()"
+
+  # ── Step 2: Build and push Docker images ───────────────────────────
+  docker:
+    runs-on: ubuntu-latest
+    needs: migrate-check
+    if: ${{ !inputs.rollback_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@5166def8e8e335f4e5d616e1aff4a46c4c7e1f89 # v4.0.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c2575c830a2376098e713df7e0e1b88a047b4366 # v3.7.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (backend)
+        id: meta_backend
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}-backend
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6.18.0
+        with:
+          context: ./backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta_backend.outputs.tags }}
+          labels: ${{ steps.meta_backend.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign backend image with cosign
+        uses: sigstore/cosign-installer@v3
+      - run: |
+          echo "Signing backend images..."
+          for tag in ${{ steps.meta_backend.outputs.tags }}; do
+            cosign sign --yes "$tag"
+          done
+
+      - name: Docker metadata (frontend)
+        id: meta_frontend
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}-frontend
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6.18.0
+        with:
+          context: ./frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta_frontend.outputs.tags }}
+          labels: ${{ steps.meta_frontend.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign frontend image with cosign
+        run: |
+          echo "Signing frontend images..."
+          for tag in ${{ steps.meta_frontend.outputs.tags }}; do
+            cosign sign --yes "$tag"
+          done
+
+  # ── Step 3: Smoke test (run against built images) ──────────────────
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: docker
+    services:
+      backend:
+        image: ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}
+        ports:
+          - 8000:8000
+        env:
+          ENVIRONMENT: dev
+    steps:
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/v1/health/live; then
+              echo "Backend is healthy"
+              exit 0
+            fi
+            echo "Waiting for backend... ($i/30)"
+            sleep 2
+          done
+          echo "Backend failed to start"
+          exit 1
+
+      - name: Check readiness
+        run: curl -sf http://localhost:8000/api/v1/health/ready
+
+  e2e-full-release:
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Start compose stack
+        run: docker compose -f docker-compose.yaml up -d --build
+      - name: Wait for health
+        run: ./scripts/wait-for-health.sh
+      - name: Install frontend test deps
+        run: cd frontend && npm ci && npx playwright install --with-deps chromium
+      - name: Run full-stack Playwright
+        run: cd frontend && npx playwright test e2e/full-stack
+      - name: Collect compose logs on failure
+        if: failure()
+        run: docker compose logs > logs.txt
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-e2e-logs
+          path: logs.txt
+      - name: Shutdown compose stack
+        if: always()
+        run: docker compose -f docker-compose.yaml down -v
+
+  helm-validate-release:
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+      - run: helm lint deploy/helm/meeting-agent
+      - run: helm template meeting-agent deploy/helm/meeting-agent > /tmp/manifest.yaml
+
+  # ── Step 4: Generate CHANGELOG and create GitHub Release ────────────
+  github_release:
+    runs-on: ubuntu-latest
+    needs: [smoke-test, e2e-full-release, helm-validate-release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Generate CHANGELOG with git-cliff
+        uses: orhun/git-cliff-action@3c7b13de6090de4e8e558ce88f0a24c37a3d48bc # v4.4.2
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --tag ${{ github.ref_name }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Commit CHANGELOG
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "CHANGELOG unchanged, skipping commit"
+          else
+            git commit -m "docs: update CHANGELOG for ${{ github.ref_name }}"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && exit 0
+              echo "Push attempt $i failed, retrying in 5s..."
+              sleep 5
+            done
+            echo "Failed to push CHANGELOG after 3 attempts"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v3.0.0
+        with:
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+
+  # ── Rollback job (manual) ──────────────────────────────────────────
+  rollback:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.rollback_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rollback to ${{ inputs.rollback_tag }}
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ inputs.rollback_tag }}"
+          echo "Re-tagging ${TAG} as latest..."
+          # Pull the previous version's images; fail early if tag doesn't exist
+          docker pull ghcr.io/${REPO}-backend:${TAG} || {
+            echo "ERROR: Tag ${TAG} not found for backend image"
+            exit 1
+          }
+          docker pull ghcr.io/${REPO}-frontend:${TAG} || {
+            echo "ERROR: Tag ${TAG} not found for frontend image"
+            exit 1
+          }
+          # Re-tag as latest
+          docker tag ghcr.io/${REPO}-backend:${TAG} ghcr.io/${REPO}-backend:latest
+          docker tag ghcr.io/${REPO}-frontend:${TAG} ghcr.io/${REPO}-frontend:latest
+          # Push
+          docker push ghcr.io/${REPO}-backend:latest
+          docker push ghcr.io/${REPO}-frontend:latest
+          echo "Rollback complete: ${TAG} is now latest"

@@ -1,0 +1,1340 @@
+[
+  {
+    "start": 39.22,
+    "end": 40.12,
+    "text": "Is everyone ready to start?",
+    "speaker": "A"
+  },
+  {
+    "start": 40.57,
+    "end": 41.47,
+    "text": "Yeah. Yes.",
+    "speaker": "B"
+  },
+  {
+    "start": 41.87,
+    "end": 54.12,
+    "text": "Okay, great. Well, welcome to the third meeting of conceptual design. Let's get the PowerPoint presentation. Up and running.",
+    "speaker": "A"
+  },
+  {
+    "start": 59.45,
+    "end": 59.76,
+    "text": "Okay.",
+    "speaker": "C"
+  },
+  {
+    "start": 60.88,
+    "end": 84.85,
+    "text": "On the agenda for this particular meeting, we'll have your 3 presentations on what you've done since our last meeting after we came up with some general ideas of our design. And then we have to make some key decisions on our remote control concept. And how we're going to make it, what materials we're going to use, and that sort of thing. The meeting will be 40 minutes long.",
+    "speaker": "A"
+  },
+  {
+    "start": 85.22,
+    "end": 85.38,
+    "text": "Okay.",
+    "speaker": "D"
+  },
+  {
+    "start": 85.99,
+    "end": 91.44,
+    "text": "And, um, we will once again have Poppy as our first presenter.",
+    "speaker": "A"
+  },
+  {
+    "start": 91.52,
+    "end": 91.81,
+    "text": "Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 92.26,
+    "end": 95.33,
+    "text": "All right, and I will switch up PowerPoint.",
+    "speaker": "A"
+  },
+  {
+    "start": 96.25,
+    "end": 101.01,
+    "text": "Thank you. Okay.",
+    "speaker": "D"
+  },
+  {
+    "start": 109.1,
+    "end": 116.77,
+    "text": "Should be just loading. Okay. Oh, although I can't see it on my screen.",
+    "speaker": "B"
+  },
+  {
+    "start": 117.89,
+    "end": 119.43,
+    "text": "Let's just go here.",
+    "speaker": "D"
+  },
+  {
+    "start": 122.79,
+    "end": 182.97,
+    "text": "Okay. I've been doing some research into the different components that we could use, what's available to us to actually make the remote control. First of all, we have to look at how the remote control is actually made and what happens inside the casing, which is more your field. The main internal feature is a circuit board which contains all the electronics and also the contacts with the power source, which is not necessarily a battery, as we're about to see. There are several components of the circuit board that we need to consider, where we'll be getting them from, what they'll be made of, including the integrated circuit, which is also known as the chip, which is where all the main information is contained. Diodes, transistors, resonators, resistors, and capacitors all need to be considered as well, and all their positioning in the circuit.",
+    "speaker": "B"
+  },
+  {
+    "start": 183.42,
+    "end": 187.81,
+    "text": "Are they all included like mandatorily, or are these different options?",
+    "speaker": "A"
+  },
+  {
+    "start": 188.15,
+    "end": 244.08,
+    "text": "Uh, these, they're all different options. They're all separate apart from the chip. Yeah, which we will probably decide whether we buy a simple or regular advanced. We can go into that later. Um, all the other things are individual components that we'd have to get in separately and work out the most like effective, um, circuit including all the wires and everything like that. And the LED, of course, that's the light emitting diode. So we could so we've got flexibility with colors and things with that as well. Okay, there are lots of different possibilities for the energy source. We could use a basic battery, but that brings with it the need to be recharged and the bulk, the size of it as well, and they're not so great to dispose of environmentally. There's the hand-powered dynamo, which is a sort of thing that was used for torches 50 years ago, a bit out of date. Kinetic energy is something that's been recently developed.",
+    "speaker": "B"
+  },
+  {
+    "start": 244.32,
+    "end": 245.5,
+    "text": "What is a hand-powered animal?",
+    "speaker": "A"
+  },
+  {
+    "start": 245.91,
+    "end": 251.59,
+    "text": "Um, where you manually charge up the power, like you just—",
+    "speaker": "B"
+  },
+  {
+    "start": 251.62,
+    "end": 254.05,
+    "text": "every once in a while. Sorry, just every once in a while?",
+    "speaker": "A"
+  },
+  {
+    "start": 254.1,
+    "end": 255.65,
+    "text": "Yeah, every once in a while, I think.",
+    "speaker": "B"
+  },
+  {
+    "start": 255.8,
+    "end": 258.43,
+    "text": "But it'd be kind of strange to always be—",
+    "speaker": "A"
+  },
+  {
+    "start": 258.51,
+    "end": 263.5,
+    "text": "yeah, it'd be like going a step back in time. I don't think it would really be with kind of cutting edge technology.",
+    "speaker": "B"
+  },
+  {
+    "start": 263.58,
+    "end": 263.7,
+    "text": "No.",
+    "speaker": "A"
+  },
+  {
+    "start": 264.29,
+    "end": 399.6,
+    "text": "Whereas kinetic energy is a new idea that's been used by some watches and other devices where you just shake the device and it gives it to power. I mean, the kinetic energy is transformed into power to make the circuit work. Um, or the solar power, which we've been considering inside a building, which is where it's going to be used. Might not be quite so useful. But good to look into renewable energy, always the way. Lots of considerations for the case, like what sort of shape it would be, curved or flat. That's got a lot to do with the ergonomics, like how it's comfortable and sits in the hand. We don't want something that's huge and you can't pick up, or too small or too slidey. I know I've had a remote control before which You couldn't tell which was the front and the back. It had so many buttons on, and the shape was so symmetrical that I'd be pressing like a volume button instead of the on button because you can't really see which way around it is. We also can choose what materials. We could use metal, we could use rubber, which might be more ideal for the anti-RSI. It's like the same sort of rubber that's used in stress balls and things like that. So it's very soft, not so stressful on your hands. Wood, again, stepping back in time again there. I don't think that's quite up to date with what we're looking for here. Titanium is not going to be possible, even though it's just beyond our budget really, but would have been maybe for future projects. Right, I have a choice for buttons as well. We've developed some— we've got some good advances in technology with our research team. I've found some new multiple options, scroll buttons. I think that was brought up before. They're basically quite a flexible design model. You don't have to use individual buttons, you can just slide up and down. I'm sure we're all quite familiar with those on mobiles or computer laptop pads.",
+    "speaker": "B"
+  },
+  {
+    "start": 400.35,
+    "end": 411.79,
+    "text": "One thing with scroll buttons though, we would have to have an LCD display, and the glow-in-the-dark thing would be difficult.",
+    "speaker": "A"
+  },
+  {
+    "start": 412.11,
+    "end": 506.9,
+    "text": "Yeah, we're going on to that later. With the LCD, that means we need a really advanced chip, and it's unlikely that that's going to be in our budget. Also, we've got the integrated push button, which is what we're most familiar with. It's most straightforward, but you can incorporate that with a scroll button as well. So good decisions to make there. And this is what I was just saying before, linked into the different— depends on what type of buttons we have and the inputs. Simple would go with the push button. Regular, you could link with the scroll button. and the advanced would have to go with an LCD display. My personal preferences, I think we could go for the kinetic energy source. I don't— I think that's quite an advanced kind of technology. It's not been seen before, so it could be quite a novelty factor, attractive as well, and also energy-saving because you're producing the energy. You don't need an external battery supply or solar panels, you just give it a shake. Yeah, sounds brilliant to me. Rubber casing, I think, were probably the best if we're going for the anti-RSI and like more choice with aesthetics. Like, it could be pretty much any color we want and gives you, yeah, more flexibility there. And probably the regular chip as opposed to the simple, then we could possibly have the scroll and the push, but no LCD because we probably can't afford that one.",
+    "speaker": "B"
+  },
+  {
+    "start": 507.2,
+    "end": 507.45,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 508.23,
+    "end": 524.72,
+    "text": "Um, one concern with the rubber casing is that it would be rubber encapsulating all of these chips and diodes and delicate technology as like, as the exterior. This is the one thing that's protecting its innards.",
+    "speaker": "A"
+  },
+  {
+    "start": 525.08,
+    "end": 533.89,
+    "text": "I think that would— there would be a sort of more internal casing and the rubber would just be what's in contact with the human hand.",
+    "speaker": "B"
+  },
+  {
+    "start": 534.25,
+    "end": 552.0,
+    "text": "Another thing is it might be more difficult if it's a rubber exterior and we were talking about putting on interchangeable plates. Yeah. I don't see how a rubber plate going on top of it would stay there. If it was sort of like a clip-on plastic plate, it would work that way.",
+    "speaker": "A"
+  },
+  {
+    "start": 553.17,
+    "end": 568.81,
+    "text": "Maybe if the, um, if it was just kind of more of a rubber coating which was on to a case, so it was kind of the whole thing would be removable, like plastic with rubber. Yeah, like, yeah, I can't think of what.",
+    "speaker": "B"
+  },
+  {
+    "start": 569.23,
+    "end": 572.5,
+    "text": "Well, there's, there is a certain phone that has like a rubber casing.",
+    "speaker": "D"
+  },
+  {
+    "start": 572.61,
+    "end": 586.3,
+    "text": "Yeah, or like you can get sort of outer casing for iPods and something that's just Yes. It's protective as well. It stops it. I mean, it will reduce the impact if it was dropped or something. Yeah. As well, because it wouldn't damage itself so easy.",
+    "speaker": "B"
+  },
+  {
+    "start": 587.13,
+    "end": 587.4,
+    "text": "All right.",
+    "speaker": "A"
+  },
+  {
+    "start": 587.69,
+    "end": 590.11,
+    "text": "So maybe a mixture of both there, maybe. Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 590.21,
+    "end": 592.07,
+    "text": "So the actual remote would be hard plastic and the casing is—",
+    "speaker": "C"
+  },
+  {
+    "start": 592.1,
+    "end": 593.56,
+    "text": "And then, yeah. Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 593.62,
+    "end": 593.69,
+    "text": "Okay.",
+    "speaker": "D"
+  },
+  {
+    "start": 593.94,
+    "end": 595.13,
+    "text": "And the buttons obviously are rubber.",
+    "speaker": "C"
+  },
+  {
+    "start": 595.93,
+    "end": 596.11,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 596.41,
+    "end": 596.52,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 597.04,
+    "end": 605.33,
+    "text": "Yeah. That sounds good. Is it possible to put designs onto this type of rubber?",
+    "speaker": "A"
+  },
+  {
+    "start": 606.61,
+    "end": 608.38,
+    "text": "As far as I know, it should be.",
+    "speaker": "B"
+  },
+  {
+    "start": 608.78,
+    "end": 612.03,
+    "text": "Okay, we'll just say yeah. Yeah, yes, just one.",
+    "speaker": "A"
+  },
+  {
+    "start": 612.08,
+    "end": 613.3,
+    "text": "Yeah, yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 614.33,
+    "end": 634.85,
+    "text": "All right, I like the kinetic energy source idea. Yeah, um, I don't know when people will, um, be moving a remote around a lot, but I think that it's worth it. Kinetic, kinetic, um, energy source, it can make— and we could have any kind of style, it wouldn't be as heavy or bulky and Yeah. Yeah, just for environmental reasons.",
+    "speaker": "A"
+  },
+  {
+    "start": 635.35,
+    "end": 635.49,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 636.71,
+    "end": 638.46,
+    "text": "I guess it's a bit scary because it hasn't been done before.",
+    "speaker": "C"
+  },
+  {
+    "start": 639.12,
+    "end": 639.45,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 640.01,
+    "end": 644.59,
+    "text": "So it seems we'd have to do more research on it. Or I don't know if you could have a battery pack.",
+    "speaker": "C"
+  },
+  {
+    "start": 645.07,
+    "end": 646.42,
+    "text": "Like as a backup.",
+    "speaker": "B"
+  },
+  {
+    "start": 646.59,
+    "end": 652.75,
+    "text": "Yeah, so in case of one battery. Because most remotes use two batteries, I believe. So if it was running off of one battery, is it—",
+    "speaker": "C"
+  },
+  {
+    "start": 652.75,
+    "end": 653.41,
+    "text": "That would be good, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 653.48,
+    "end": 656.35,
+    "text": "Yeah. It's an alternative just in case.",
+    "speaker": "B"
+  },
+  {
+    "start": 656.62,
+    "end": 658.62,
+    "text": "Right. Went wrong.",
+    "speaker": "A"
+  },
+  {
+    "start": 660.03,
+    "end": 667.85,
+    "text": "Maybe we could— you were saying about solar power maybe not working indoors, but a lot of calculators—",
+    "speaker": "D"
+  },
+  {
+    "start": 667.87,
+    "end": 668.61,
+    "text": "That's true.",
+    "speaker": "C"
+  },
+  {
+    "start": 668.98,
+    "end": 669.88,
+    "text": "I just thought of that.",
+    "speaker": "D"
+  },
+  {
+    "start": 670.12,
+    "end": 677.86,
+    "text": "Yeah, maybe that could be the backup instead of a battery. Also, it needs some light, doesn't it?",
+    "speaker": "B"
+  },
+  {
+    "start": 677.92,
+    "end": 680.15,
+    "text": "Yeah, you can't watch TV in the dark then.",
+    "speaker": "A"
+  },
+  {
+    "start": 682.12,
+    "end": 694.25,
+    "text": "But the thing is, you don't need the solar all the time. It can be stored. You can have the solar energy and then it can store that energy. And use it. It just needs to be in light for a certain amount of time per day, like a few hours a day.",
+    "speaker": "B"
+  },
+  {
+    "start": 695.06,
+    "end": 696.91,
+    "text": "I think that might be a little impractical though.",
+    "speaker": "A"
+  },
+  {
+    "start": 697.05,
+    "end": 700.03,
+    "text": "Yeah, I think sometimes it's just shoved under a cushion and—",
+    "speaker": "C"
+  },
+  {
+    "start": 700.37,
+    "end": 701.81,
+    "text": "Yeah, that's true. It could easily—",
+    "speaker": "B"
+  },
+  {
+    "start": 702.39,
+    "end": 703.69,
+    "text": "like, people don't want to have to worry about that.",
+    "speaker": "A"
+  },
+  {
+    "start": 704.7,
+    "end": 725.76,
+    "text": "Yeah, I suppose it would be really annoying if you get to think, oh no, I've got to charge my remote today. Like, if the kinetic thing— I think what's best about that is that it's instant. Instant energy. You don't have to, you know, you can shake it a few times or whatever, and, or just like pick it up when you're gonna— yeah, yeah. Instead of— you don't have to like make sure it's in the right place to charge. And yeah, yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 726.45,
+    "end": 729.46,
+    "text": "All right, cool. Okay, is that the end of your presentation?",
+    "speaker": "A"
+  },
+  {
+    "start": 730.04,
+    "end": 730.15,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 730.31,
+    "end": 731.35,
+    "text": "All right, thank you.",
+    "speaker": "A"
+  },
+  {
+    "start": 737.0,
+    "end": 737.91,
+    "text": "There we go. Thanks.",
+    "speaker": "B"
+  },
+  {
+    "start": 758.64,
+    "end": 766.2,
+    "text": "It's not on my screen. Why?",
+    "speaker": "D"
+  },
+  {
+    "start": 766.41,
+    "end": 771.44,
+    "text": "It didn't— it wasn't on mine either. I don't know why. I think I just, I just used the mouse on Oh, okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 772.29,
+    "end": 774.04,
+    "text": "Is it that one?",
+    "speaker": "D"
+  },
+  {
+    "start": 774.6,
+    "end": 775.41,
+    "text": "Yeah, that's them.",
+    "speaker": "B"
+  },
+  {
+    "start": 777.63,
+    "end": 826.13,
+    "text": "I'm just going to go through the interface concept with Hii Snowy. First of all, I'll explain what a user interface is. It's the aspects of a computer system which can be seen or otherwise perceived, for example, heard or felt, maybe. By the human user, and it's also the commands that the user uses to control its operation and to input data. Um, there are two types of user interfaces. There's the graphical user interface, which emphasizes the use of pictures for output and a pointing device, for example a mouse, for input control. So that's sort of like the scroll thing we were talking about.",
+    "speaker": "D"
+  },
+  {
+    "start": 826.26,
+    "end": 827.85,
+    "text": "Oh, OK. Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 828.59,
+    "end": 841.02,
+    "text": "I'm not really sure about the pictures. Maybe that's on an LCD screen. Or maybe it's the buttons are pictures or something. Hmm.",
+    "speaker": "D"
+  },
+  {
+    "start": 844.98,
+    "end": 848.41,
+    "text": "Yeah. So I suppose second time— Afdi?",
+    "speaker": "B"
+  },
+  {
+    "start": 848.54,
+    "end": 860.64,
+    "text": "Oh, sorry. Because command interface requires you to type textual commands. And input at a keyboard, so the numbers are sort of like a keyboard, you're pressing the numbers for what you want.",
+    "speaker": "A"
+  },
+  {
+    "start": 860.77,
+    "end": 866.94,
+    "text": "So for the graphical user, you must need some kind of presentation for the graphics?",
+    "speaker": "D"
+  },
+  {
+    "start": 867.18,
+    "end": 896.09,
+    "text": "I suppose on some buttons you would have, like the power would be some kind of symbol, and if you wanted to go onto teletext, I know we're not having that, but I mean a similar thing. They have— there's a little picture of a screen with lines across it, which, yeah, I suppose it's that sort of thing, like the, the symbol on the button. But if we're having a simplified display anyway, that we probably won't have to focus so much on that and be more than the numbers and the volume.",
+    "speaker": "B"
+  },
+  {
+    "start": 896.36,
+    "end": 897.78,
+    "text": "It'd be more command interface.",
+    "speaker": "A"
+  },
+  {
+    "start": 897.88,
+    "end": 901.97,
+    "text": "I suppose you need to think of symbols for like the volume display and stuff like that.",
+    "speaker": "B"
+  },
+  {
+    "start": 902.06,
+    "end": 907.63,
+    "text": "So it's just graphical for the pointing aspect? The infrared is like, that's considered a—",
+    "speaker": "C"
+  },
+  {
+    "start": 907.96,
+    "end": 908.11,
+    "text": "Hmm?",
+    "speaker": "A"
+  },
+  {
+    "start": 908.76,
+    "end": 914.99,
+    "text": "No, I think it's to do with the actual symbols that are on the buttons of the remote control.",
+    "speaker": "D"
+  },
+  {
+    "start": 915.74,
+    "end": 917.99,
+    "text": "OK, so when it says pointing device, that doesn't include—",
+    "speaker": "C"
+  },
+  {
+    "start": 918.0,
+    "end": 921.01,
+    "text": "Well, it could be a scroller thing and something could come up on the screen.",
+    "speaker": "D"
+  },
+  {
+    "start": 921.13,
+    "end": 923.26,
+    "text": "Yeah, I think they're talking about LCD type things.",
+    "speaker": "A"
+  },
+  {
+    "start": 924.0,
+    "end": 924.17,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 924.59,
+    "end": 931.77,
+    "text": "OK. Yeah. But I think we're going to go with the command interface.",
+    "speaker": "D"
+  },
+  {
+    "start": 932.1,
+    "end": 933.64,
+    "text": "Interface anyway to make it more simplistic.",
+    "speaker": "A"
+  },
+  {
+    "start": 934.12,
+    "end": 944.57,
+    "text": "But we could incorporate some of the graphical user points, as in just to make it nicer to look at, maybe.",
+    "speaker": "D"
+  },
+  {
+    "start": 944.93,
+    "end": 945.31,
+    "text": "What do you mean?",
+    "speaker": "A"
+  },
+  {
+    "start": 946.23,
+    "end": 953.01,
+    "text": "Like, I can't think of an example, but sort of like little pictures rather than—",
+    "speaker": "D"
+  },
+  {
+    "start": 953.91,
+    "end": 954.85,
+    "text": "Oh yeah, like how the buttons—",
+    "speaker": "A"
+  },
+  {
+    "start": 955.11,
+    "end": 959.94,
+    "text": "Instead of saying volume, like a little Speaker:KATIE] Yeah, as a button though.",
+    "speaker": "D"
+  },
+  {
+    "start": 960.2,
+    "end": 962.83,
+    "text": "So it's a keyboard in the shape of it, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 962.83,
+    "end": 993.32,
+    "text": "[Speaker:KATIE] Yeah, I like that idea. [Speaker:KATIE] We've decided that the command interface would be the most useful for a remote control, as it would be less complicated and the controls would be more user-friendly. The remote control would be cheaper to design. So that we'd have more money in the budget to target the design area of the interface, make it more trendy and original. We'll have more money if we keep it simple.",
+    "speaker": "D"
+  },
+  {
+    "start": 993.54,
+    "end": 998.71,
+    "text": "Yeah, I'm sure kinetic energy would probably dip into the budget a bit more too.",
+    "speaker": "A"
+  },
+  {
+    "start": 998.82,
+    "end": 1024.92,
+    "text": "Yeah, it's quite a new technology. We also have to keep in mind when we're designing our more user-friendly remote control, that a lot of interfaces consist of a clutter of buttons, that their functions, colors, and forms aren't always helpful. Yeah, that's true.",
+    "speaker": "D"
+  },
+  {
+    "start": 1025.23,
+    "end": 1033.16,
+    "text": "Yeah, it's like the buttons with all the different colors for different choices and things, it can be a bit overwhelming.",
+    "speaker": "B"
+  },
+  {
+    "start": 1035.43,
+    "end": 1053.63,
+    "text": "All interfaces are different, so that doesn't improve the use of the product. So we need to come up with something that's easy to understand and maybe learn from the mistakes of other interfaces that can be too complicated for people to use.",
+    "speaker": "D"
+  },
+  {
+    "start": 1054.48,
+    "end": 1055.95,
+    "text": "Mm-hmm.",
+    "speaker": "A"
+  },
+  {
+    "start": 1058.07,
+    "end": 1059.82,
+    "text": "Yeah. Does anyone have any questions?",
+    "speaker": "D"
+  },
+  {
+    "start": 1062.18,
+    "end": 1068.27,
+    "text": "Do you think that we should keep all the buttons to one same color just to give it a simplistic look?",
+    "speaker": "A"
+  },
+  {
+    "start": 1070.63,
+    "end": 1076.53,
+    "text": "I think if we go with the design plate thing, we'll have to, just because of color clashing.",
+    "speaker": "C"
+  },
+  {
+    "start": 1076.86,
+    "end": 1077.28,
+    "text": "Yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1077.54,
+    "end": 1083.19,
+    "text": "If you wanted to. I mean, depending on what comes out of the design, we might have to stick to just black buttons.",
+    "speaker": "C"
+  },
+  {
+    "start": 1084.27,
+    "end": 1101.12,
+    "text": "But what about the lighting up effect? You mean different colors for the lighting, or, um, well, um, I thought we had, um, decided that we would— if you touch one of the buttons, they'd all light up. And so if they were black, it wouldn't be possible for them to light up.",
+    "speaker": "A"
+  },
+  {
+    "start": 1102.63,
+    "end": 1103.33,
+    "text": "Oh, I see what you're saying.",
+    "speaker": "C"
+  },
+  {
+    "start": 1104.63,
+    "end": 1107.5,
+    "text": "Well, if they were white, they would glow, probably, if they were made out of rubber.",
+    "speaker": "A"
+  },
+  {
+    "start": 1107.6,
+    "end": 1114.24,
+    "text": "Oh, so you're picturing the light is coming from the back. I kind of pictured it as kind of coming from the sides and lighting it up. Frontwards.",
+    "speaker": "C"
+  },
+  {
+    "start": 1114.9,
+    "end": 1117.07,
+    "text": "Oh, oh, like come from the back.",
+    "speaker": "A"
+  },
+  {
+    "start": 1117.15,
+    "end": 1129.17,
+    "text": "Okay, I'd assume like an internal light. Okay, yeah, that comes through, so there would have to, have to be some parts maybe transparent around the buttons or something.",
+    "speaker": "B"
+  },
+  {
+    "start": 1129.59,
+    "end": 1134.28,
+    "text": "Well, rubber is a more translucent product too, so it should be able to get that taken care of.",
+    "speaker": "A"
+  },
+  {
+    "start": 1135.15,
+    "end": 1152.94,
+    "text": "In the phone that I was thinking of as well, when you change the covers of it, the little buttons that actually, you know, that control stuff are behind the rubber, so you can change the buttons when you're changing the faces. Do you know what I mean?",
+    "speaker": "D"
+  },
+  {
+    "start": 1153.12,
+    "end": 1154.68,
+    "text": "Yeah, they start over.",
+    "speaker": "C"
+  },
+  {
+    "start": 1154.97,
+    "end": 1166.16,
+    "text": "Yeah, okay, and that's behind it. So I mean, we don't have to decide on one color. Each face could have its own color of Buttons, maybe?",
+    "speaker": "D"
+  },
+  {
+    "start": 1168.63,
+    "end": 1170.21,
+    "text": "Well, if they're raised up buttons.",
+    "speaker": "A"
+  },
+  {
+    "start": 1171.11,
+    "end": 1171.35,
+    "text": "Yeah.",
+    "speaker": "C"
+  },
+  {
+    "start": 1171.54,
+    "end": 1193.12,
+    "text": "So that you can feel them. We were talking about it being more— a lot more tangible. It might be more difficult to do. Yeah. If they're sticking up. If it's flat, then— like on a cell phone or a mobile phone, it's all very flat. You just have to sort of press down on these tiny little buttons.",
+    "speaker": "A"
+  },
+  {
+    "start": 1193.23,
+    "end": 1228.12,
+    "text": "But yeah, I think it would be possible. I don't think it would make that much difference. I mean, the dimensions of it, because if it's just like constructed in the same way as like the front cover of a mobile phone, you can like take off the hard cover and then there's the, like you said, the buttons, and then you get to the circuit. I don't think it would matter that the buttons were bigger through the top casing. I'm sure you could work it out to fit in the casing without causing too much difficulty.",
+    "speaker": "B"
+  },
+  {
+    "start": 1228.3,
+    "end": 1228.86,
+    "text": "Should that be fine?",
+    "speaker": "C"
+  },
+  {
+    "start": 1229.31,
+    "end": 1233.15,
+    "text": "All right, if it's doable, we can do it.",
+    "speaker": "A"
+  },
+  {
+    "start": 1233.24,
+    "end": 1234.69,
+    "text": "Yeah, sounds good to me.",
+    "speaker": "C"
+  },
+  {
+    "start": 1235.01,
+    "end": 1238.82,
+    "text": "So that's everything then. Okay, all right, thank you.",
+    "speaker": "D"
+  },
+  {
+    "start": 1243.11,
+    "end": 1243.95,
+    "text": "Okay, is that my turn then?",
+    "speaker": "C"
+  },
+  {
+    "start": 1244.01,
+    "end": 1245.39,
+    "text": "That means you're up.",
+    "speaker": "A"
+  },
+  {
+    "start": 1245.88,
+    "end": 1246.28,
+    "text": "All right.",
+    "speaker": "B"
+  },
+  {
+    "start": 1249.9,
+    "end": 1257.15,
+    "text": "I have a shorter report for you today. It took a while to get this, so—",
+    "speaker": "C"
+  },
+  {
+    "start": 1263.02,
+    "end": 1264.64,
+    "text": "You're not plugged in yet.",
+    "speaker": "B"
+  },
+  {
+    "start": 1265.29,
+    "end": 1400.3,
+    "text": "Oh, that's a very good point. Okay, so this report is about trend watching, basically so we can live up to our purpose of having a very fashionable Remote Control. Sorry. There we go. So just so you know, my method was mainly web-based research this time around. I also spoke with fashion experts in Milan, New York, and Paris. And I looked at the design reports from previous years here at Real Remote just so we can work off of them, see how fashions have changed. So I'll list the 3 most important aspects that I've come across. And they're each more important than the one that comes after it. The first one is that there should be a fancy look and feel instead of the current functional look and feel. This should be our priority, as we've been saying. The second most important aspect is that a remote— that the remote control should be technologically innovative. So I think we've done a lot of talking about that, just with lighting and the buttons and the faceplates. So it looks like we'll be able to keep on track with that. And the third most important aspect is that the remote control should be easy to use. Pretty basic there. The recent fashion update, according to fashion washers in Paris and Milan, is that fruit and vegetables will be the most important theme for clothes, shoes, and furniture. Also, in contrast to last year, the feel of the material is expected to be spongy. Again, we've already discussed that with rubber versus hard plastic buttons. So my personal preferences here— Of course, we've already talked about the personal faceplates in this meeting, and I'd like to stick to that. The fruits and vegetables themes, I don't know if that's going to work for us. It sounds something that you'd use on kitchenware. I don't know if we want to do it on remotes. It could be one of the options, maybe for the television that people have in their kitchen. The temporary light-up idea sounds like we're going to stick to that. And then tying in a trendy look with user friendliness.",
+    "speaker": "C"
+  },
+  {
+    "start": 1402.0,
+    "end": 1419.59,
+    "text": "Yeah, yeah, it's the fruits and vegetables is the only area that I find rather jarring. Everything else we can really, we can really, um, do according to our plans already given the market. But fruits and vegetables seems a very strange idea.",
+    "speaker": "A"
+  },
+  {
+    "start": 1419.65,
+    "end": 1430.59,
+    "text": "It's a lot of left field, but it's everywhere. So maybe I've seen a lot of purses with olives on them. But I think, I think if we stick to TV-based, you know, maybe TV shows or—",
+    "speaker": "C"
+  },
+  {
+    "start": 1431.26,
+    "end": 1435.37,
+    "text": "yeah, but they still need to fit into people's decor though.",
+    "speaker": "A"
+  },
+  {
+    "start": 1435.76,
+    "end": 1484.76,
+    "text": "I think we could possibly take a more abstract design, like look at the basic shapes of different fruits and vegetables and then just really like strip it down to like really basic shapes. I mean, we don't have to make something in the shape of a strawberry, but it could have the curves of a strawberry or something, or a strawberry seed, or an ace, or just like, you know, really make it quite abstract if that fits in more with what we're doing instead of fruits and vegetables. Just if you look at it straightforward, it's a bit— yeah, it doesn't quite fit in with the trendy— well, obviously it does if that's the case, but maybe we could go more directly, I don't know. But initially, I don't know, I think if we just sort of tone it down a bit.",
+    "speaker": "B"
+  },
+  {
+    "start": 1486.43,
+    "end": 1490.87,
+    "text": "Tone it down. Yeah, no photos of fruit on our product.",
+    "speaker": "A"
+  },
+  {
+    "start": 1490.93,
+    "end": 1517.61,
+    "text": "One thing I was thinking though is, I don't know if you'll remember from our kickoff meeting, we talked about our favorite animals. So maybe there could be animal-based, because a lot of people have a house cat or a dog. That might be getting too specific and we should see what the success of the first faceplates are, but it's something to keep to keep in mind. And do you have any questions? Pretty straightforward?",
+    "speaker": "C"
+  },
+  {
+    "start": 1517.61,
+    "end": 1518.9,
+    "text": "[Speaker:KIM] Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 1518.9,
+    "end": 1535.16,
+    "text": "[Speaker:JESSICA] All right. Given that information, we need to start making some more specific decisions. So I'll need to hook up the PowerPoint. Again.",
+    "speaker": "A"
+  },
+  {
+    "start": 1538.32,
+    "end": 1539.51,
+    "text": "There you go.",
+    "speaker": "D"
+  },
+  {
+    "start": 1552.05,
+    "end": 1554.62,
+    "text": "Have you guys been saving your PowerPoint presentations to the—",
+    "speaker": "C"
+  },
+  {
+    "start": 1555.18,
+    "end": 1557.32,
+    "text": "I didn't for the first one, but I have now.",
+    "speaker": "B"
+  },
+  {
+    "start": 1557.59,
+    "end": 1558.62,
+    "text": "It's still around, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 1558.7,
+    "end": 1558.9,
+    "text": "Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 1560.06,
+    "end": 1561.37,
+    "text": "Where do you have to save it?",
+    "speaker": "D"
+  },
+  {
+    "start": 1561.96,
+    "end": 1563.29,
+    "text": "Project documents, I think.",
+    "speaker": "B"
+  },
+  {
+    "start": 1577.97,
+    "end": 1582.35,
+    "text": "Okay, okay, I'm just trying to make this pop up now.",
+    "speaker": "D"
+  },
+  {
+    "start": 1591.62,
+    "end": 1592.26,
+    "text": "All right, here we go.",
+    "speaker": "C"
+  },
+  {
+    "start": 1594.59,
+    "end": 1624.52,
+    "text": "Okay, so we have to decide now exactly what we are going to do. So energy, we— oh, oh no, I can't write it in when it's in this setting. Does anyone know how to take it out of, um, the PowerPoint? Yeah. Yeah, okay, um, so back to decisions. Energy, we've decided on kinetic, right? Yeah, okay, so that's good.",
+    "speaker": "A"
+  },
+  {
+    "start": 1624.56,
+    "end": 1633.28,
+    "text": "Are we going to have a backup? Hmm, or do we just—",
+    "speaker": "B"
+  },
+  {
+    "start": 1633.63,
+    "end": 1636.49,
+    "text": "but would a backup really be necessary?",
+    "speaker": "A"
+  },
+  {
+    "start": 1638.52,
+    "end": 1654.03,
+    "text": "I mean, will people just use the battery if there's no I think maybe we could just go for the kinetic energy and be bold and innovative and hope this works. And well, hope that it works.",
+    "speaker": "B"
+  },
+  {
+    "start": 1654.08,
+    "end": 1656.7,
+    "text": "Yeah, yeah, there's like no reason why it wouldn't work, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 1657.24,
+    "end": 1662.49,
+    "text": "So I think we should just like take, uh, advantage of like using this to its full potential.",
+    "speaker": "B"
+  },
+  {
+    "start": 1662.54,
+    "end": 1664.29,
+    "text": "Yeah, it could even be one of our selling points.",
+    "speaker": "A"
+  },
+  {
+    "start": 1664.53,
+    "end": 1667.39,
+    "text": "It could be fully kinetic energy. Yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 1667.76,
+    "end": 1668.9,
+    "text": "Environmentally conscious.",
+    "speaker": "A"
+  },
+  {
+    "start": 1669.17,
+    "end": 1673.26,
+    "text": "So if it's not working, they just have to shake it a bit and that revitalizes it.",
+    "speaker": "C"
+  },
+  {
+    "start": 1673.42,
+    "end": 1673.61,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1674.97,
+    "end": 1681.49,
+    "text": "All right, the next decision is chip on print. I don't exactly know what that means.",
+    "speaker": "A"
+  },
+  {
+    "start": 1682.15,
+    "end": 1688.79,
+    "text": "It was whether we went for the simple, the regular, or the advanced chip, and that linked in with what buttons we were gonna have.",
+    "speaker": "B"
+  },
+  {
+    "start": 1688.84,
+    "end": 1691.34,
+    "text": "So, right, and we were going for more simplistic style, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 1692.09,
+    "end": 1701.13,
+    "text": "Yeah, but was— so that was without the LCD, so that means we're not doing the advanced. So it depends on whether we wanted the scroll buttons or just the push buttons?",
+    "speaker": "B"
+  },
+  {
+    "start": 1701.65,
+    "end": 1703.38,
+    "text": "I think we decided on the push buttons, right?",
+    "speaker": "A"
+  },
+  {
+    "start": 1703.73,
+    "end": 1704.63,
+    "text": "So that's the simple.",
+    "speaker": "B"
+  },
+  {
+    "start": 1704.68,
+    "end": 1709.11,
+    "text": "Yeah. Would we need a more advanced one for the lighting, the interior lighting system?",
+    "speaker": "A"
+  },
+  {
+    "start": 1710.38,
+    "end": 1716.18,
+    "text": "Yeah, possibly. So it's probably going to be the regular chip that we're going to need. So it's a medium. So regular.",
+    "speaker": "B"
+  },
+  {
+    "start": 1716.26,
+    "end": 1717.51,
+    "text": "That's called medium or regular?",
+    "speaker": "A"
+  },
+  {
+    "start": 1717.61,
+    "end": 1721.4,
+    "text": "Regular, sorry. Okay. Regular chip.",
+    "speaker": "B"
+  },
+  {
+    "start": 1722.01,
+    "end": 1723.0,
+    "text": "Oh, is regular not simple?",
+    "speaker": "C"
+  },
+  {
+    "start": 1723.61,
+    "end": 1727.62,
+    "text": "Yeah, I think. Yeah. If we because of the lighting that we've decided to put in as well.",
+    "speaker": "B"
+  },
+  {
+    "start": 1728.92,
+    "end": 1735.09,
+    "text": "Okay, and cases. Um, so this is— this dependent on shape or what it's made of or what?",
+    "speaker": "A"
+  },
+  {
+    "start": 1736.21,
+    "end": 1740.94,
+    "text": "I think this is just like going to be that very outer case which we've all decided on rubber.",
+    "speaker": "B"
+  },
+  {
+    "start": 1741.17,
+    "end": 1752.7,
+    "text": "Yeah, yeah, well I guess plastic and rubber coated in rubber. Yeah, plastic rubber coat with rubber coating and interchangeable.",
+    "speaker": "A"
+  },
+  {
+    "start": 1754.73,
+    "end": 1756.43,
+    "text": "Interchangeable, yeah, we're still going for that.",
+    "speaker": "B"
+  },
+  {
+    "start": 1756.48,
+    "end": 1769.28,
+    "text": "Yeah, interchangeable plates. Okay. User interface concept. This is your time to shine.",
+    "speaker": "A"
+  },
+  {
+    "start": 1769.64,
+    "end": 1778.58,
+    "text": "We decided on the component— I'm sorry, I've lost my PowerPoint thing, so I can't remember what it's called.",
+    "speaker": "D"
+  },
+  {
+    "start": 1778.62,
+    "end": 1780.32,
+    "text": "I think it was called command interface.",
+    "speaker": "C"
+  },
+  {
+    "start": 1781.0,
+    "end": 1781.98,
+    "text": "Oh yeah, yeah.",
+    "speaker": "A"
+  },
+  {
+    "start": 1782.14,
+    "end": 1782.75,
+    "text": "Command interface.",
+    "speaker": "C"
+  },
+  {
+    "start": 1782.84,
+    "end": 1784.19,
+    "text": "The command interface.",
+    "speaker": "A"
+  },
+  {
+    "start": 1785.19,
+    "end": 1786.81,
+    "text": "The command line interface, yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1787.44,
+    "end": 1788.71,
+    "text": "You say command line?",
+    "speaker": "A"
+  },
+  {
+    "start": 1788.95,
+    "end": 1789.12,
+    "text": "Yeah.",
+    "speaker": "D"
+  },
+  {
+    "start": 1789.38,
+    "end": 1789.54,
+    "text": "Okay.",
+    "speaker": "B"
+  },
+  {
+    "start": 1792.02,
+    "end": 1800.37,
+    "text": "Line interface. All right, and supplements. What's that all about?",
+    "speaker": "A"
+  },
+  {
+    "start": 1803.02,
+    "end": 1836.7,
+    "text": "I think that is— well, we haven't really made any decisions about what we're going to do about the cluster of button functions, colors, and forms, and that, and consistent use. Like, what, what are our ideas to combat these problems? Oh, um, different interfaces are very different and can be confusing because, because of their difference, because of the different clusters of buttons that they have. We haven't really decided what What to do about that?",
+    "speaker": "D"
+  },
+  {
+    "start": 1836.89,
+    "end": 1838.62,
+    "text": "What are our choices here?",
+    "speaker": "A"
+  },
+  {
+    "start": 1839.95,
+    "end": 1849.75,
+    "text": "Well, it's just where shall we locate the buttons? What kind of functions shall we have?",
+    "speaker": "D"
+  },
+  {
+    "start": 1851.27,
+    "end": 1856.98,
+    "text": "Like, we'll have the numbers of the channels, and we'll have a channel changer, and volume, and power.",
+    "speaker": "A"
+  },
+  {
+    "start": 1858.89,
+    "end": 1861.2,
+    "text": "So pretty. Just the basic.",
+    "speaker": "D"
+  },
+  {
+    "start": 1861.82,
+    "end": 1869.16,
+    "text": "Yeah, like I don't know if we should go into like adjusting light levels, things like that, because different televisions will have like—",
+    "speaker": "A"
+  },
+  {
+    "start": 1869.21,
+    "end": 1870.93,
+    "text": "yeah, tone contrast and things.",
+    "speaker": "B"
+  },
+  {
+    "start": 1870.97,
+    "end": 1871.54,
+    "text": "That's a bit—",
+    "speaker": "A"
+  },
+  {
+    "start": 1871.94,
+    "end": 1878.01,
+    "text": "that was on, um, one of my presentations about how often it was used. Do you remember that?",
+    "speaker": "C"
+  },
+  {
+    "start": 1878.06,
+    "end": 1880.13,
+    "text": "Yeah, it was minimal. Well, it wasn't—",
+    "speaker": "B"
+  },
+  {
+    "start": 1880.13,
+    "end": 1881.83,
+    "text": "yeah, it was hardly ever used really.",
+    "speaker": "A"
+  },
+  {
+    "start": 1882.94,
+    "end": 1883.67,
+    "text": "Should I bring it up?",
+    "speaker": "C"
+  },
+  {
+    "start": 1883.98,
+    "end": 1884.54,
+    "text": "Yeah, yeah.",
+    "speaker": "B"
+  },
+  {
+    "start": 1884.7,
+    "end": 1886.44,
+    "text": "And most televisions will come with a remote.",
+    "speaker": "A"
+  },
+  {
+    "start": 1886.48,
+    "end": 1890.89,
+    "text": "Yeah, and surely that would be like quite specific to the individual television.",
+    "speaker": "B"
+  },
+  {
+    "start": 1891.23,
+    "end": 1896.13,
+    "text": "Okay, well, we know we want numbers.",
+    "speaker": "A"
+  },
+  {
+    "start": 1898.83,
+    "end": 1911.42,
+    "text": "Screen settings was used 0.5 times an hour, so once every 2 hours, and it was considered a 1.5 relevance on a scale of 10. That's brightness, color, tone, all that.",
+    "speaker": "C"
+  },
+  {
+    "start": 1913.54,
+    "end": 1923.06,
+    "text": "I think most of that comes on the individual television set itself, doesn't it? I'm sure it has —its own button, so you don't necessarily need to have it on remote.",
+    "speaker": "B"
+  },
+  {
+    "start": 1923.25,
+    "end": 1927.82,
+    "text": "Yeah, and different televisions, like, we— I don't know if we can make a remote that will be universal to all the different kinds of—",
+    "speaker": "A"
+  },
+  {
+    "start": 1927.82,
+    "end": 1933.63,
+    "text": "Yeah, so we're just going for power, channels, volume.",
+    "speaker": "B"
+  },
+  {
+    "start": 1935.09,
+    "end": 1952.48,
+    "text": "The other one was audio settings: mono, stereo, pitch. I mean, I sometimes use that. Some TVs will have the option of, like, living room style, movie style. Yeah. And they said that's used 0.8 times an hour, which is actually somewhat high, like almost once an hour. Yeah. Relevance of 2.",
+    "speaker": "C"
+  },
+  {
+    "start": 1955.93,
+    "end": 1967.81,
+    "text": "Oh, we have 5 minutes to finish our meeting. Crap. OK. Let's do this fast. Well, that didn't come up on mine. Should we have audio? It only comes up on mine usually.",
+    "speaker": "A"
+  },
+  {
+    "start": 1968.62,
+    "end": 1972.82,
+    "text": "It would seem silly if— We weren't having anything else, just have an audio button though?",
+    "speaker": "D"
+  },
+  {
+    "start": 1974.68,
+    "end": 1987.31,
+    "text": "Do you know? Yeah, I don't— it's a problem with the international appeal, I think, if we have audio because we don't know how other televisions work. But we know that everyone has this and it's the same.",
+    "speaker": "A"
+  },
+  {
+    "start": 1988.96,
+    "end": 1994.76,
+    "text": "Yeah, I guess it affects the marketing because it is a good sales ploy to say, aren't you annoyed with remote controls that have all these buttons?",
+    "speaker": "C"
+  },
+  {
+    "start": 1994.86,
+    "end": 2004.4,
+    "text": "This one has channel, volume, and your timecode. Yeah, that's it. We can just go for it. Make it. A selling point that is just the basic. Yeah, okay, all right, brilliant, good.",
+    "speaker": "B"
+  },
+  {
+    "start": 2005.46,
+    "end": 2043.47,
+    "text": "And okay, in closing, because we only have 5 minutes, we'll be meeting again in 30 minutes. Um, you'll be working— probably will be working on the look and feel design. Wait a minute, is that right? Yep. And, um, the user interface design. So this is where the trendy stuff comes in, and you will be evaluating the product. Poppy and Tara will have to work together using modeling clay, and your personal coach will give you the rest of the information of what needs to happen. Okay. All right, so anyone else have something to say?",
+    "speaker": "A"
+  },
+  {
+    "start": 2043.69,
+    "end": 2072.71,
+    "text": "Um, I just have one question about the whole fruit and vegetable aspect. Yeah, are we— seeing as that was the most popular thing that came up out of your market research. I think we should keep to that rather than moving to animals or something, because yeah, yeah, even if that may not seem obvious to us, if that's what the surveys brought out, I think we should probably go along with that. Yeah. Um, so I suppose that'll come out in our design development, but happy to go ahead with the fruit.",
+    "speaker": "B"
+  },
+  {
+    "start": 2072.81,
+    "end": 2078.8,
+    "text": "And now, do you guys need— want an idea of how many, uh, are you gonna come up with casing ideas? Like 5 different?",
+    "speaker": "C"
+  },
+  {
+    "start": 2078.9,
+    "end": 2092.31,
+    "text": "Yeah. What I was thinking, what do you think of this? Having the numbers kind of like not a bunch of grapes, but purple and kind of in a triangle, like grapes.",
+    "speaker": "D"
+  },
+  {
+    "start": 2092.47,
+    "end": 2094.26,
+    "text": "Yeah, you can have some fun with the buttons. It's true.",
+    "speaker": "C"
+  },
+  {
+    "start": 2094.56,
+    "end": 2096.38,
+    "text": "Birthday or something.",
+    "speaker": "D"
+  },
+  {
+    "start": 2096.47,
+    "end": 2098.84,
+    "text": "We can have a look at those ideas.",
+    "speaker": "B"
+  },
+  {
+    "start": 2098.96,
+    "end": 2110.19,
+    "text": "I guess ideally you'd kind of think of age markets as well. So something that will appeal to the 15 to 25-year-old, something that your granny would want on her remote control. Yeah, yeah, and international tastes as well.",
+    "speaker": "C"
+  },
+  {
+    "start": 2110.35,
+    "end": 2116.85,
+    "text": "So not easy, a lot of things to consider. Lots of—",
+    "speaker": "B"
+  },
+  {
+    "start": 2117.04,
+    "end": 2133.89,
+    "text": "yeah, all right, okay, yeah, we'll stick to the fruit and veggie theme then. All right, and, um, we'll reconvene in 30 minutes. Okay, okay, bye. Thank you. I'll see you later. Oh, what'd I just do?",
+    "speaker": "A"
+  }
+]

@@ -1,0 +1,437 @@
+name: CI
+
+"on":
+  push:
+    branches:
+      - main
+      - li-xiuyin
+      - ju-ran
+      - shi-zhengxu
+      - luan-changwen
+      - fu-tianyi
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Secret scanning ──
+  gitleaks:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks-action
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── CodeQL static analysis ──
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # Intentionally non-blocking: CodeQL requires GitHub Advanced Security
+    # which may not be available on all forks; findings are advisory only.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check code scanning availability
+        id: code_scanning_check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
+            try {
+              await github.rest.codeScanning.listCodeqlDatabases({
+                owner,
+                repo,
+                per_page: 1,
+              });
+              core.info("Code scanning API is available for this repository.");
+              core.setOutput("enabled", "true");
+            } catch (error) {
+              const status = error?.status;
+              if (status === 403 || status === 404) {
+                core.warning(
+                  `Code scanning unavailable (status=${status}); skipping CodeQL analysis.`
+                );
+                core.setOutput("enabled", "false");
+                return;
+              }
+              core.setFailed(
+                `Unexpected failure while checking code scanning availability: ${error.message}`
+              );
+            }
+      - name: Initialize CodeQL
+        if: steps.code_scanning_check.outputs.enabled == 'true'
+        uses: github/codeql-action/init@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: Autobuild
+        if: steps.code_scanning_check.outputs.enabled == 'true'
+        uses: github/codeql-action/autobuild@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+      - name: Perform CodeQL Analysis
+        if: steps.code_scanning_check.outputs.enabled == 'true'
+        uses: github/codeql-action/analyze@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        with:
+          category: "/language:${{ matrix.language }}"
+      - name: Skip CodeQL (code scanning disabled)
+        if: steps.code_scanning_check.outputs.enabled != 'true'
+        run: echo "Code scanning is not enabled for this repository; skipping CodeQL job."
+
+  # ── Docker build verification ──
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build backend image
+        run: docker build -t meeting-agent-backend ./backend
+      - name: Build frontend image
+        run: docker build -t meeting-agent-frontend ./frontend
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Optional extras ([multimodal], [google], [huggingface], [local],
+      # [observability]) are intentionally NOT installed here — they pull
+      # multi-GB transitive deps (torch, google-cloud-aiplatform, …). The
+      # binding-specific code paths are exercised via lazy imports +
+      # monkeypatch in tests, so CI verifies the graceful-degradation path.
+      # llama-cpp-python is in the [local] extra; uv reads the pre-built
+      # wheel index from [tool.uv] extra-index-url when it is installed.
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Validate Alembic revision graph
+        run: uv run alembic heads
+
+      - name: Check .env.example in sync
+        run: uv run python -m scripts.check_env_example
+
+      - name: Lint
+        run: uv run ruff check src/
+
+      - name: Format check
+        run: uv run ruff format --check src/
+
+      - name: Type check
+        run: |
+          uv run pyright src/ 2>&1 | tee pyright.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Tests
+        run: uv run python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+
+      - name: Upload backend coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: backend-coverage-xml
+          path: backend/coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        if: always()
+        with:
+          files: backend/coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Security audit
+        run: uvx pip-audit --desc --strict
+
+      - name: Bandit security scan
+        run: uv run bandit -c pyproject.toml -r src/ -ll -ii -f json -o bandit-report.json
+        # Blocking: MEDIUM+ severity findings fail the build.
+
+      - name: Bandit gate (HIGH/MEDIUM)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          try:
+              report = json.load(open("bandit-report.json"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              print("No bandit report found — skipping gate")
+              sys.exit(0)
+          bad = [r for r in report.get("results", [])
+                 if r.get("issue_severity") in ("HIGH", "MEDIUM")]
+          if bad:
+              for r in bad:
+                  print(f"  {r['filename']}:{r['line_number']} "
+                        f"{r['issue_severity']} {r['issue_text']}")
+              print(f"\nBandit found {len(bad)} HIGH/MEDIUM issue(s) — failing build.")
+              sys.exit(1)
+          print("Bandit: no HIGH/MEDIUM issues.")
+          PY
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: bandit-report
+          path: backend/bandit-report.json
+
+      - name: Generate backend SBOM (CycloneDX)
+        run: uv pip freeze | uvx --from cyclonedx-bom cyclonedx-py requirements - --output-format json --output-file backend-sbom.json --pyproject pyproject.toml
+
+      - name: Upload backend SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: backend-sbom
+          path: backend/backend-sbom.json
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: npm run test -- --run
+
+      - name: Security audit
+        run: npm audit --audit-level=high
+
+      - name: Generate frontend SBOM (CycloneDX)
+        run: npx --yes @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-format JSON --output-file frontend-sbom.json
+
+      - name: Upload frontend SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: frontend-sbom
+          path: frontend/frontend-sbom.json
+
+  e2e:
+    runs-on: ubuntu-latest
+    # Non-blocking: e2e tests are inherently flaky and several full-stack
+    # specs require a live backend with LLM/ASR keys that aren't provisioned
+    # in CI. Failures here surface as red checks but don't block PR merge.
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run E2E tests
+        run: npm run e2e:ci
+        continue-on-error: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 14
+
+  contract-openapi-types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - run: cd backend && uv sync --dev
+      - run: chmod +x scripts/generate-types.sh && ./scripts/generate-types.sh
+      - run: git --no-pager diff --exit-code -- frontend/src/api/generated.d.ts
+
+  contract-schemathesis:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          # The backgrounded uvicorn server holds the uv cache lock for the
+          # whole job, so the post-job `uv cache prune --ci` step times out
+          # waiting on it. Per-run cache pruning has no benefit here.
+          prune-cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: cd backend && uv sync --dev
+      - run: cd backend && uv run python -m uvicorn src.main:app --host 127.0.0.1 --port 8000 &
+      - run: |
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:8000/api/v1/health && break
+            sleep 2
+          done
+      - run: |
+          # Endpoints excluded from schemathesis: each genuinely needs the
+          # LLM / embedder / ASR provider, which CI cannot supply without
+          # leaking real API keys. They are exercised by unit + integration
+          # tests with mocks. Including them here would only surface
+          # provider-init or network-timeout 5xx that aren't real contract
+          # bugs.
+          cd backend && uvx schemathesis run http://127.0.0.1:8000/openapi.json \
+            --phases examples,coverage \
+            --workers 2 \
+            --max-examples 8 \
+            --max-failures 20 \
+            --request-timeout 60 \
+            --exclude-path-regex '^/api/v1/(chat(/.*)?|memory/(decay|search|entities/merge)|sessions/(search|.+/(summarize|search))|meetings/.+/summary(/.*)?|meetings/.+/files/.+/(reprocess|speakers)|settings/(rebuild-vectors|rebuild-multimodal|account)|skills/(match|invoke))$' \
+            --checks not_a_server_error,status_code_conformance,response_schema_conformance
+        # These three checks catch real bugs (5xx, wrong status, schema mismatch).
+        # Fuzz-only checks remain non-blocking via continue-on-error above.
+
+  helm-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+      - run: helm lint deploy/helm/meeting-agent
+      # CI just validates template syntax; bypass production TLS guard.
+      - run: helm template meeting-agent deploy/helm/meeting-agent --set ingress.tlsDisabled=true > /tmp/manifest.yaml
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+      - name: Validate rendered manifests
+        run: /tmp/kubeconform -strict -summary /tmp/manifest.yaml
+
+  # ── Backup & restore verification ──
+  backup-restore:
+    name: Backup/Restore Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: cd backend && uv sync --dev
+      - name: Seed test data & run backup
+        run: |
+          DATA_DIR=$(mktemp -d)
+          DB_PATH="$DATA_DIR/meetings.db"
+          echo "DATA_DIR=$DATA_DIR" >> "$GITHUB_ENV"
+          echo "DB_PATH=$DB_PATH" >> "$GITHUB_ENV"
+          cd backend
+          # Initialize database with schema
+          DATA_DIR="$DATA_DIR" DB_PATH="$DB_PATH" uv run python -c "
+          import os
+          from pathlib import Path
+          from src.core import constants as cm
+          cm.DATA_DIR = Path(os.environ['DATA_DIR'])
+          cm.DATABASE_PATH = Path(os.environ['DB_PATH'])
+          from src.core.database import init_db
+          init_db()
+          "
+          # Run backup script (positional args: DB_PATH, BACKUP_DIR)
+          chmod +x ../scripts/backup.sh
+          ../scripts/backup.sh "$DB_PATH" "$DATA_DIR/backups"
+      - name: Verify backup integrity
+        run: |
+          BACKUP_FILE=$(ls -t $DATA_DIR/backups/*.db 2>/dev/null | head -1)
+          if [ -z "$BACKUP_FILE" ]; then
+            echo "ERROR: No backup file found"
+            exit 1
+          fi
+          echo "Verifying backup: $BACKUP_FILE"
+          sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;" | grep -q "ok"
+          echo "Tables in backup:"
+          sqlite3 "$BACKUP_FILE" ".tables"
+      - name: Verify backup data
+        run: |
+          BACKUP_FILE=$(ls -t $DATA_DIR/backups/*.db 2>/dev/null | head -1)
+          cd backend
+          uv run python -c "
+          import sqlite3
+          conn = sqlite3.connect('$BACKUP_FILE')
+          conn.row_factory = sqlite3.Row
+          for table in ['schema_version', 'meetings', 'chat_messages', 'user_memories']:
+              conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()
+              print(f'  ✓ {table} OK')
+          print('Backup data verification passed')
+          "

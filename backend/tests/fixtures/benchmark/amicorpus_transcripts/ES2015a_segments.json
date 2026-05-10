@@ -1,0 +1,482 @@
+[
+  {
+    "start": 35.22,
+    "end": 42.45,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 62.54,
+    "end": 63.3,
+    "text": "Alright, that did nothing.",
+    "speaker": "B"
+  },
+  {
+    "start": 63.43,
+    "end": 63.67,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 64.63,
+    "end": 84.14,
+    "text": "Welcome to the meeting, everyone. Just going to attempt to make this into a slideshow. Sorry, guys.",
+    "speaker": "B"
+  },
+  {
+    "start": 84.88,
+    "end": 86.38,
+    "text": "You may have to do the function F8 thing.",
+    "speaker": "A"
+  },
+  {
+    "start": 86.88,
+    "end": 150.81,
+    "text": "I did. Twice. This will just take a moment. Or it won't. Okay, we'll have to deal with it like this then. All right. This is the first meeting for developing our new product. Here. I'm Heather, I'm your project manager. Hello. Okay, so that was the opening. The first thing we'll do is get acquainted with one another. If everyone could go around and explain their role and their name.",
+    "speaker": "B"
+  },
+  {
+    "start": 152.6,
+    "end": 165.05,
+    "text": "Okay, my name is Paul. I'm the industrial designer for this project. I'm going to be responsible for the functional design phase, also the conceptual design and the detailed design for the final product.",
+    "speaker": "C"
+  },
+  {
+    "start": 166.71,
+    "end": 167.53,
+    "text": "Nice to meet you, Poppy.",
+    "speaker": "B"
+  },
+  {
+    "start": 169.6,
+    "end": 183.85,
+    "text": "My name is Tara and I'm the user interface designer. I will also be responsible for the functional design phase, the conceptual design phase, and the detailed design design phase of the user interface design.",
+    "speaker": "A"
+  },
+  {
+    "start": 185.03,
+    "end": 186.49,
+    "text": "Hi, I'm Genevieve.",
+    "speaker": "B"
+  },
+  {
+    "start": 186.54,
+    "end": 201.46,
+    "text": "I'm the marketing expert. I'm an expert at marketing. I'll be telling you guys about the user requirement specifications for our new product. I'll be doing some trend watching in the conceptual design and product evaluation for the design phase.",
+    "speaker": "D"
+  },
+  {
+    "start": 201.51,
+    "end": 281.17,
+    "text": "Alright, I'm Heather and I've I said I'm your project manager. Well, you can pretty much read what it is that I'm doing. But, um, yeah. And tool training is one thing that we're going to be doing today, as well as planning the project, how we're going to create this product and discuss our aims and objectives of this, uh, which brings us to our next subject. As a team, we're going to be designing and creating a new kind of remote control. Um, we want this to be a marketable product that can be trendy. Completely new style so that it can really appeal to a generation that doesn't want a simple, plain kind of channel changer. And it needs to be user-friendly for, maybe for an example, for people that can't see the numbers as well, or perhaps an ergonomic design.",
+    "speaker": "B"
+  },
+  {
+    "start": 282.92,
+    "end": 284.67,
+    "text": "So this is a television remote control.",
+    "speaker": "C"
+  },
+  {
+    "start": 285.75,
+    "end": 287.78,
+    "text": "Yes. It's a television remote control.",
+    "speaker": "B"
+  },
+  {
+    "start": 291.25,
+    "end": 292.37,
+    "text": "All right.",
+    "speaker": "A"
+  },
+  {
+    "start": 293.21,
+    "end": 422.65,
+    "text": "I believe I should be taking minutes on this right now. So all right. Yeah. The way that we're going to go about this is we'll have a time where we can come up with new ideas alone and work on the project. And then after we've brainstormed and thought about, we can come together in a meeting and discuss what kind of functional design we want to use. Same with conceptual. Design and detail design. So making sure that it's usable and that it's feasible to create and come up with a concept of what we want it to look like. Tool training— is everyone got notes? Great. Great. Um, one thing that we're going to do is become more acquainted with the, the tools that we have access to for our project. One of them is our whiteboard, and as a sort of team-building moment, um, I'd like us to try out the whiteboard by expressing our favorite animal in the characteristics of that animal, um, why that, why that should be your favorite animal. So, um, I, I'm assuming that we should do that now. Okay, okay, with our microphone still attached to our bodies. Okay. Okay, what's my favorite animal? Do come up. This is a team building time.",
+    "speaker": "B"
+  },
+  {
+    "start": 426.01,
+    "end": 426.38,
+    "text": "Okay, cool.",
+    "speaker": "D"
+  },
+  {
+    "start": 429.38,
+    "end": 438.57,
+    "text": "My favorite animal, which changes all the time. Right now it is An elk.",
+    "speaker": "B"
+  },
+  {
+    "start": 439.21,
+    "end": 439.85,
+    "text": "An elk.",
+    "speaker": "A"
+  },
+  {
+    "start": 440.01,
+    "end": 440.33,
+    "text": "Okay.",
+    "speaker": "C"
+  },
+  {
+    "start": 440.51,
+    "end": 463.67,
+    "text": "All right. So it goes like— yeah, it's got like big antlers. Yeah. It's kind of like it has holly growing out of its head.",
+    "speaker": "B"
+  },
+  {
+    "start": 467.31,
+    "end": 470.69,
+    "text": "Do you have elk where you come from? Yes, you do.",
+    "speaker": "C"
+  },
+  {
+    "start": 470.93,
+    "end": 471.74,
+    "text": "We have moose too.",
+    "speaker": "D"
+  },
+  {
+    "start": 472.22,
+    "end": 473.69,
+    "text": "You have moose and you have deer.",
+    "speaker": "B"
+  },
+  {
+    "start": 475.46,
+    "end": 476.95,
+    "text": "Do you have— we have sheep.",
+    "speaker": "A"
+  },
+  {
+    "start": 477.45,
+    "end": 477.86,
+    "text": "Sheep.",
+    "speaker": "B"
+  },
+  {
+    "start": 478.0,
+    "end": 484.65,
+    "text": "Yeah, cows. Okay, um, that's a great—",
+    "speaker": "C"
+  },
+  {
+    "start": 484.65,
+    "end": 487.06,
+    "text": "we have a good artist. Really good.",
+    "speaker": "B"
+  },
+  {
+    "start": 487.29,
+    "end": 488.51,
+    "text": "Yeah, thanks.",
+    "speaker": "A"
+  },
+  {
+    "start": 488.66,
+    "end": 532.3,
+    "text": "This is my Oh, very shapely. Okay. That's a sketching of my elk, and it is my favorite animal right now because it is a large, beautiful, majestic creature that, in a way, it looks kind of awkward because it's on spindly legs, but it can really overcome harsh terrain. And although it's gorgeous, it's also very dangerous because it has strong antlers, and it can really combat its enemies. Even like, it's a, it's an herbivore, but can really defend itself.",
+    "speaker": "B"
+  },
+  {
+    "start": 534.01,
+    "end": 535.17,
+    "text": "Very nice. Okay.",
+    "speaker": "C"
+  },
+  {
+    "start": 535.62,
+    "end": 554.85,
+    "text": "All right. I'm going to take minutes while you guys express your favorite animals.",
+    "speaker": "B"
+  },
+  {
+    "start": 557.67,
+    "end": 630.64,
+    "text": "I am a big animal lover. I like all sorts of animals, but for the moment I'm going to draw a cat in memory of my poor cat that died recently. It's gonna be a bit of a strange drawing, but never mind. Not as artistic as Heather's drawing, a bit more cartoon style, but I like cats because they're so independent and they always seem to be doing what they want to be doing. But that doesn't mean they're completely not sociable because they enjoy interacting with humans as well, and they seem to enjoy the good things like sunshine and running around outside as well as being inside and enjoying their food. And generally, just, they just seemed so so cool and they just know what they're doing. I reckon they got it sorted. They know what they want. Basically, that's why I like cats.",
+    "speaker": "C"
+  },
+  {
+    "start": 630.88,
+    "end": 632.41,
+    "text": "Very cute. Great.",
+    "speaker": "B"
+  },
+  {
+    "start": 633.05,
+    "end": 658.24,
+    "text": "There you go. Okay. I think my favorite animal would be a dog, but I'm not really sure how to draw one. I've never drawn a dog, I don't think. I'm tempted to draw a snail because I draw them, so it's really easy to do.",
+    "speaker": "A"
+  },
+  {
+    "start": 659.3,
+    "end": 661.56,
+    "text": "I forget her name.",
+    "speaker": "B"
+  },
+  {
+    "start": 661.61,
+    "end": 667.3,
+    "text": "Tara. Right, it's going to be a really funny dog because I'm not sure how to draw a dog.",
+    "speaker": "A"
+  },
+  {
+    "start": 667.43,
+    "end": 671.02,
+    "text": "Well, there are loads of different types of dogs. I'm sure it will represent one kind of dog.",
+    "speaker": "C"
+  },
+  {
+    "start": 671.33,
+    "end": 675.84,
+    "text": "It's a curtain dog, I think. I don't even—",
+    "speaker": "A"
+  },
+  {
+    "start": 676.42,
+    "end": 678.97,
+    "text": "oh well.",
+    "speaker": "D"
+  },
+  {
+    "start": 679.29,
+    "end": 688.22,
+    "text": "It's a scary kerchin. This— that does not look like a dog.",
+    "speaker": "A"
+  },
+  {
+    "start": 688.48,
+    "end": 689.89,
+    "text": "It looks kind of like a person.",
+    "speaker": "B"
+  },
+  {
+    "start": 690.17,
+    "end": 742.51,
+    "text": "Pinocchio. How do you draw a dog? I suppose it has a long— oh my God. Right. Youse know what it's supposed to be. It's a dog. Okay, um, I like dogs because, um, they're so good to humans. Like, they can be trained to be police dogs and CNI dogs, and they're just such friendly animals. And like, they're more of a companion than cats. I've nothing against cats. Cats don't really like me, so I can't I don't like them, but they're just so friendly and warm and nice animals that don't look like that.",
+    "speaker": "A"
+  },
+  {
+    "start": 745.97,
+    "end": 746.29,
+    "text": "Alrighty.",
+    "speaker": "B"
+  },
+  {
+    "start": 746.45,
+    "end": 784.36,
+    "text": "I feel like a robot. Well, I guess I had the most time to think about it. I'm going to draw a butterfly, because I saw a butterfly yesterday that seemed to be like the symbol of spring arriving. And it was actually the prettiest butterfly I've ever seen out in the wild, and I thought that was pretty cool in Scotland. It was like— well, it was a little pointier than that. At first I thought it was a dead leaf, and then it landed on the wall next to me. But this part was all brown, and then it had these big blue dots like this. And then I kind of— there was a green— I think it was a green ring, and there was like red going out like this.",
+    "speaker": "D"
+  },
+  {
+    "start": 785.05,
+    "end": 786.32,
+    "text": "It's kind of like a peacock.",
+    "speaker": "B"
+  },
+  {
+    "start": 787.1,
+    "end": 805.53,
+    "text": "Yeah, it kind of was actually, because this part of the body was really dull and then it was like the most colorful exotic butterfly ever. And I'm like, wow, this is the middle of Scotland in March. So I thought that was pretty cool. And it landed by a wall and let me look at it for about 2 minutes. I wish I'd had my camera. So that's going to be my favorite animal because after all the snow, it seemed to say that like spring is finally here.",
+    "speaker": "D"
+  },
+  {
+    "start": 806.77,
+    "end": 809.42,
+    "text": "Yeah, there you go. [FOREIGN LANGUAGE] Great.",
+    "speaker": "A"
+  },
+  {
+    "start": 810.16,
+    "end": 810.4,
+    "text": "What do we—",
+    "speaker": "D"
+  },
+  {
+    "start": 810.64,
+    "end": 810.65,
+    "text": "oh.",
+    "speaker": "C"
+  },
+  {
+    "start": 816.89,
+    "end": 818.74,
+    "text": "Do you hear the eraser buzzing while you do that?",
+    "speaker": "B"
+  },
+  {
+    "start": 819.5,
+    "end": 819.91,
+    "text": "Yes, I do.",
+    "speaker": "D"
+  },
+  {
+    "start": 823.24,
+    "end": 898.77,
+    "text": "Right, so now that we know how to use the whiteboard, okay, um, the next thing we need to address is our financial department to meet our our budget. Or not meet our budget, but more like what kind of selling range we'll be looking at. We want to make this at a selling price of €25. And so we have to come up with a way to create a remote control where we can— the price to create it will be significantly less. We'd like to make €50 million, I'm assuming that's what the M means, and make it for an international market. One thing we'd have to think about internationally is in the design of different kinds of VCRs, things like that, depending on which country you are. Another thing for the design team to think about. We want it to cost an absolute maximum of €12.50.",
+    "speaker": "B"
+  },
+  {
+    "start": 904.45,
+    "end": 906.14,
+    "text": "Okay, so we'll have 100% profit then?",
+    "speaker": "D"
+  },
+  {
+    "start": 908.09,
+    "end": 908.78,
+    "text": "€12.50?",
+    "speaker": "A"
+  },
+  {
+    "start": 910.35,
+    "end": 911.05,
+    "text": "I'm bad at math.",
+    "speaker": "B"
+  },
+  {
+    "start": 912.18,
+    "end": 912.65,
+    "text": "Okay.",
+    "speaker": "A"
+  },
+  {
+    "start": 913.76,
+    "end": 943.89,
+    "text": "Okay. So now that that is underway, It is discussion time, so this is time for us to bring our initial ideas, any suggestions that you may have so far, and your personal experiences with remote controls and areas you see that could be improved in your experience with them. Does anyone have any initial thoughts?",
+    "speaker": "B"
+  },
+  {
+    "start": 945.7,
+    "end": 948.63,
+    "text": "I find it in the dark, it's often hard to know what button you're pushing.",
+    "speaker": "D"
+  },
+  {
+    "start": 949.3,
+    "end": 953.67,
+    "text": "So it's something we could do to remedy that.",
+    "speaker": "B"
+  },
+  {
+    "start": 953.89,
+    "end": 975.83,
+    "text": "Okay. I just find that in our house, the remote control always goes missing. It's always, where is the remote control? So maybe if you could have some kind of tracking device for the remote control or some— a signal that you could find out where it was. I don't know, some kind of alarm. You can press a button on your wall.",
+    "speaker": "C"
+  },
+  {
+    "start": 976.59,
+    "end": 977.55,
+    "text": "Yeah, it's a great idea.",
+    "speaker": "B"
+  },
+  {
+    "start": 978.13,
+    "end": 978.43,
+    "text": "It's a great idea.",
+    "speaker": "A"
+  },
+  {
+    "start": 978.48,
+    "end": 979.54,
+    "text": "It always gets lost.",
+    "speaker": "C"
+  },
+  {
+    "start": 981.44,
+    "end": 988.9,
+    "text": "Do you not find that, um, like there's a lot of buttons on your remote control and you don't know what—",
+    "speaker": "A"
+  },
+  {
+    "start": 988.95,
+    "end": 990.23,
+    "text": "yeah, that you don't use half of them?",
+    "speaker": "C"
+  },
+  {
+    "start": 996.98,
+    "end": 1003.34,
+    "text": "There's some remote controls where there's kind of a hidden panel, so all those buttons that you don't really use unless you're programming or something, that's useful.",
+    "speaker": "D"
+  },
+  {
+    "start": 1003.42,
+    "end": 1004.03,
+    "text": "Yeah, it is.",
+    "speaker": "C"
+  },
+  {
+    "start": 1004.32,
+    "end": 1007.8,
+    "text": "So you just have like the number buttons, power button, TV/video button.",
+    "speaker": "D"
+  },
+  {
+    "start": 1008.22,
+    "end": 1008.43,
+    "text": "Yeah.",
+    "speaker": "C"
+  },
+  {
+    "start": 1010.31,
+    "end": 1027.88,
+    "text": "Right. Anything about the look of the remote control that you might have ideas about? Maybe it could be instead of like a standard rectangular shape, it could be something more interesting, like any ideas will do that you have at this point.",
+    "speaker": "B"
+  },
+  {
+    "start": 1028.08,
+    "end": 1033.53,
+    "text": "It could be shaped like a conch, like a shell-shaped bow.",
+    "speaker": "D"
+  },
+  {
+    "start": 1033.75,
+    "end": 1034.91,
+    "text": "You can hold it.",
+    "speaker": "B"
+  },
+  {
+    "start": 1035.45,
+    "end": 1038.23,
+    "text": "Are we going into kind of novelty factors here? Like, I've seen—",
+    "speaker": "C"
+  },
+  {
+    "start": 1038.57,
+    "end": 1052.17,
+    "text": "well, if it's a trendy original aspect we're going for, I mean, you're the designer, you can decide what kind of direction you want to go in. But at this point in the in the first meeting, it can be any ideas that we just throw out there.",
+    "speaker": "B"
+  },
+  {
+    "start": 1052.38,
+    "end": 1071.27,
+    "text": "I suppose if we're heading to have it like make a huge profit out of this, it needs to be quite a universally accepted thing. Like a novelty thing might only sell a few things rather than like a general kind of more acceptable, but we don't want to go towards boring because that wouldn't sell either.",
+    "speaker": "C"
+  },
+  {
+    "start": 1071.47,
+    "end": 1106.02,
+    "text": "Yeah, and the key issue here is, is being trendy and original. That does not necessarily mean it needs to be outrageous. [Speaker:KIM] Yeah. [Speaker:KIM] Right. Okay, we have 5 minutes left. So just to cover, we have one more thing. Like, you can go over your ideas, of course, in your own personal times. Our next meeting will be in half an hour, so you have half an hour to think about what you want to present, or not present, but bring. To the meeting. ID, whatever that stands for.",
+    "speaker": "B"
+  },
+  {
+    "start": 1106.42,
+    "end": 1107.3,
+    "text": "Industrial designer.",
+    "speaker": "C"
+  },
+  {
+    "start": 1107.38,
+    "end": 1138.49,
+    "text": "Industrial designer. I have to remember these things. You'll be beginning your working design. UID, the technical functions design, will be worked on the next 30 minutes. Maybe how this can be achieved. And we need the user requirements from the Marketing expert. You will get specific instructions of what to do in the next half an hour, and I'll see you in half an hour, okay?",
+    "speaker": "B"
+  },
+  {
+    "start": 1138.88,
+    "end": 1139.77,
+    "text": "Okay, thank you.",
+    "speaker": "C"
+  }
+]

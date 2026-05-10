@@ -1,0 +1,132 @@
+{
+  "title": "Meeting Agent — Observability",
+  "uid": "meeting-agent-obs",
+  "panels": [
+    {
+      "title": "Read Transaction Duration",
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "rate(db_read_tx_age_seconds_bucket[5m])",
+          "legendFormat": "{{le}}s"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "title": "WAL Checkpoint Failures",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(wal_checkpoint_failures_total[15m])",
+          "legendFormat": "failures/s"
+        }
+      ],
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "title": "Embedder Cache Hit Ratio",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "rate(embedder_cache_hit_total[5m]) / (rate(embedder_cache_hit_total[5m]) + rate(embedder_cache_miss_total[5m]))",
+          "legendFormat": "hit ratio"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percentunit", "min": 0, "max": 1}
+      },
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "title": "Vector Store Orphans",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(vectorstore_orphan_total[1h])",
+          "legendFormat": "orphans/h"
+        }
+      ],
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "title": "Background Task Age (oldest)",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "bg_task_age_seconds",
+          "legendFormat": "seconds"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "min": 0, "max": 600}
+      },
+      "gridPos": {"x": 0, "y": 8, "w": 4, "h": 4}
+    },
+    {
+      "title": "Background Task Failures",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(background_task_failures_total[5m])",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "gridPos": {"x": 4, "y": 8, "w": 4, "h": 4}
+    },
+    {
+      "title": "Memory Decay — Runs & Purges",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(memory_decay_run_total[15m])",
+          "legendFormat": "decay runs"
+        },
+        {
+          "expr": "rate(memory_decay_purged_total[15m])",
+          "legendFormat": "memories purged"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6}
+    },
+    {
+      "title": "Memory Extraction — Facts per Turn",
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "rate(memory_extract_facts_bucket[5m])",
+          "legendFormat": "{{le}} facts"
+        }
+      ],
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 6}
+    },
+    {
+      "title": "Traffic Controller State",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "traffic_controller_breaker_state",
+          "legendFormat": "breaker (1=closed, 0.5=half-open, 0=open)"
+        },
+        {
+          "expr": "traffic_controller_inflight",
+          "legendFormat": "in-flight requests"
+        }
+      ],
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 6}
+    },
+    {
+      "title": "Startup Best-Effort Failures",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(startup_best_effort_failures_total[10m])",
+          "legendFormat": "{{task}}"
+        }
+      ],
+      "gridPos": {"x": 8, "y": 8, "w": 4, "h": 4}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38
+}

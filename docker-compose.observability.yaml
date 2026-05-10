@@ -1,0 +1,64 @@
+# Observability stack for local development
+# Usage: docker compose -f docker-compose.yaml -f docker-compose.observability.yaml up
+#
+# Security notes:
+# - All ports are bound to 127.0.0.1 to prevent external access
+# - Anonymous Grafana access is disabled; set GF_SECURITY_ADMIN_PASSWORD
+#   via GRAFANA_ADMIN_PASSWORD env var (defaults to "admin" for dev only)
+# - Loki config volume is mounted explicitly for custom retention settings
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: meeting-agent-prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+    # To scrape /metrics in production (API key auth enabled):
+    # 1. Uncomment bearer_token_file in monitoring/prometheus/prometheus.yml
+    # 2. Create a file with the backend API key and mount it:
+    #    echo "$API_KEY" > /tmp/prometheus_api_token
+    #    volumes:
+    #      - /tmp/prometheus_api_token:/run/secrets/prometheus_api_token:ro
+    networks:
+      - default
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: meeting-agent-grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: meeting-agent-loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./monitoring/loki/local-config.yaml:/etc/loki/local-config.yaml:ro
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: meeting-agent-promtail
+    volumes:
+      - ./monitoring/loki/promtail-config.yaml:/etc/promtail/config.yaml
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+volumes:
+  grafana-data:

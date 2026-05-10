@@ -1,0 +1,12 @@
+# Gitleaks secret scanning configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "Meeting Agent Secret Scan"
+
+[allowlist]
+  description = "Global allow list"
+  paths = [
+    '''backend/\.env\.example$''',
+    '''backend/requirements\.txt$''',
+  ]
+
