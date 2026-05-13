@@ -28,16 +28,16 @@ _DB_BREAKER_FAILURES_KEY = "fallback_breaker_failures"
 
 
 def _read_db_breaker_state() -> tuple[int, float]:
-    """Read breaker state from index_state table. Returns (failures, open_until)."""
+    """Read breaker state from kv_state table. Returns (failures, open_until)."""
     try:
         from ...core.database import get_connection
 
         with get_connection() as conn:
             open_row = conn.execute(
-                "SELECT value FROM index_state WHERE key=?", (_DB_BREAKER_KEY,)
+                "SELECT value FROM kv_state WHERE key=?", (_DB_BREAKER_KEY,)
             ).fetchone()
             failures_row = conn.execute(
-                "SELECT value FROM index_state WHERE key=?", (_DB_BREAKER_FAILURES_KEY,)
+                "SELECT value FROM kv_state WHERE key=?", (_DB_BREAKER_FAILURES_KEY,)
             ).fetchone()
 
         open_until = float(open_row["value"]) if open_row else 0.0
@@ -49,17 +49,17 @@ def _read_db_breaker_state() -> tuple[int, float]:
 
 
 def _write_db_breaker_state(failures: int, open_until: float) -> None:
-    """Persist breaker state to index_state table."""
+    """Persist breaker state to kv_state table."""
     try:
         from ...core.database import get_write_connection
 
         with get_write_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO index_state (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO kv_state (key, value) VALUES (?, ?)",
                 (_DB_BREAKER_KEY, str(open_until)),
             )
             conn.execute(
-                "INSERT OR REPLACE INTO index_state (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO kv_state (key, value) VALUES (?, ?)",
                 (_DB_BREAKER_FAILURES_KEY, str(failures)),
             )
     except Exception:

@@ -263,3 +263,128 @@ class TestBuildContextTruncation:
         kinds = {s.get("source_kind") for s in sources}
         assert "file_summary" in kinds
         assert "meeting_summary" in kinds
+
+
+class TestCitationIndexAlignment:
+    """C7: ``[N]`` labels emitted in file_summaries_context must stay 1:1 with
+    ``synthetic_docs`` so the meeting_summaries ``citation_start`` aligns with
+    positions in ``all_docs``."""
+
+    @pytest.mark.unit
+    def test_orphan_file_does_not_emit_label(self):
+        """Files whose meeting_id has no matching meetings row are skipped
+        entirely from <file_summaries>, not emitted as labels without a
+        synthetic_doc (which previously shifted meeting_summaries [N])."""
+        import re
+
+        # Insert an orphan file with FK temporarily disabled so the
+        # meeting_id points at a non-existent meeting.
+        with get_write_connection() as conn:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute(
+                "INSERT INTO meeting_files (id, meeting_id, file_name, file_path, "
+                "file_type, status, summary) "
+                "VALUES (9990, 99999, 'orphan.mp4', '/fake/orphan.mp4', "
+                "'video', 'ready', 'Orphan file summary text')"
+            )
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.commit()
+
+        ctx = PipelineContext(question="x", file_ids=[101, 9990])
+        ctx.docs = []
+
+        text, docs = _load_file_summaries(ctx, citation_start=10)
+
+        # Every [N] File Summary label must correspond to one synthetic_doc.
+        label_indices = re.findall(r"\[(\d+)\] File Summary", text)
+        assert len(label_indices) == len(docs), (
+            f"Label/doc count mismatch: {len(label_indices)} labels vs "
+            f"{len(docs)} synthetic_docs — orphan files leaked through"
+        )
+        # The orphan file's summary text should not appear in the context.
+        assert "Orphan file summary text" not in text
+
+
+class TestEarlyReturnInjectsInstructions:
+    """H2: when context fits within budget, the early-return path must still
+    append speaker / temporal directives — previously they were only appended
+    after the truncation loop."""
+
+    @pytest.mark.unit
+    def test_speaker_instructions_on_early_return(self):
+        """Multi-meeting speaker query that fits within budget still gets
+        the per-meeting formatting instruction block."""
+        from src.services.rag._query_analysis import QueryAnalysis
+
+        ctx = PipelineContext(question="What did Alex say?")
+        ctx.query_analysis = QueryAnalysis(speaker_names=["Alex"])
+        # ctx.docs spans two meetings so the speaker-instruction guard fires.
+        ctx.docs = [
+            _make_chunk_doc(1, 101, "file_1_a.mp4", content="Alex said hi"),
+            _make_chunk_doc(2, 201, "file_2_a.mp4", content="Alex agreed"),
+        ]
+
+        build_context(ctx)
+
+        assert "[Speaker Query Instructions]" in ctx.combined_context, (
+            "Speaker instructions missing on early-return path — H2 regression"
+        )
+
+    @pytest.mark.unit
+    def test_temporal_hint_on_early_return(self):
+        """Temporal-hint query that fits within budget still gets the
+        [Temporal Focus] instruction block."""
+        from src.services.rag._query_analysis import QueryAnalysis, TemporalHint
+
+        ctx = PipelineContext(question="开头讲了什么")
+        ctx.query_analysis = QueryAnalysis(
+            temporal_hint=TemporalHint(ratio_min=0.0, ratio_max=0.25)
+        )
+        ctx.docs = [_make_chunk_doc(1, 101, "file_1_a.mp4")]
+
+        build_context(ctx)
+
+        assert "[Temporal Focus]" in ctx.combined_context, (
+            "Temporal hint missing on early-return path — H2 regression"
+        )
+
+
+class TestTruncationRebuildsContext:
+    """H1: when the truncation loop pops every chunk, combined_context must
+    be rebuilt — previously the ``!= non_meeting_tokens`` guard skipped the
+    rebuild in exactly that case, leaving stale pre-truncation chunk text in
+    the prompt while ctx.docs only contained summaries."""
+
+    @pytest.mark.unit
+    def test_combined_context_rebuilt_when_all_chunks_dropped(self, monkeypatch):
+        """Squeeze the budget so all chunks are popped, then assert the
+        rebuilt combined_context no longer contains chunk content."""
+        # Force a tiny window so the chunks have to be popped to fit.
+        monkeypatch.setattr(settings, "LLM_CONTEXT_WINDOW", 1500)
+        monkeypatch.setattr(settings, "LLM_PROMPT_RESERVE_TOKENS", 200)
+        monkeypatch.setattr(settings, "LLM_MAX_TOKENS", 200)
+        monkeypatch.setattr(settings, "PROMPT_TOTAL_BUDGET_TOKENS", 0)
+
+        unique_chunk_text = "UNIQUE_CHUNK_MARKER_FOR_H1_TEST " * 50
+        ctx = PipelineContext(question="summarize meeting 1", meeting_ids=[1])
+        ctx.docs = [
+            _make_chunk_doc(1, 101, "file_1_a.mp4", content=unique_chunk_text),
+            _make_chunk_doc(1, 101, "file_1_a.mp4", chunk_index=1, content=unique_chunk_text),
+        ]
+
+        build_context(ctx)
+
+        # If all chunks were popped (or even truncated), the combined_context
+        # must not contain the original chunk text — that would mean the
+        # pre-truncation context leaked through.
+        chunk_docs_remaining = [
+            d
+            for d in ctx.docs
+            if (d.get("metadata") or {}).get("source_kind")
+            not in ("file_summary", "meeting_summary")
+        ]
+        if not chunk_docs_remaining:
+            assert "UNIQUE_CHUNK_MARKER_FOR_H1_TEST" not in ctx.combined_context, (
+                "Pre-truncation chunk content leaked into combined_context "
+                "after all chunks were popped — H1 regression"
+            )

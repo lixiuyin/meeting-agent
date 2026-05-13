@@ -487,42 +487,54 @@ def _load_file_summaries(
         pending_scores: list[tuple[dict, str]] = []
         next_citation_index = citation_start
         for fid in file_ids:
-            if fid in summaries:
-                fname = name_map.get(fid, f"File#{fid}")
-                meeting_title = meeting_title_map.get(fid)
-                summary_text = summaries[fid]
-                summary_text = _INTERNAL_TOKEN_RE_2.sub("", summary_text)
-                if truncation is not None and len(summary_text) > truncation:
-                    summary_text = summary_text[:truncation]
-                # ``[N]`` prefix mirrors the index this synthetic doc receives
-                # in ``all_docs``, so the LLM cites file summaries with the
-                # same number it sees in the ``[Meeting Content]`` block.
-                # The file id is rendered as ``#{fid}`` (not bracketed) to
-                # avoid being mistaken for a citation marker.
-                label_parts = [f"[{next_citation_index}] File Summary #{fid} {fname}"]
-                if meeting_title:
-                    label_parts.append(f"(Meeting: {meeting_title})")
-                label = " ".join(label_parts)
-                lines.append(f"{label}: {summary_text}")
-                next_citation_index += 1
+            if fid not in summaries:
+                continue
+            # Skip orphan files (no meeting_id FK) entirely so label emission
+            # and synthetic_doc creation stay 1:1. Emitting a label without a
+            # matching synthetic_doc would shift downstream citation indices
+            # (e.g. ``_load_meeting_summaries_for_context``'s ``citation_start``)
+            # out of alignment with positions in ``all_docs``.
+            meeting_id_for_file = file_meeting_id_map.get(fid)
+            if meeting_id_for_file is None:
+                logger.warning(
+                    "Skipping orphan file %d (no meeting_id) from <file_summaries>",
+                    fid,
+                )
+                continue
 
-                meeting_id_for_file = file_meeting_id_map.get(fid)
-                if meeting_id_for_file is not None:
-                    synthetic_doc = {
-                        "content": summary_text,
-                        "metadata": {
-                            "meeting_id": meeting_id_for_file,
-                            "file_id": fid,
-                            "file_name": fname,
-                            "meeting_title": meeting_title,
-                            "source_kind": "file_summary",
-                            "chunk_index": None,
-                            "page_number": 1,
-                        },
-                        "score": _SUMMARY_SCORE_FALLBACK,
-                    }
-                    synthetic_docs.append(synthetic_doc)
-                    pending_scores.append((synthetic_doc, summary_text))
+            fname = name_map.get(fid, f"File#{fid}")
+            meeting_title = meeting_title_map.get(fid)
+            summary_text = summaries[fid]
+            summary_text = _INTERNAL_TOKEN_RE_2.sub("", summary_text)
+            if truncation is not None and len(summary_text) > truncation:
+                summary_text = summary_text[:truncation]
+            # ``[N]`` prefix mirrors the index this synthetic doc receives
+            # in ``all_docs``, so the LLM cites file summaries with the
+            # same number it sees in the ``[Meeting Content]`` block.
+            # The file id is rendered as ``#{fid}`` (not bracketed) to
+            # avoid being mistaken for a citation marker.
+            label_parts = [f"[{next_citation_index}] File Summary #{fid} {fname}"]
+            if meeting_title:
+                label_parts.append(f"(Meeting: {meeting_title})")
+            label = " ".join(label_parts)
+            lines.append(f"{label}: {summary_text}")
+            next_citation_index += 1
+
+            synthetic_doc = {
+                "content": summary_text,
+                "metadata": {
+                    "meeting_id": meeting_id_for_file,
+                    "file_id": fid,
+                    "file_name": fname,
+                    "meeting_title": meeting_title,
+                    "source_kind": "file_summary",
+                    "chunk_index": None,
+                    "page_number": 1,
+                },
+                "score": _SUMMARY_SCORE_FALLBACK,
+            }
+            synthetic_docs.append(synthetic_doc)
+            pending_scores.append((synthetic_doc, summary_text))
 
         if pending_scores and ctx.query_embedding:
             scores = _score_summaries_batch(

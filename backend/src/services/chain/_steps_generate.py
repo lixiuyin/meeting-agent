@@ -211,13 +211,14 @@ def build_context(ctx: PipelineContext) -> None:
                     return _format_docs_by_meeting(docs_to_fmt, qa.speaker_names, _cached_titles)
             return _format_docs(docs_to_fmt)
 
-        # Load summaries BEFORE formatting so they get numbered [N] citations.
-        # Pass the starting citation index so the markdown summary blocks can
-        # surface ``[N]`` aligned with the index each synthetic doc receives in
-        # ``all_docs`` (chunks: [1]..[M], file summaries: [M+1]..[M+F],
-        # meeting summaries: [M+F+1]..[M+F+S]). Without this, the LLM only
-        # sees ``[N]`` in ``[Meeting Content]`` and tends to misattribute
-        # facts paraphrased from the markdown summary block to source [1].
+        # Load summaries with their own ``[N]`` indices in dedicated sections.
+        # The unified numbering is: chunks [1]..[M] live in ``[Meeting Content]``,
+        # file summaries [M+1]..[M+F] live in ``<file_summaries>``, meeting
+        # summaries [M+F+1]..[M+F+S] live in ``<meeting_summaries>``. Each
+        # ``[N]`` appears in exactly ONE section of the prompt — duplicating
+        # summaries into ``[Meeting Content]`` previously caused the LLM to
+        # see the same ``[N]`` twice (once in its dedicated section, once in
+        # the unified list) and loop while trying to reconcile them.
         chunk_count = len(ctx.docs)
         file_summaries_context, file_summary_docs = _load_file_summaries(
             ctx, citation_start=chunk_count + 1
@@ -227,11 +228,12 @@ def build_context(ctx: PipelineContext) -> None:
         )
         summary_docs = file_summary_docs + meeting_summary_docs
 
-        # Combine canonical chunk docs + summary docs into one numbered list.
-        # Chunks get [1]..[M], summaries get [M+1]..[M+S].
+        # ``ctx.docs`` keeps the unified list (chunks + summaries) so the
+        # frontend sources panel still shows summary chips. The rendered
+        # ``[Meeting Content]`` block contains chunks only.
         all_docs = ctx.docs + summary_docs
 
-        ctx.meeting_context = _do_format(all_docs)
+        ctx.meeting_context = _do_format(ctx.docs)
 
         ctx.combined_context = _build_system_context(
             ctx.memory_context,
@@ -266,10 +268,17 @@ def build_context(ctx: PipelineContext) -> None:
             window_budget = min(window_budget, total_budget)
         budget = max(0, window_budget - history_tokens - 200)
 
-        combined_tokens = count_tokens(ctx.combined_context, model)
-        if combined_tokens <= budget:
-            ctx.docs = all_docs
-            # H-6: Inject no-results instruction on the early-return path too.
+        def _append_post_context_instructions() -> None:
+            """Append no-results / speaker / temporal directives to combined_context.
+
+            Called on both the early-return path (context fit budget as-is)
+            and the truncation path, so multi-meeting speaker queries and
+            temporal-hint queries get the formatting instructions regardless
+            of whether truncation ran.
+            """
+            # H-6: When no chunk docs survived retrieval (zero matches, all
+            # filtered, BM25 fallback empty), instruct the LLM not to
+            # fabricate citations from summaries alone.
             if not _has_chunk_docs:
                 ctx.combined_context += (
                     "\n\n[IMPORTANT] No relevant meeting transcript or document "
@@ -278,6 +287,35 @@ def build_context(ctx: PipelineContext) -> None:
                     "relevant information was found in the available records. "
                     "Do NOT fabricate specific details or citations."
                 )
+                logger.info("Empty retrieval guard: no chunk docs found for query")
+
+            _inject_speaker_instructions(ctx, _cached_titles)
+
+            if qa and qa.temporal_hint:
+                hint = qa.temporal_hint
+                if hint.absolute_seconds is not None:
+                    abs_lo, abs_hi = hint.absolute_seconds
+                    if abs_lo >= 0:
+                        mins = abs_hi / 60
+                        desc = f"the first {mins:.0f} minute(s)"
+                    else:
+                        mins = -abs_lo / 60
+                        desc = f"the last {mins:.0f} minute(s)"
+                else:
+                    lo_pct = int(hint.ratio_min * 100)
+                    hi_pct = int(hint.ratio_max * 100)
+                    desc = f"the {lo_pct}%-{hi_pct}% portion"
+                ctx.combined_context += (
+                    f"\n\n[Temporal Focus]\n"
+                    f"The user is asking specifically about {desc} of the meeting. "
+                    f"The sources provided have been filtered to this time range. "
+                    f"Focus your answer on content from this time period."
+                )
+
+        combined_tokens = count_tokens(ctx.combined_context, model)
+        if combined_tokens <= budget:
+            ctx.docs = all_docs
+            _append_post_context_instructions()
             ctx.trace.finish_span("build_context")
             return
 
@@ -295,39 +333,34 @@ def build_context(ctx: PipelineContext) -> None:
 
         tokens_before_truncation = combined_tokens
 
-        # Cap summary docs to 40% of budget so they cannot consume the
-        # entire context window.  Pop from the tail (lowest-ranked) until
-        # the formatted summaries fit within the cap.
-        _SUMMARY_BUDGET_RATIO = 0.4
-        summary_budget = int(budget * _SUMMARY_BUDGET_RATIO)
-        summary_tokens = count_tokens(_do_format(summary_docs), model)
-        truncated_summaries = list(summary_docs)
-        if summary_tokens > summary_budget:
-            while (
-                len(truncated_summaries) > 1
-                and count_tokens(_do_format(truncated_summaries), model) > summary_budget
-            ):
-                truncated_summaries.pop()
-        summary_docs = truncated_summaries
-
-        # Truncation: only pop chunk docs, summaries always survive.
+        # Truncation: pop chunk docs (lowest-ranked first). Summaries live in
+        # their dedicated sections and survive — they are already bounded by
+        # FILE_SUMMARY_CONTEXT_CHARS / MEETING_SUMMARY_CONTEXT_CHARS at load
+        # time, so a separate budget cap here would not actually shrink the
+        # rendered section strings.
         truncated_chunks = list(ctx.docs)
         while truncated_chunks and combined_tokens > budget:
             truncated_chunks.pop()
-            ctx.meeting_context = _do_format(truncated_chunks + summary_docs)
+            ctx.meeting_context = _do_format(truncated_chunks)
             meeting_tokens = count_tokens(ctx.meeting_context, model)
             combined_tokens = non_meeting_tokens + meeting_tokens
 
-        if combined_tokens != non_meeting_tokens:
-            ctx.combined_context = _build_system_context(
-                ctx.memory_context,
-                ctx.session_context,
-                ctx.entity_context,
-                ctx.meeting_context,
-                ctx.web_context,
-                file_summaries_context,
-                meeting_summaries_context,
-            )
+        # Unconditional rebuild: we are on the truncation path, so
+        # ``ctx.combined_context`` must reflect the (possibly emptied)
+        # ``ctx.meeting_context``. The previous ``!= non_meeting_tokens``
+        # guard incorrectly skipped the rebuild when every chunk was popped
+        # (combined_tokens collapsed to non_meeting_tokens), leaving stale
+        # pre-truncation content in the prompt while ``ctx.docs`` contained
+        # only summaries.
+        ctx.combined_context = _build_system_context(
+            ctx.memory_context,
+            ctx.session_context,
+            ctx.entity_context,
+            ctx.meeting_context,
+            ctx.web_context,
+            file_summaries_context,
+            meeting_summaries_context,
+        )
 
         if len(truncated_chunks) != len(ctx.docs):
             ctx.dropped_chunks = len(ctx.docs) - len(truncated_chunks)
@@ -342,41 +375,7 @@ def build_context(ctx: PipelineContext) -> None:
 
         ctx.docs = truncated_chunks + summary_docs
 
-        # H-6: When no chunk docs survived retrieval (zero matches, all
-        # filtered, BM25 fallback empty), inject explicit instruction so
-        # the LLM does not fabricate citations from summaries alone.
-        if not _has_chunk_docs:
-            ctx.combined_context += (
-                "\n\n[IMPORTANT] No relevant meeting transcript or document "
-                "chunks were retrieved for this query. Base your answer only "
-                "on the summaries provided (if any), or state that no "
-                "relevant information was found in the available records. "
-                "Do NOT fabricate specific details or citations."
-            )
-            logger.info("Empty retrieval guard: no chunk docs found for query")
-
-        _inject_speaker_instructions(ctx, _cached_titles)
-
-        if qa and qa.temporal_hint:
-            hint = qa.temporal_hint
-            if hint.absolute_seconds is not None:
-                abs_lo, abs_hi = hint.absolute_seconds
-                if abs_lo >= 0:
-                    mins = abs_hi / 60
-                    desc = f"the first {mins:.0f} minute(s)"
-                else:
-                    mins = -abs_lo / 60
-                    desc = f"the last {mins:.0f} minute(s)"
-            else:
-                lo_pct = int(hint.ratio_min * 100)
-                hi_pct = int(hint.ratio_max * 100)
-                desc = f"the {lo_pct}%-{hi_pct}% portion"
-            ctx.combined_context += (
-                f"\n\n[Temporal Focus]\n"
-                f"The user is asking specifically about {desc} of the meeting. "
-                f"The sources provided have been filtered to this time range. "
-                f"Focus your answer on content from this time period."
-            )
+        _append_post_context_instructions()
 
         ctx.trace.finish_span("build_context")
     except Exception as _trace_exc:

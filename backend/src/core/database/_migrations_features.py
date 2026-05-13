@@ -480,4 +480,15 @@ _MIGRATIONS_FEATURES: list[tuple[int, str, str]] = [
             ON user_memories(user_id, updated_at DESC);
         """,
     ),
+    (
+        48,
+        "Add kv_state key-value table for cross-worker coordination (breaker, advisory locks)",
+        """
+        CREATE TABLE IF NOT EXISTS kv_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+    ),
 ]

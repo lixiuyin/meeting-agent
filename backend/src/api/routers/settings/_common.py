@@ -97,7 +97,7 @@ rebuild_state = _RebuildState()
 def _try_acquire_db_advisory_lock(lock_name: str, timeout_seconds: int = 0) -> bool:
     """Try to acquire a DB-based advisory lock for multi-worker deployments.
 
-    Uses the index_state table to persist lock state so workers on different
+    Uses the kv_state table to persist lock state so workers on different
     processes can coordinate. Falls back to in-process check only when DB
     is unavailable.
     """
@@ -105,12 +105,12 @@ def _try_acquire_db_advisory_lock(lock_name: str, timeout_seconds: int = 0) -> b
 
     try:
         with get_write_connection() as conn:
-            row = conn.execute("SELECT value FROM index_state WHERE key=?", (lock_name,)).fetchone()
+            row = conn.execute("SELECT value FROM kv_state WHERE key=?", (lock_name,)).fetchone()
             if row and row["value"] == "locked":
                 import time
 
                 locked_at = conn.execute(
-                    "SELECT value FROM index_state WHERE key=?",
+                    "SELECT value FROM kv_state WHERE key=?",
                     (f"{lock_name}_at",),
                 ).fetchone()
                 # Auto-expire stale locks after 30 minutes
@@ -119,7 +119,7 @@ def _try_acquire_db_advisory_lock(lock_name: str, timeout_seconds: int = 0) -> b
                         lock_time = float(locked_at["value"])
                         if time.time() - lock_time > 1800:
                             conn.execute(
-                                "UPDATE index_state SET value=? WHERE key=?",
+                                "UPDATE kv_state SET value=? WHERE key=?",
                                 ("expired", lock_name),
                             )
                         else:
@@ -143,11 +143,11 @@ def _set_db_advisory_lock(lock_name: str) -> None:
     try:
         with get_write_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO index_state (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO kv_state (key, value) VALUES (?, ?)",
                 (lock_name, "locked"),
             )
             conn.execute(
-                "INSERT OR REPLACE INTO index_state (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO kv_state (key, value) VALUES (?, ?)",
                 (f"{lock_name}_at", str(time.time())),
             )
     except Exception:
@@ -160,8 +160,8 @@ def _release_db_advisory_lock(lock_name: str) -> None:
 
     try:
         with get_write_connection() as conn:
-            conn.execute("DELETE FROM index_state WHERE key=?", (lock_name,))
-            conn.execute("DELETE FROM index_state WHERE key=?", (f"{lock_name}_at",))
+            conn.execute("DELETE FROM kv_state WHERE key=?", (lock_name,))
+            conn.execute("DELETE FROM kv_state WHERE key=?", (f"{lock_name}_at",))
     except Exception:
         logger.warning("DB advisory lock release failed for %s", lock_name, exc_info=True)
 
