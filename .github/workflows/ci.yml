@@ -164,7 +164,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: backend-coverage-xml
+          name: backend-coverage-xml-py${{ matrix.python-version }}
           path: backend/coverage.xml
 
       - name: Upload coverage to Codecov
@@ -207,7 +207,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: bandit-report
+          name: bandit-report-py${{ matrix.python-version }}
           path: backend/bandit-report.json
 
       - name: Generate backend SBOM (CycloneDX)
@@ -217,7 +217,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: backend-sbom
+          name: backend-sbom-py${{ matrix.python-version }}
           path: backend/backend-sbom.json
 
   frontend:
@@ -267,7 +267,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: frontend-sbom
+          name: frontend-sbom-node${{ matrix.node-version }}
           path: frontend/frontend-sbom.json
 
   e2e:
