@@ -217,7 +217,7 @@ def classify_query_route(
 
     max_words = max(1, int(getattr(settings, "RAG_FAST_PATH_MAX_WORDS", 12)))
     if len(text.split()) <= max_words:
-        answer_types = tuple(
+        answer_types: tuple[AnswerType, ...] = tuple(
             answer_type for answer_type, pattern in _ATOMIC_QUERY_PATTERNS if pattern.search(text)
         )
         if len(answer_types) == 1:
