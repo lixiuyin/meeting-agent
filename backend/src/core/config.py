@@ -305,10 +305,20 @@ class Settings(BaseSettings):
         ge=64,
         le=2048,
     )
-    RAG_FAST_PATH_GENERATION_TIMEOUT_S: float = Field(
-        default=_yaml_get("rag", "fast_path_generation_timeout_s", default=2.5),
-        ge=0.5,
-        le=30.0,
+    RAG_FAST_PATH_FIRST_TOKEN_TIMEOUT_S: float = Field(
+        default=_yaml_get("rag", "fast_path_first_token_timeout_s", default=10.0),
+        ge=1.0,
+        le=60.0,
+    )
+    RAG_FAST_PATH_STREAM_STALL_TIMEOUT_S: float = Field(
+        default=_yaml_get("rag", "fast_path_stream_stall_timeout_s", default=15.0),
+        ge=1.0,
+        le=120.0,
+    )
+    RAG_FAST_PATH_TOTAL_TIMEOUT_S: float = Field(
+        default=_yaml_get("rag", "fast_path_total_timeout_s", default=30.0),
+        ge=5.0,
+        le=180.0,
     )
     SCORE_THRESHOLD: float = _yaml_get("rag", "score_threshold", default=1.5)
     RERANKER_BINDING: str = _yaml_get("rag", "reranker_binding", default="")

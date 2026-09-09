@@ -5,7 +5,8 @@ import hashlib
 import logging
 import re
 import threading
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from cachetools import TTLCache
 from langchain_core.prompts import ChatPromptTemplate
@@ -25,7 +26,15 @@ _QUERY_REWRITE_PROMPT = """Rewrite the query to improve document retrieval quali
 Original query: {query}{speaker_hint}"""
 
 _COMPLEXITY_KEYWORDS = {
+    "how is",
+    "how are",
+    "how does",
+    "how do",
+    "how was",
+    "how were",
+    "how to",
     "how many",
+    "why",
     "compare",
     "analyze",
     "list all",
@@ -47,10 +56,252 @@ _COMPLEXITY_KEYWORDS = {
     "create",
     "draft",
     "summarize",
+    "怎么",
+    "如何",
+    "流程",
+    "步骤",
+    "原理",
+    "解释",
+    "讲解",
+    "详细说明",
+    "详细介绍",
+    "为什么",
+    "为何",
 }
 _SIMPLE_QUESTION_MIN_CHARS = 30
 _SIMPLE_QUERY_TOP_K = 3  # QR-4: Extracted constant, was hardcoded 3
 _MAX_TOP_K_HARD_LIMIT = 50  # M-14: Prevent unbounded retrieval
+
+QueryRoute = Literal["atomic_fact", "bounded_synthesis", "analytical_synthesis"]
+AnswerType = Literal["person", "date", "number", "boolean", "short_text", "explanation"]
+
+
+@dataclass(frozen=True)
+class QueryRouteDecision:
+    """Conservative, explainable routing decision made before retrieval.
+
+    ``atomic_fact`` means only that a request is eligible for a low-cost probe.
+    The fast generation path still requires a separate post-retrieval evidence
+    decision; query shape alone is never sufficient.
+    """
+
+    route: QueryRoute
+    confidence: float
+    answer_type: AnswerType
+    requires_synthesis: bool
+    reasons: tuple[str, ...]
+
+    @property
+    def fast_candidate(self) -> bool:
+        return self.route == "atomic_fact" and not self.requires_synthesis
+
+
+@dataclass(frozen=True)
+class FastEvidenceDecision:
+    """Whether a fast-path retrieval result is concentrated enough to trust."""
+
+    safe: bool
+    confidence: float
+    reason: str
+
+
+_ATOMIC_QUERY_PATTERNS: tuple[tuple[AnswerType, re.Pattern[str]], ...] = (
+    (
+        "person",
+        re.compile(
+            r"(?:\bwho\b|谁|哪位|负责人(?:是|为)?谁|谁(?:负责|拥有|提出|决定))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "date",
+        re.compile(
+            r"(?:\bwhen\b|\bwhat\s+(?:is\s+the\s+)?(?:date|time|deadline)\b|"
+            r"什么时候|何时|截止(?:日期|时间)|日期是什么)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "number",
+        re.compile(r"(?:\bhow\s+(?:many|much)\b|多少|几个|数量(?:是|为)?多少)", re.IGNORECASE),
+    ),
+    (
+        "boolean",
+        re.compile(
+            r"(?:^(?:is|are|was|were|did|does|has|have)\b|是否|有没有|完成了吗)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "short_text",
+        re.compile(
+            r"(?:\bwhat\s+(?:is\s+the\s+)?(?:version|status|id|identifier)\b|"
+            r"版本(?:是|为)?什么|状态(?:是|为)?什么|编号(?:是|为)?什么)",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+_ANALYTICAL_MARKERS = {
+    "compare",
+    "comparison",
+    "contrast",
+    "difference",
+    "why",
+    "summary",
+    "summarize",
+    "all of the",
+    "比较",
+    "对比",
+    "差异",
+    "为什么",
+    "原因",
+    "总结",
+    "概览",
+    "所有",
+    "全部",
+}
+_ATOMIC_COMPLEXITY_EXEMPTIONS = {"how many", "what is the", "what are the"}
+_DATE_EVIDENCE_PATTERN = re.compile(
+    r"(?:\b\d{4}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\b|\d{1,2}\s*月\s*\d{0,2}\s*日?)",
+    re.IGNORECASE,
+)
+_NUMBER_EVIDENCE_PATTERN = re.compile(r"(?:\d|[零〇一二两三四五六七八九十百千万亿])")
+
+
+def classify_query_route(
+    question: str,
+    *,
+    meeting_count: int = 0,
+    file_count: int = 0,
+) -> QueryRouteDecision:
+    """Classify request shape with a conservative atomic-fact allow-list.
+
+    False-fast errors are more harmful than routing a simple request through
+    the normal path, so unknown shapes default to bounded synthesis.  This
+    decision is intentionally independent of retrieval confidence.
+    """
+    text = question.strip()
+    folded = text.casefold()
+    if not text:
+        return QueryRouteDecision("bounded_synthesis", 1.0, "explanation", True, ("empty_query",))
+    if _ANAPHORA_PATTERN.search(text):
+        return QueryRouteDecision(
+            "bounded_synthesis", 0.98, "explanation", True, ("context_reference",)
+        )
+
+    complexity_hits = tuple(
+        sorted(
+            marker
+            for marker in _COMPLEXITY_KEYWORDS
+            if marker in folded and marker not in _ATOMIC_COMPLEXITY_EXEMPTIONS
+        )
+    )
+    if complexity_hits:
+        analytical = (
+            meeting_count > 1
+            or file_count > 1
+            or not (meeting_count or file_count)
+            or any(marker in folded for marker in _ANALYTICAL_MARKERS)
+        )
+        return QueryRouteDecision(
+            "analytical_synthesis" if analytical else "bounded_synthesis",
+            0.98,
+            "explanation",
+            True,
+            ("complexity_marker", *complexity_hits[:3]),
+        )
+
+    max_words = max(1, int(getattr(settings, "RAG_FAST_PATH_MAX_WORDS", 12)))
+    if len(text.split()) <= max_words:
+        answer_types = tuple(
+            answer_type for answer_type, pattern in _ATOMIC_QUERY_PATTERNS if pattern.search(text)
+        )
+        if len(answer_types) == 1:
+            return QueryRouteDecision(
+                "atomic_fact",
+                0.97,
+                answer_types[0],
+                False,
+                ("atomic_answer_shape", answer_types[0]),
+            )
+        if len(answer_types) > 1:
+            return QueryRouteDecision(
+                "bounded_synthesis",
+                0.95,
+                "explanation",
+                True,
+                ("multiple_answer_shapes", *answer_types),
+            )
+
+    return QueryRouteDecision(
+        "bounded_synthesis",
+        0.70,
+        "explanation",
+        True,
+        ("not_provably_atomic",),
+    )
+
+
+def validate_fast_path_evidence(
+    decision: QueryRouteDecision,
+    docs: list[dict[str, Any]],
+    *,
+    meeting_ids: list[int] | None = None,
+    file_ids: list[int] | None = None,
+) -> FastEvidenceDecision:
+    """Validate that an atomic probe found concentrated, high-signal evidence.
+
+    Retrieval adapters expose higher-is-better relevance scores. BM25 scores
+    are not bounded, so this gate uses relative concentration rather than
+    pretending that every backend shares an absolute probability scale.
+    """
+    if not decision.fast_candidate:
+        return FastEvidenceDecision(False, 0.0, "query_requires_synthesis")
+    ranked = [doc for doc in docs if str(doc.get("content") or "").strip()]
+    if not ranked:
+        return FastEvidenceDecision(False, 0.0, "no_evidence")
+
+    scores = [max(0.0, float(doc.get("score", 0.0) or 0.0)) for doc in ranked]
+    top_score = scores[0]
+    if top_score <= 0.0:
+        return FastEvidenceDecision(False, 0.0, "weak_top_score")
+
+    evidence_text = "\n".join(str(doc.get("content") or "") for doc in ranked[:3])
+    if decision.answer_type == "date" and not _DATE_EVIDENCE_PATTERN.search(evidence_text):
+        return FastEvidenceDecision(False, 0.0, "missing_date_answer_shape")
+    if decision.answer_type == "number" and not _NUMBER_EVIDENCE_PATTERN.search(evidence_text):
+        return FastEvidenceDecision(False, 0.0, "missing_number_answer_shape")
+
+    signal_floor = top_score * 0.75
+    strong_docs = [
+        doc for doc, score in zip(ranked[:3], scores[:3], strict=False) if score >= signal_floor
+    ]
+
+    def _source_identity(doc: dict[str, Any]) -> tuple[str, Any] | None:
+        metadata = doc.get("metadata") or {}
+        if metadata.get("file_id") is not None:
+            return ("file", metadata["file_id"])
+        if metadata.get("meeting_id") is not None:
+            return ("meeting", metadata["meeting_id"])
+        if metadata.get("source"):
+            return ("source", metadata["source"])
+        return None
+
+    source_keys = {_source_identity(doc) for doc in strong_docs}
+    if None in source_keys:
+        return FastEvidenceDecision(False, 0.0, "missing_source_identity")
+    explicitly_single_file = bool(file_ids and len(set(file_ids)) == 1)
+    if len(source_keys) > 1 and not explicitly_single_file:
+        return FastEvidenceDecision(False, top_score, "evidence_spans_sources")
+
+    scope_bonus = 0.05 if meeting_ids or file_ids else 0.0
+    confidence = min(1.0, 0.85 + scope_bonus)
+    return FastEvidenceDecision(True, confidence, "concentrated_atomic_evidence")
+
 
 # Anaphora / pronouns that signal the query needs context rewriting
 _ANAPHORA_PATTERN = re.compile(
@@ -114,15 +365,17 @@ def _is_context_free_query(question: str, *, include_summary: bool = False) -> b
 
 
 def is_fast_query(question: str, *, include_summary: bool = False) -> bool:
-    """Use the same multilingual safety gate as resolver and query rewriting."""
-    if not _is_context_free_query(question, include_summary=include_summary):
-        return False
+    """Return whether a query is eligible for a post-retrieval fast-path check.
+
+    ``include_summary`` remains for API compatibility; summaries always require
+    synthesis and are intentionally excluded from the atomic allow-list.
+    """
+    _ = include_summary
     from ...core.config import settings as _settings
 
     if not getattr(_settings, "RAG_FAST_PATH_ENABLED", True):
         return False
-    max_words = max(1, int(getattr(_settings, "RAG_FAST_PATH_MAX_WORDS", 12)))
-    return len(question.split()) <= max_words
+    return classify_query_route(question).fast_candidate
 
 
 # Singleton for the lightweight rewrite model (thread-safe)

@@ -29,7 +29,6 @@ from ...core.metrics import LLM_REQUEST_DURATION, LLM_REQUEST_TOTAL, RAG_DOCS_AT
 from ...core.trace import write_pipeline_log
 from ..llm import get_llm, get_rag_prompt, get_skill_prompt
 from ..llm._parsing import StreamingThinkingFilter, strip_thinking_blocks
-from ..rag._query import is_fast_query
 from ..traffic_control import get_traffic_controller
 from ._anthropic_cache import apply_anthropic_cache_control
 from ._common import logger
@@ -72,8 +71,12 @@ def _uses_stream_latency_guard(ctx: PipelineContext) -> bool:
         and not ctx.use_web_search
         and ctx.web_search_mode == "off"
         and not is_visual_query(ctx.question)
-        and is_fast_query(ctx.question)
-        and ctx.rag_mode in {None, settings.RAG_FAST_PATH_RETRIEVAL_MODE}
+        and ctx.fast_path_auto_selected
+        and ctx.query_route_decision is not None
+        and ctx.query_route_decision.fast_candidate
+        and ctx.fast_path_evidence_decision is not None
+        and ctx.fast_path_evidence_decision.safe
+        and ctx.rag_mode == settings.RAG_FAST_PATH_RETRIEVAL_MODE
     )
 
 
@@ -209,9 +212,9 @@ def _preserve_incomplete_stream(
             )
             excerpts = []
             for index, source in enumerate(evidence_sources[:3], start=1):
-                content = str(source.get("content") or "").strip()
+                content = " ".join(str(source.get("content") or "").split())
                 if content:
-                    excerpts.append(f"[{index}] {content[:800].rstrip()}")
+                    excerpts.append(f"[{index}] {content[:320].rstrip()}")
             ctx.answer = (
                 "\n\n".join([heading, *excerpts])
                 if excerpts
@@ -226,8 +229,15 @@ def _preserve_incomplete_stream(
     return ctx.answer
 
 
-async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
-    """Consume an LLM async iterator, emit tokens to the bus, and return accumulated text."""
+async def _emit_stream(
+    bus: Any,
+    ctx: PipelineContext,
+    stream_iter: Any,
+    *,
+    first_token_timeout_s: float | None = None,
+    stall_timeout_s: float | None = None,
+) -> str:
+    """Consume an LLM stream with optional first-token and stall deadlines."""
     accumulated = ""
     first_token_seen = asyncio.Event()
     ttft_finished = False
@@ -267,7 +277,26 @@ async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
         hb_task = asyncio.create_task(_pre_token_heartbeat())
 
         try:
-            async for event in _gen:
+            iterator = _gen.__aiter__()
+            next_visible_deadline = (
+                time.monotonic() + first_token_timeout_s
+                if first_token_timeout_s is not None
+                else None
+            )
+            while True:
+                try:
+                    if next_visible_deadline is None:
+                        event = await iterator.__anext__()
+                    else:
+                        remaining_s = next_visible_deadline - time.monotonic()
+                        if remaining_s <= 0:
+                            raise TimeoutError("Visible-token deadline exhausted")
+                        event = await asyncio.wait_for(
+                            iterator.__anext__(),
+                            timeout=remaining_s,
+                        )
+                except StopAsyncIteration:
+                    break
                 metadata = getattr(event, "response_metadata", {}) or {}
                 if (
                     metadata.get("finish_reason") == "length"
@@ -293,6 +322,9 @@ async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
                         ttft_finished = True
                     ctx.answer += clean
                     bus.emit_token(clean)
+                    next_visible_deadline = (
+                        time.monotonic() + stall_timeout_s if stall_timeout_s is not None else None
+                    )
         finally:
             remaining = thinking_filter.flush()
             if remaining:
@@ -394,7 +426,14 @@ async def _run_stream_pipeline_inner(
     try:
         bus.emit_step("accepted", "start")
         # Query routing for streaming
-        ctx.trace.start_span("classify_intent", "routing")
+        route_decision = ctx.query_route_decision
+        ctx.trace.start_span(
+            "classify_intent",
+            "routing",
+            query_route=route_decision.route if route_decision else "unknown",
+            route_confidence=route_decision.confidence if route_decision else 0.0,
+            route_reasons=list(route_decision.reasons) if route_decision else [],
+        )
         intent = _api_mod._classify_intent(question)
         ctx.trace.finish_span("classify_intent")
         if intent == "casual" or _is_trivially_short(question):
@@ -409,9 +448,10 @@ async def _run_stream_pipeline_inner(
                 ctx.trace.start_span("skill_match", "skill", skipped=True, reason="recorded_facts")
                 ctx.trace.finish_span("skill_match")
                 return None
-            if is_fast_query(question) or (
-                bool(ctx.meeting_ids or ctx.file_ids)
-                and is_fast_query(question, include_summary=True)
+            if (
+                settings.RAG_FAST_PATH_ENABLED
+                and ctx.query_route_decision
+                and ctx.query_route_decision.fast_candidate
             ):
                 ctx.trace.start_span("skill_match", "skill", skipped=True, reason="fast_query")
                 ctx.trace.finish_span("skill_match")
@@ -492,11 +532,16 @@ async def _run_stream_pipeline_inner(
         # Steps 3-8: parallel retrieval + context loading. skill_task runs
         # alongside and is consumed just before generate_answer below.
         async def _retrieve_branch() -> None:
+            requested_top_k = ctx.top_k
             await _api_mod.retrieve_documents(ctx)
             if ctx.snapshot_restored:
                 # A saved evidence snapshot is immutable; deduplication and
                 # reranking would silently mutate its historical ordering.
                 return
+            await _api_mod.validate_or_promote_fast_path(
+                ctx,
+                requested_top_k=requested_top_k,
+            )
             _api_mod.pre_rerank_dedup(ctx)
             if _should_skip_stream_rerank(ctx):
                 # A remote reranker routinely costs more than the complete
@@ -624,7 +669,7 @@ async def _run_stream_pipeline_inner(
         _llm_start = time.monotonic()
         _latency_guard = _latency_guarded
         _generation_timeout = (
-            settings.RAG_FAST_PATH_GENERATION_TIMEOUT_S
+            settings.RAG_FAST_PATH_TOTAL_TIMEOUT_S
             if _latency_guard
             else settings.LLM_GENERATION_TIMEOUT_S
         )
@@ -658,6 +703,14 @@ async def _run_stream_pipeline_inner(
         }
 
         async def _do_stream() -> str:
+            emit_kwargs = (
+                {
+                    "first_token_timeout_s": settings.RAG_FAST_PATH_FIRST_TOKEN_TIMEOUT_S,
+                    "stall_timeout_s": settings.RAG_FAST_PATH_STREAM_STALL_TIMEOUT_S,
+                }
+                if _latency_guard
+                else {}
+            )
             if _stream_images:
                 try:
                     prompt_value = prompt.invoke(_stream_inputs)
@@ -680,7 +733,12 @@ async def _run_stream_pipeline_inner(
                                     additional_kwargs=messages[idx].additional_kwargs,
                                 )
                             break
-                    return await _emit_stream(bus, ctx, llm.astream(messages))
+                    return await _emit_stream(
+                        bus,
+                        ctx,
+                        llm.astream(messages),
+                        **emit_kwargs,
+                    )
                 except Exception:
                     if ctx.answer.strip():
                         raise
@@ -688,8 +746,18 @@ async def _run_stream_pipeline_inner(
                         "Multimodal streaming failed, falling back to text-only streaming",
                         exc_info=True,
                     )
-                    return await _emit_stream(bus, ctx, chain.astream(_stream_inputs))
-            return await _emit_stream(bus, ctx, chain.astream(_stream_inputs))
+                    return await _emit_stream(
+                        bus,
+                        ctx,
+                        chain.astream(_stream_inputs),
+                        **emit_kwargs,
+                    )
+            return await _emit_stream(
+                bus,
+                ctx,
+                chain.astream(_stream_inputs),
+                **emit_kwargs,
+            )
 
         # Stream tokens
         accumulated = ""

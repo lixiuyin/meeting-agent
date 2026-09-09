@@ -19,6 +19,18 @@ in the [ingest guide](backend/docs/ingest-pipeline.md#45-support-formats-and-old
 > Alembic chain on 2026-09-09. Dated audit reports remain historical evidence;
 > start at [`docs/README.md`](docs/README.md) for the current documentation map.
 
+## Interface Preview
+
+An animated tour assembled from 19 screenshots: materials, PDF/slide and video
+previews, scoped Q&A with citations, history, memory, settings, and skill-based
+document generation. Each screen pauses for reading; the timing does not
+represent application response speed.
+
+![Meeting Agent interface tour: materials, cited Q&A, memory, and document generation](docs/assets/meeting-agent-tour.gif)
+
+[Open the GIF at full size](docs/assets/meeting-agent-tour.gif) ·
+[View a static chat screenshot](docs/assets/meeting-agent-chat.png)
+
 ## Demo Videos
 
 Walk-throughs and feature demos are on the project's YouTube channel:

@@ -18,7 +18,7 @@ from ...core.config import settings
 from ...core.database import get_connection, get_meeting_file
 from ...core.file_scope import FileScope
 from ..llm._prompt_safety import escape_prompt_data
-from ..rag._query import is_fast_query, is_summary_intent
+from ..rag._query import is_summary_intent
 from ._common import logger
 from ._context import PipelineContext
 from ._generate_helpers import (
@@ -539,13 +539,16 @@ async def generate_answer(
 
     ctx.trace.start_span("generate_answer", "generate")
     ctx.trace.start_span("llm_ttft", "generate", parent_label="generate_answer")
-    fast_path = (
-        ctx.retrieval_profile == "fast"
-        and is_fast_query(ctx.question)
-        and (ctx.rag_mode in {None, settings.RAG_FAST_PATH_RETRIEVAL_MODE})
+    fast_path = bool(
+        ctx.fast_path_auto_selected
+        and ctx.query_route_decision is not None
+        and ctx.query_route_decision.fast_candidate
+        and ctx.fast_path_evidence_decision is not None
+        and ctx.fast_path_evidence_decision.safe
+        and ctx.rag_mode == settings.RAG_FAST_PATH_RETRIEVAL_MODE
     )
     generation_timeout = (
-        settings.RAG_FAST_PATH_GENERATION_TIMEOUT_S
+        settings.RAG_FAST_PATH_TOTAL_TIMEOUT_S
         if fast_path and settings.CHAT_STREAM_LATENCY_GUARD_ENABLED
         else settings.LLM_GENERATION_TIMEOUT_S
     )

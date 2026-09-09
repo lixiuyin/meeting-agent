@@ -211,8 +211,10 @@ See [`rag.md`](./rag.md) for detailed explanation. Field list:
 | `RAG_FAST_PATH_ENABLED` / `RAG_FAST_PATH_MAX_WORDS` | `True` / `12` | Short standalone fact lookups skip remote rewrite and resolver work |
 | `RAG_FAST_PATH_RETRIEVAL_MODE` | `bm25` | Local lexical retrieval for the fast path; explicit request `rag_mode` still wins |
 | `RAG_FAST_PATH_MAX_OUTPUT_TOKENS` | `256` | Per-request completion cap for the fast path |
-| `RAG_FAST_PATH_GENERATION_TIMEOUT_S` | `2.5` | Model budget for the fast path; timeout returns transparent evidence excerpts |
-| `CHAT_STREAM_LATENCY_GUARD_ENABLED` | `True` | YAML-enabled opt-in guard for eligible fast-profile sync/stream generation; on timeout return labelled source excerpts or an explicit timeout result |
+| `RAG_FAST_PATH_FIRST_TOKEN_TIMEOUT_S` | `10.0` | Maximum wait for the first user-visible token on a validated fast-path stream |
+| `RAG_FAST_PATH_STREAM_STALL_TIMEOUT_S` | `15.0` | Maximum gap between user-visible tokens on a validated fast-path stream |
+| `RAG_FAST_PATH_TOTAL_TIMEOUT_S` | `30.0` | Safety ceiling for validated fast-path generation; the 2.5s latency target is measured as an SLO, not used as a cancellation deadline |
+| `CHAT_STREAM_LATENCY_GUARD_ENABLED` | `True` | Enables atomic-fact probing. A post-retrieval evidence filter promotes weak or cross-source results to the full path; only validated probes may skip reranking or return labelled excerpts on timeout |
 | `SCORE_THRESHOLD` | `1.5` | |
 | `RERANKER_BINDING` / `RERANKER_MODEL` | disabled / `cohere/rerank-4-pro` | `cohere` SDK, generic `http`, local `bge`, or disabled |
 | `RERANKER_API_KEY` / `RERANKER_BASE_URL` | `""` / `https://openrouter.ai/api/v1` | Fall back to `LLM_API_KEY` when the API key is empty |

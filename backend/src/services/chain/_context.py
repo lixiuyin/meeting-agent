@@ -14,6 +14,7 @@ from ...core.operating_modes import MemoryMode, RetrievalProfile
 from ...core.trace import TraceContext
 
 if TYPE_CHECKING:
+    from ..rag._query import FastEvidenceDecision, QueryRouteDecision
     from ..rag._query_analysis import QueryAnalysis
     from ..rag._query_plan import QueryPlan
 
@@ -66,6 +67,10 @@ class PipelineContext:
     scope_file_ids: list[int] = field(default_factory=list)
     query_analysis: QueryAnalysis | None = None
     query_plan: QueryPlan | None = None
+    query_route_decision: QueryRouteDecision | None = None
+    fast_path_auto_selected: bool = False
+    fast_path_evidence_decision: FastEvidenceDecision | None = None
+    fast_path_promotion_reason: str | None = None
     known_speakers: list[str] = field(default_factory=list)
     meeting_priors: dict[int, float] = field(default_factory=dict)
     memory_context: str = ""

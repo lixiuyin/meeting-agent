@@ -77,6 +77,39 @@ async def test_provider_output_limit_marks_answer_incomplete_even_on_clean_strea
     assert ctx.degraded and ctx.degradation_reason == "output_limit"
 
 
+@pytest.mark.asyncio
+async def test_fast_stream_first_visible_token_has_its_own_deadline():
+    ctx = PipelineContext(question="Who owns Atlas?")
+    bus = StreamBus()
+
+    async def stream():
+        await asyncio.Event().wait()
+        yield SimpleNamespace(content="never")
+
+    with pytest.raises(TimeoutError):
+        await _emit_stream(bus, ctx, stream(), first_token_timeout_s=0.01)
+
+
+@pytest.mark.asyncio
+async def test_fast_stream_stall_deadline_starts_after_visible_token():
+    ctx = PipelineContext(question="Who owns Atlas?")
+    bus = StreamBus()
+
+    async def stream():
+        yield SimpleNamespace(content="Priya")
+        await asyncio.Event().wait()
+
+    with pytest.raises(TimeoutError):
+        await _emit_stream(
+            bus,
+            ctx,
+            stream(),
+            first_token_timeout_s=0.05,
+            stall_timeout_s=0.01,
+        )
+    assert ctx.answer == "Priya"
+
+
 def test_context_and_public_source_preview_strip_index_only_prefix():
     doc = {
         "content": "[Retrieval context: meeting=Jobs]\nThe source text.",

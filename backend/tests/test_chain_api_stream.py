@@ -1,15 +1,35 @@
 """Tests for streaming pipeline internals (StreamBus error handling, disconnect, terminal events)."""
 
 import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
 
 from src.core.exceptions import LLMEmptyResponseError
+from src.services.chain import _api as chain_api
 from src.services.chain._api_stream import (
     _normalise_stream_content,
     _should_skip_stream_rerank,
     _stream_user_error_message,
 )
 from src.services.chain._context import PipelineContext
+from src.services.rag._query import FastEvidenceDecision, classify_query_route
 from src.services.stream_bus import StreamBus
+
+
+def _validated_fast_context(question: str, **kwargs) -> PipelineContext:
+    return PipelineContext(
+        question=question,
+        query_route_decision=classify_query_route(question),
+        fast_path_auto_selected=True,
+        fast_path_evidence_decision=FastEvidenceDecision(
+            safe=True,
+            confidence=0.9,
+            reason="concentrated_atomic_evidence",
+        ),
+        rag_mode="bm25",
+        **kwargs,
+    )
 
 
 def test_stream_content_normalization_omits_reasoning_blocks():
@@ -38,14 +58,17 @@ def test_latency_guard_applies_to_simple_facts_across_profiles(monkeypatch):
     monkeypatch.setattr(
         "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", True
     )
-    assert _should_skip_stream_rerank(PipelineContext(question="Who owns Atlas?"))
+    assert not _should_skip_stream_rerank(PipelineContext(question="Who owns Atlas?"))
+    assert _should_skip_stream_rerank(_validated_fast_context("Who owns Atlas?"))
     assert _should_skip_stream_rerank(
-        PipelineContext(question="Who owns Atlas?", retrieval_profile="fast")
+        _validated_fast_context("Who owns Atlas?", retrieval_profile="fast")
     )
     for question in (
         "AI会取代全部工作吗?",
         "比较所有会议并解释它们的因果关系",
         "这些会议主要讲了什么内容?",
+        "GPT的后训练是怎么做的?",
+        "How does post-training work?",
     ):
         assert not _should_skip_stream_rerank(
             PipelineContext(question=question, retrieval_profile="fast")
@@ -53,7 +76,7 @@ def test_latency_guard_applies_to_simple_facts_across_profiles(monkeypatch):
 
 
 def test_latency_guard_respects_operator_and_query_boundaries(monkeypatch):
-    ctx = PipelineContext(question="Who owns Atlas?")
+    ctx = _validated_fast_context("Who owns Atlas?")
     monkeypatch.setattr(
         "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", False
     )
@@ -63,8 +86,64 @@ def test_latency_guard_respects_operator_and_query_boundaries(monkeypatch):
         "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", True
     )
     assert not _should_skip_stream_rerank(
-        PipelineContext(question="Who owns Atlas?", use_web_search=True, web_search_mode="always")
+        _validated_fast_context(
+            "Who owns Atlas?",
+            use_web_search=True,
+            web_search_mode="always",
+        )
     )
+
+
+@pytest.mark.asyncio
+async def test_empty_fast_probe_is_promoted_to_full_retrieval(monkeypatch):
+    ctx = PipelineContext(
+        question="Who owns Atlas?",
+        query_route_decision=classify_query_route("Who owns Atlas?"),
+        fast_path_auto_selected=True,
+        rag_mode="bm25",
+        top_k=3,
+        docs=[],
+    )
+    calls = []
+
+    async def _retrieve(promoted_ctx):
+        calls.append((promoted_ctx.rag_mode, promoted_ctx.top_k))
+        promoted_ctx.docs = [
+            {
+                "content": "Priya owns Atlas.",
+                "score": 0.9,
+                "metadata": {"meeting_id": 1, "file_id": 2},
+            }
+        ]
+
+    monkeypatch.setattr(chain_api, "retrieve_documents", _retrieve)
+    await chain_api.validate_or_promote_fast_path(ctx, requested_top_k=None)
+
+    assert calls == [(None, None)]
+    assert ctx.rag_mode is None
+    assert not ctx.fast_path_auto_selected
+    assert ctx.fast_path_promotion_reason == "no_evidence"
+
+
+@pytest.mark.asyncio
+async def test_concentrated_fast_probe_does_not_repeat_retrieval(monkeypatch):
+    ctx = _validated_fast_context("Who owns Atlas?")
+    ctx.fast_path_evidence_decision = None
+    ctx.docs = [
+        {
+            "content": "Priya owns Atlas.",
+            "score": 3.0,
+            "metadata": {"meeting_id": 1, "file_id": 2},
+        }
+    ]
+
+    retrieve = AsyncMock()
+    monkeypatch.setattr(chain_api, "retrieve_documents", retrieve)
+    await chain_api.validate_or_promote_fast_path(ctx, requested_top_k=None)
+
+    retrieve.assert_not_awaited()
+    assert ctx.fast_path_evidence_decision is not None
+    assert ctx.fast_path_evidence_decision.safe
 
 
 class TestStreamBus:

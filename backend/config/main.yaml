@@ -145,9 +145,13 @@ rag:
   fast_path_max_words: 12
   fast_path_retrieval_mode: bm25
   fast_path_max_output_tokens: 256
-  # Leave headroom below the 3s chat P95 SLO for retrieval and stream framing;
-  # slower providers use the transparent evidence fallback after this budget.
-  fast_path_generation_timeout_s: 2.5
+  # The 2.5s target is an observability SLO, not a hard cancellation deadline.
+  # Guard separately against no first token, a stalled stream, and runaway
+  # total generation so a healthy answer is not discarded merely for being
+  # slower than the latency target.
+  fast_path_first_token_timeout_s: 10.0
+  fast_path_stream_stall_timeout_s: 15.0
+  fast_path_total_timeout_s: 30.0
   # Hierarchical (funnel) RAG: meetings → files → chunks. Broad/scoped retrieval
   # is selected by file scope; RAG_FILE_SCOPING_MODE chooses the broad strategy.
   funnel_fetch_multiplier: 10            # Over-fetch factor for wide chunk fetch

@@ -140,6 +140,51 @@ def _request_settings_snapshot(
     )
 
 
+async def validate_or_promote_fast_path(
+    ctx: PipelineContext,
+    *,
+    requested_top_k: int | None,
+) -> None:
+    """Keep a fast probe only when its evidence is concentrated and sufficient.
+
+    Automatic fast-path selection is speculative. A weak or cross-source BM25
+    result is promoted once to the normal retrieval mode before reranking and
+    answer generation. Explicit ``rag_mode`` choices are never overridden.
+    """
+    if not ctx.fast_path_auto_selected or ctx.query_route_decision is None:
+        return
+
+    from ..rag._query import validate_fast_path_evidence
+
+    evidence_decision = validate_fast_path_evidence(
+        ctx.query_route_decision,
+        ctx.docs,
+        meeting_ids=ctx.meeting_ids,
+        file_ids=ctx.file_ids,
+    )
+    ctx.fast_path_evidence_decision = evidence_decision
+    span = ctx.trace.start_span(
+        "fast_path_evidence",
+        "routing",
+        route=ctx.query_route_decision.route,
+        safe=evidence_decision.safe,
+        confidence=evidence_decision.confidence,
+        reason=evidence_decision.reason,
+        candidate_count=len(ctx.docs),
+    )
+    span.finish("success")
+    if evidence_decision.safe:
+        return
+
+    ctx.fast_path_promotion_reason = evidence_decision.reason
+    ctx.fast_path_auto_selected = False
+    ctx.rag_mode = None
+    ctx.top_k = requested_top_k
+    ctx.docs = []
+    ctx.query_embedding = None
+    await retrieve_documents(ctx)
+
+
 async def _run_pipeline_inner(
     ctx: PipelineContext,
     skill_definition: dict[str, Any] | None = None,
@@ -191,7 +236,13 @@ async def _run_pipeline_inner(
             # Steps 4-9: retrieval, memory, session context, web search, history in parallel
             async def _retrieve_branch() -> None:
                 with otel_span("chain.retrieve_branch"):
+                    requested_top_k = ctx.top_k
                     await retrieve_documents(ctx)
+                    if not ctx.snapshot_restored:
+                        await validate_or_promote_fast_path(
+                            ctx,
+                            requested_top_k=requested_top_k,
+                        )
                     RAG_DOCS_AT_STAGE.labels(stage="retrieved").observe(len(ctx.docs))
                     # A saved snapshot already contains the authoritative document
                     # order, scores, and exact rendered context.  Running today's
@@ -322,21 +373,25 @@ async def ask(
         PipelineResult with answer, sources, session_id, and optional web_results
     """
     epoch = get_settings_epoch()
-    from ..rag._query import is_fast_query
+    from ..rag._query import classify_query_route
 
     # The frontend's "auto" value means no explicit provider override. Normalize
     # it at the boundary so automatic fast-path selection is not accidentally
     # disabled merely because the client serialized the default UI option.
     effective_rag_mode = None if rag_mode == "auto" else rag_mode
-    scoped_fast_query = bool(meeting_ids or file_ids) and is_fast_query(
-        question, include_summary=True
+    query_route_decision = classify_query_route(
+        question,
+        meeting_count=len(set(meeting_ids or [])),
+        file_count=len(set(file_ids or [])),
     )
-    if (
+    fast_path_auto_selected = bool(
         effective_rag_mode is None
+        and settings.RAG_FAST_PATH_ENABLED
         and retrieval_profile == "fast"
         and not use_web_search
-        and is_fast_query(question)
-    ):
+        and query_route_decision.fast_candidate
+    )
+    if fast_path_auto_selected:
         effective_rag_mode = settings.RAG_FAST_PATH_RETRIEVAL_MODE
 
     ctx = PipelineContext(
@@ -358,12 +413,20 @@ async def ask(
         retrieval_profile=retrieval_profile,
         memory_mode=memory_mode,
         continuation_mode=continuation_mode,
+        query_route_decision=query_route_decision,
+        fast_path_auto_selected=fast_path_auto_selected,
         settings_epoch=epoch,
         settings_snapshot=_request_settings_snapshot(epoch, retrieval_profile, memory_mode),
     )
 
     # Query routing: skip retrieval for casual inputs
-    ctx.trace.start_span("classify_intent", "routing")
+    ctx.trace.start_span(
+        "classify_intent",
+        "routing",
+        query_route=query_route_decision.route,
+        route_confidence=query_route_decision.confidence,
+        route_reasons=list(query_route_decision.reasons),
+    )
     intent = _classify_intent(question)
     ctx.trace.finish_span("classify_intent")
     if intent == "casual":
@@ -391,14 +454,13 @@ async def ask(
     from ..llm import get_llm
 
     async def _do_skill_match():
-        from ..rag._query import is_fast_query
         from ._query_routes import is_recorded_fact_request
 
         if is_recorded_fact_request(question, ctx.memory_mode):
             ctx.trace.start_span("skill_match", "skill", skipped=True, reason="recorded_facts")
             ctx.trace.finish_span("skill_match")
             return None
-        if is_fast_query(question) or scoped_fast_query:
+        if settings.RAG_FAST_PATH_ENABLED and query_route_decision.fast_candidate:
             ctx.trace.start_span("skill_match", "skill", skipped=True, reason="fast_query")
             ctx.trace.finish_span("skill_match")
             return None
@@ -533,15 +595,22 @@ async def ask_stream(
     bus = StreamBus()
 
     epoch = get_settings_epoch()
-    from ..rag._query import is_fast_query
+    from ..rag._query import classify_query_route
 
     effective_rag_mode = None if rag_mode == "auto" else rag_mode
-    if (
+    query_route_decision = classify_query_route(
+        question,
+        meeting_count=len(set(meeting_ids or [])),
+        file_count=len(set(file_ids or [])),
+    )
+    fast_path_auto_selected = bool(
         effective_rag_mode is None
+        and settings.RAG_FAST_PATH_ENABLED
         and (retrieval_profile == "fast" or settings.CHAT_STREAM_LATENCY_GUARD_ENABLED)
         and not use_web_search
-        and is_fast_query(question)
-    ):
+        and query_route_decision.fast_candidate
+    )
+    if fast_path_auto_selected:
         effective_rag_mode = settings.RAG_FAST_PATH_RETRIEVAL_MODE
 
     ctx = PipelineContext(
@@ -563,6 +632,8 @@ async def ask_stream(
         retrieval_profile=retrieval_profile,
         memory_mode=memory_mode,
         continuation_mode=continuation_mode,
+        query_route_decision=query_route_decision,
+        fast_path_auto_selected=fast_path_auto_selected,
         settings_epoch=epoch,
         settings_snapshot=_request_settings_snapshot(epoch, retrieval_profile, memory_mode),
     )

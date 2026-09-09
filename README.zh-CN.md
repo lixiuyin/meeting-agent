@@ -11,6 +11,15 @@ Meeting Agent 是一个全栈 RAG 应用：它可以接收会议录音、文档�
 
 > **文档状态：**维护中的指南和架构参考已于 2026-09-09 根据源码树、OpenAPI 契约、Compose 拓扑和 Alembic 迁移链完成核对。带日期的审计报告仍作为历史证据保留；请从 [`docs/README.md`](docs/README.md) 进入当前文档导航。
 
+## 界面预览
+
+由 19 张截图制作的动态导览，展示素材管理、PDF/幻灯片与视频预览、限定范围的带引用问答、历史记录、Memory、设置，以及基于 Skill 的文档生成。每个画面均留有阅读时间；播放节奏不代表应用的实际响应速度。
+
+![Meeting Agent 界面导览：素材、带引用问答、Memory 与文档生成](docs/assets/meeting-agent-tour.gif)
+
+[查看原尺寸 GIF](docs/assets/meeting-agent-tour.gif) ·
+[查看静态聊天截图](docs/assets/meeting-agent-chat.png)
+
 ## 演示视频
 
 项目的完整流程和功能演示发布在 YouTube 频道：

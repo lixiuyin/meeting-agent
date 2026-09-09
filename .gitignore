@@ -125,3 +125,6 @@ node_modules/
 
 # schemathesis
 backend/.schemathesis/default/cache/
+
+# tmp
+tmp/

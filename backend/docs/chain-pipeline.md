@@ -6,11 +6,19 @@
 > `_steps_*` stages, `_retrieve_*` retrieval modules, prompt/generation helpers,
 > provenance adapters, and durable extraction scheduling).
 
-The streaming latency guard applies to the retrieval branch as well as model
-generation: short, self-contained questions skip the remote reranker and keep
-the initial hybrid retrieval order. The trace records a skipped `rerank` span
-with reason `chat_latency_guard`, so the latency/quality trade-off remains
-observable.
+The streaming latency guard applies only after two checks. First, a conservative
+answer-shape router admits atomic person/date/number/boolean/status lookups to a
+local BM25 probe. Second, a post-retrieval evidence filter checks expected
+answer shape, score concentration, and cross-source ambiguity. Weak evidence is
+automatically promoted to the normal retrieval and reranking path. Only a
+validated probe may skip the remote reranker; the trace records both the
+`fast_path_evidence` decision and a skipped `rerank` span with reason
+`chat_latency_guard`.
+
+The 2.5-second interactive target is an observability SLO, not a cancellation
+deadline. Validated fast streams have separate first-visible-token (10s),
+between-token stall (15s), and total generation (30s) safety budgets. Ordinary
+synthesis requests retain the normal generation timeout.
 
 ## 1. Layering
 
