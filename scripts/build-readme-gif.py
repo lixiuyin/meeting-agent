@@ -17,7 +17,8 @@ SOURCE = ROOT / "tmp"
 OUTPUT = ROOT / "docs" / "assets"
 SIZE = (1600, 910)
 
-# A representative tour; omit repeated answer-scroll and empty-state frames.
+# Include every Chat screenshot, including answer-scroll continuations.
+# Other sections retain representative frames rather than empty-state repeats.
 # Tuple values are screenshot suffix and display duration in milliseconds.
 SCENES = (
     (0, 3000),  # Chat landing
@@ -28,13 +29,25 @@ SCENES = (
     (6, 4000),  # Slides and parsed text
     (10, 3000),  # Meeting selection
     (11, 4500),  # Cited answer
+    (12, 4500),  # Cited answer continuation
     (13, 4000),  # Citation preview
     (14, 4000),  # Meeting summary
+    (15, 4500),  # Video-based question and answer
+    (16, 4500),  # Video answer continuation and citation
     (17, 4000),  # Timestamped video evidence
+    (18, 4500),  # Follow-up answer
     (19, 4500),  # GPT post-training answer
+    (20, 4500),  # Post-training answer continuation
+    (21, 4500),  # Post-training answer conclusion and sources
     (22, 3500),  # History
     (23, 3500),  # Entities
     (24, 4000),  # Memories
+    (25, 4500),  # Additional chat question and answer
+    (26, 4500),  # Answer continuation
+    (27, 4500),  # Further chat question and answer
+    (28, 4500),  # Answer continuation
+    (29, 4500),  # Final chat question and answer
+    (30, 4500),  # Answer continuation and sources
     (9, 3500),  # Settings
     (31, 3000),  # Generate skill selection
     (32, 3500),  # Generation inputs
@@ -77,7 +90,8 @@ def main() -> None:
         optimize=True,
     )
     # An accessible still image also allows readers to inspect without motion.
-    frames[7].save(OUTPUT / "meeting-agent-chat.png", optimize=True)
+    still_index = next(index for index, (suffix, _) in enumerate(SCENES) if suffix == 11)
+    frames[still_index].save(OUTPUT / "meeting-agent-chat.png", optimize=True)
 
     with Image.open(target) as animation:
         assert animation.n_frames == len(SCENES)

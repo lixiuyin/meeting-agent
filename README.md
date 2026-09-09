@@ -21,7 +21,8 @@ in the [ingest guide](backend/docs/ingest-pipeline.md#45-support-formats-and-old
 
 ## Interface Preview
 
-An animated tour assembled from 19 screenshots: materials, PDF/slide and video
+An animated tour assembled from 31 screenshots, including every supplied Chat
+screen and long-answer continuation: materials, PDF/slide and video
 previews, scoped Q&A with citations, history, memory, settings, and skill-based
 document generation. Each screen pauses for reading; the timing does not
 represent application response speed.
