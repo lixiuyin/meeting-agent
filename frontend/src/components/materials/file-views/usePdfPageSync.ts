@@ -210,6 +210,27 @@ export default function usePdfPageSync({
     });
   }, [writeAnchor, enabled]);
 
+  const prepareForLayoutChange = useCallback(() => {
+    const source = owner.current;
+    const container = source ? containers.current[source] : undefined;
+    const position = container ? readAnchor(container) : null;
+    if (source && position) {
+      anchor.current = semanticAnchor(position, source, containers.current);
+    }
+    // WebKit may emit scroll events before ResizeObserver when zoom or viewport
+    // changes clamp scrollTop. They are layout corrections, not user input.
+    owner.current = null;
+    pendingUserScroll.current = null;
+    expectedScroll.current = {};
+    expectedLayout.current = {};
+    schedule();
+  }, [schedule]);
+
+  useEffect(() => {
+    window.addEventListener("resize", prepareForLayoutChange);
+    return () => window.removeEventListener("resize", prepareForLayoutChange);
+  }, [prepareForLayoutChange]);
+
   const connect = useCallback(
     (source: SyncSource, container: HTMLDivElement | null) => {
       cleanups.current[source]?.();
@@ -321,6 +342,7 @@ export default function usePdfPageSync({
     scrollBothToPage,
     pdfContainerRef,
     parsedContainerRef,
+    prepareForLayoutChange,
   };
 }
 

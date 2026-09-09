@@ -127,23 +127,33 @@ test("primary Memory source link resolves its actual slide even outside the meet
   await expect(page.getByRole("dialog")).toHaveCount(1);
 });
 
-async function makeScrollFixture(page: Page) {
-  const texts = [
-    "Introduction",
-    Array.from({ length: 100 }, (_, i) => `Paragraph ${i}: source content.`).join("\n\n"),
-    "A short third page.",
-    "Fourth page.",
-    "Fifth page.",
-    "End of source.",
-  ];
-  const pdf = await pdfFixture(
-    `<style>@page {size:800px 1000px; margin:0} body {margin:0} section {height:1000px;break-after:page}</style>${texts.map((_, i) => `<section>PDF page ${i + 1}</section>`).join("")}`,
+const scrollFixtureTexts = [
+  "Introduction",
+  Array.from({ length: 100 }, (_, i) => `Paragraph ${i}: source content.`).join("\n\n"),
+  "A short third page.",
+  "Fourth page.",
+  "Fifth page.",
+  "End of source.",
+];
+let scrollFixturePdf: Promise<Buffer> | undefined;
+
+function getScrollFixturePdf() {
+  scrollFixturePdf ??= pdfFixture(
+    `<style>@page {size:800px 1000px; margin:0} body {margin:0} section {height:1000px;break-after:page}</style>${scrollFixtureTexts.map((_, i) => `<section>PDF page ${i + 1}</section>`).join("")}`,
   );
-  await installSourceMock(page, "pdf", pdf, texts);
+  return scrollFixturePdf;
+}
+
+async function makeScrollFixture(page: Page) {
+  await installSourceMock(page, "pdf", await getScrollFixturePdf(), scrollFixtureTexts);
   await page.goto("/materials?meetingId=7&fileId=9&pageNumber=2");
   await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num="2"] canvas')).toBeVisible();
-  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num]')).toHaveCount(texts.length);
-  await expect(page.locator('[data-pdf-pane="parsed"] [data-page-num]')).toHaveCount(texts.length);
+  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num]')).toHaveCount(
+    scrollFixtureTexts.length,
+  );
+  await expect(page.locator('[data-pdf-pane="parsed"] [data-page-num]')).toHaveCount(
+    scrollFixtureTexts.length,
+  );
   await expectAligned(page, 2);
 }
 
@@ -181,17 +191,20 @@ async function anchors(page: Page) {
 
 async function expectAligned(page: Page, expectedPage?: number) {
   await expect
-    .poll(async () => {
-      const [left, right] = await anchors(page);
-      return (
-        !!left &&
-        !!right &&
-        left.page === right.page &&
-        Math.abs(left.progress - right.progress) < 0.02 &&
-        (expectedPage === undefined || left.page === expectedPage)
-      );
-    })
-    .toBe(true);
+    .poll(
+      async () => {
+        const [left, right] = await anchors(page);
+        const aligned =
+          !!left &&
+          !!right &&
+          left.page === right.page &&
+          Math.abs(left.progress - right.progress) < 0.02 &&
+          (expectedPage === undefined || left.page === expectedPage);
+        return aligned ? "aligned" : JSON.stringify({ left, right, expectedPage });
+      },
+      { timeout: 10_000 },
+    )
+    .toBe("aligned");
 }
 
 test("independent reading does not move the other pane and citation return realigns both", async ({
@@ -215,6 +228,7 @@ test("independent reading does not move the other pane and citation return reali
 test("unequal-height pages stay aligned during bidirectional scrolling, zoom, resize and last-page jumps", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await makeScrollFixture(page);
   const parsed = page.locator('[data-pdf-pane="parsed"]');

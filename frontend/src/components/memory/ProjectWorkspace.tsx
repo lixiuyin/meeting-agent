@@ -21,7 +21,12 @@ export default function ProjectWorkspace() {
       return next;
     });
   return (
-    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+    <Space
+      className="project-workspace"
+      orientation="vertical"
+      style={{ width: "100%" }}
+      size="middle"
+    >
       <Alert type="info" title={t({ id: "workflow.projectHint" })} />
       {error && (
         <Alert

@@ -82,6 +82,7 @@ function PdfSplitViewerInner({
     evidenceExcerpt,
     enabled: syncEnabled,
   });
+  const { prepareForLayoutChange } = sync;
 
   // Mobile breakpoint detection
   useEffect(() => {
@@ -157,8 +158,14 @@ function PdfSplitViewerInner({
     setPdfError(error.message || "Failed to load PDF");
   }, []);
 
-  const zoomIn = useCallback(() => setZoom((z) => Math.min(z + ZOOM_STEP, MAX_ZOOM)), []);
-  const zoomOut = useCallback(() => setZoom((z) => Math.max(z - ZOOM_STEP, MIN_ZOOM)), []);
+  const zoomIn = useCallback(() => {
+    prepareForLayoutChange();
+    setZoom((z) => Math.min(z + ZOOM_STEP, MAX_ZOOM));
+  }, [prepareForLayoutChange]);
+  const zoomOut = useCallback(() => {
+    prepareForLayoutChange();
+    setZoom((z) => Math.max(z - ZOOM_STEP, MIN_ZOOM));
+  }, [prepareForLayoutChange]);
 
   const handlePageClick = useCallback(
     (pageNum: number) => {
@@ -357,7 +364,11 @@ function PdfSplitViewerInner({
                     <button
                       type="button"
                       aria-label={`Go to page ${p.page_num}`}
-                      onClick={() => handlePageClick(p.page_num)}
+                      onPointerDown={() => handlePageClick(p.page_num)}
+                      onClick={(event) => {
+                        // Keyboard activation has no preceding pointer event.
+                        if (event.detail === 0) handlePageClick(p.page_num);
+                      }}
                       style={{
                         border: 0,
                         cursor: "pointer",

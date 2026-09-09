@@ -7,7 +7,7 @@ import MeetingReviewPanel from "./MeetingReviewPanel";
 export default function MeetingPreparationPanel({ projectId }: { projectId: string }) {
   const { formatMessage: t } = useIntl();
   return (
-    <Space orientation="vertical" style={{ width: "100%" }}>
+    <Space className="meeting-preparation-panel" orientation="vertical" style={{ width: "100%" }}>
       <Alert type="info" showIcon title={t({ id: "workflow.preparationHint" })} />
       <Collapse
         defaultActiveKey={["actions"]}

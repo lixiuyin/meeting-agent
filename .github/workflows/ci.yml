@@ -364,8 +364,11 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: cd backend && uv sync --dev
+      - run: npm ci --prefix frontend
       - run: chmod +x scripts/generate-types.sh && ./scripts/generate-types.sh --check
 
   contract-schemathesis:

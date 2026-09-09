@@ -285,6 +285,11 @@ test("meeting preparation keeps tasks and recent changes in the selected project
   await page.screenshot({ path: testInfo.outputPath("preparation-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText("Prepare release report", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // The responsive Tabs/Space tree updates from matchMedia on the next frame in
+  // WebKit. Assert the settled mobile layout rather than the desktop frame that
+  // can still be present immediately after setViewportSize().
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("preparation-mobile.png"), fullPage: true });
 });

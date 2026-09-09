@@ -54,6 +54,7 @@ export default function PdfComparisonModal({
   const sync = usePdfPageSync({
     totalPages: Math.max(numPages, sortedPages.length),
   });
+  const { prepareForLayoutChange } = sync;
 
   // Mobile breakpoint detection (RAF-debounced)
   useEffect(() => {
@@ -84,8 +85,14 @@ export default function PdfComparisonModal({
     setPdfError(error.message || "Failed to load PDF");
   }, []);
 
-  const zoomIn = useCallback(() => setZoom((z) => Math.min(z + ZOOM_STEP, MAX_ZOOM)), []);
-  const zoomOut = useCallback(() => setZoom((z) => Math.max(z - ZOOM_STEP, MIN_ZOOM)), []);
+  const zoomIn = useCallback(() => {
+    prepareForLayoutChange();
+    setZoom((z) => Math.min(z + ZOOM_STEP, MAX_ZOOM));
+  }, [prepareForLayoutChange]);
+  const zoomOut = useCallback(() => {
+    prepareForLayoutChange();
+    setZoom((z) => Math.max(z - ZOOM_STEP, MIN_ZOOM));
+  }, [prepareForLayoutChange]);
 
   const pdfUrl = useMeetingFileUrl(meetingId, fileId);
 
@@ -265,7 +272,11 @@ export default function PdfComparisonModal({
                     <button
                       type="button"
                       aria-label={`Go to page ${page.page_num}`}
-                      onClick={() => handlePageClick(page.page_num)}
+                      onPointerDown={() => handlePageClick(page.page_num)}
+                      onClick={(event) => {
+                        // Keyboard activation has no preceding pointer event.
+                        if (event.detail === 0) handlePageClick(page.page_num);
+                      }}
                       style={{
                         border: 0,
                         cursor: "pointer",
