@@ -2,25 +2,114 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
-
-import math
 
 
 def _extract_keywords(text: str, min_len: int = 2) -> list[str]:
     """Extract likely content-bearing keywords from a string."""
     # Keep alphanumeric tokens longer than min_len, excluding common stopwords
     stopwords = {
-        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was",
-        "one", "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now",
-        "old", "see", "two", "way", "who", "boy", "did", "its", "let", "put", "say", "she",
-        "too", "use", "that", "this", "with", "from", "they", "know", "want", "been",
-        "good", "much", "some", "time", "very", "when", "come", "here", "just", "like",
-        "long", "make", "over", "such", "take", "than", "them", "well", "were", "what",
-        "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",
-        "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看",
-        "好", "自己", "这", "那", "这些", "那些", "这个", "那个",
+        "the",
+        "and",
+        "for",
+        "are",
+        "but",
+        "not",
+        "you",
+        "all",
+        "can",
+        "had",
+        "her",
+        "was",
+        "one",
+        "our",
+        "out",
+        "day",
+        "get",
+        "has",
+        "him",
+        "his",
+        "how",
+        "man",
+        "new",
+        "now",
+        "old",
+        "see",
+        "two",
+        "way",
+        "who",
+        "boy",
+        "did",
+        "its",
+        "let",
+        "put",
+        "say",
+        "she",
+        "too",
+        "use",
+        "that",
+        "this",
+        "with",
+        "from",
+        "they",
+        "know",
+        "want",
+        "been",
+        "good",
+        "much",
+        "some",
+        "time",
+        "very",
+        "when",
+        "come",
+        "here",
+        "just",
+        "like",
+        "long",
+        "make",
+        "over",
+        "such",
+        "take",
+        "than",
+        "them",
+        "well",
+        "were",
+        "what",
+        "的",
+        "了",
+        "在",
+        "是",
+        "我",
+        "有",
+        "和",
+        "就",
+        "不",
+        "人",
+        "都",
+        "一",
+        "一个",
+        "上",
+        "也",
+        "很",
+        "到",
+        "说",
+        "要",
+        "去",
+        "你",
+        "会",
+        "着",
+        "没有",
+        "看",
+        "好",
+        "自己",
+        "这",
+        "那",
+        "这些",
+        "那些",
+        "这个",
+        "那个",
     }
     # Preserve currency symbols, numbers, and CJK characters
     tokens = re.findall(r"[€$£¥]?\d+(?:\.\d+)?|[\w一-鿿]+", text.lower())
@@ -105,9 +194,7 @@ def compute_expected_chunks(
     keywords = _extract_keywords(combined_text)
     # Adaptive floor: at least 1, at most 3, never more than total keywords
     adaptive_min = (
-        min_keyword_matches
-        if min_keyword_matches is not None
-        else max(1, min(3, len(keywords)))
+        min_keyword_matches if min_keyword_matches is not None else max(1, min(3, len(keywords)))
     )
     selected: set[str] = set()
 
@@ -142,7 +229,7 @@ def compute_expected_chunks(
             pool_texts = [c.get("text", "") for c in candidate_pool]
             pool_sims = _embedding_similarities(combined_text, pool_texts)
             scored = sorted(
-                zip(candidate_pool, pool_sims),
+                zip(candidate_pool, pool_sims, strict=True),
                 key=lambda x: x[1],
                 reverse=True,
             )
@@ -172,13 +259,15 @@ def load_chunks_from_vectorstore(meeting_ids: list[int] | None = None) -> list[d
     chunks = []
     for idx, doc_id in enumerate(results["ids"]):
         meta = results["metadatas"][idx]
-        chunks.append({
-            "chunk_id": doc_id,
-            "text": results["documents"][idx],
-            "meeting_id": meta.get("meeting_id"),
-            "file_id": meta.get("file_id"),
-            "chunk_index": meta.get("chunk_index"),
-            "chunk_type": meta.get("chunk_type"),
-            "parent_id": meta.get("parent_id"),
-        })
+        chunks.append(
+            {
+                "chunk_id": doc_id,
+                "text": results["documents"][idx],
+                "meeting_id": meta.get("meeting_id"),
+                "file_id": meta.get("file_id"),
+                "chunk_index": meta.get("chunk_index"),
+                "chunk_type": meta.get("chunk_type"),
+                "parent_id": meta.get("parent_id"),
+            }
+        )
     return chunks

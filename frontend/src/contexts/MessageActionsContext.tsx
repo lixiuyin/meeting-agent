@@ -1,10 +1,12 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { SourceItem } from "../api/client";
+import type { ChatMessage } from "../hooks/useChatStream";
 
 interface MessageActionsContextValue {
   copiedId: string | null;
   onCopy: (content: string, id: string) => void;
   onRegenerate: () => void;
+  onEditUserMessage: (message: ChatMessage) => void;
   onOpenViewer: (source: SourceItem, preferPlayback?: boolean) => void;
   onOpenMeetingSummary: (meetingId: number, fallbackContent?: string) => void;
   onOpenFileSummary: (meetingId: number, fileId?: number, fallbackContent?: string) => void;

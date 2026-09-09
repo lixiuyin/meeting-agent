@@ -20,6 +20,19 @@ def _fake_request():
 
 class TestApiKeyAuth:
     @pytest.mark.asyncio
+    async def test_pinned_identity_survives_rotation_and_matches_websocket(self, monkeypatch):
+        from src.api.routers.websocket import _generate_ws_token, _verify_ws_auth
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "PRINCIPAL_ID", "stable_principal")
+        for key in ("old-key", "new-key"):
+            monkeypatch.setattr(settings, "API_KEY", SecretStr(key))
+            result = await verify_api_key(request=_fake_request(), x_api_key=key)
+            assert result == {"user_id": "stable_principal"}
+            token = _generate_ws_token(result["user_id"])
+            assert _verify_ws_auth(None, token) == (True, "stable_principal")
+
+    @pytest.mark.asyncio
     async def test_no_api_key_configured(self):
         """When API_KEY is empty, authentication is skipped"""
         with patch("src.core.security.settings") as mock_settings:

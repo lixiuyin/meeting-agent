@@ -15,7 +15,7 @@ interface Props {
 }
 
 export default function MaterialViewer({ request }: Props) {
-  const { meetingId, fileId, fileName, fileType, seekTo, page } = request;
+  const { meetingId, fileId, fileName, fileType, seekTo, seekEnd, page } = request;
   const url = useMeetingFileUrl(meetingId, fileId);
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -59,6 +59,7 @@ export default function MaterialViewer({ request }: Props) {
         url={url}
         fileName={fileName}
         seekTo={seekTo}
+        seekEnd={seekEnd}
         meetingId={meetingId}
         fileId={fileId}
         audioRef={audioRef}
@@ -71,6 +72,7 @@ export default function MaterialViewer({ request }: Props) {
       <VideoViewer
         url={url}
         seekTo={seekTo}
+        seekEnd={seekEnd}
         meetingId={meetingId}
         fileId={fileId}
         videoRef={videoRef}
@@ -79,7 +81,7 @@ export default function MaterialViewer({ request }: Props) {
   }
 
   if (caps.viewerHint === "slides") {
-    return <SlidesViewer meetingId={meetingId} fileId={fileId} fileName={fileName} />;
+    return <SlidesViewer meetingId={meetingId} fileId={fileId} fileName={fileName} page={page} />;
   }
 
   if (caps.viewerHint === "pdf") {
@@ -87,7 +89,13 @@ export default function MaterialViewer({ request }: Props) {
       <Suspense
         fallback={<div style={{ padding: 40, textAlign: "center" }}>Loading PDF viewer…</div>}
       >
-        <PdfSplitViewer url={url} page={page} meetingId={meetingId} fileId={fileId} />
+        <PdfSplitViewer
+          url={url}
+          page={page}
+          meetingId={meetingId}
+          fileId={fileId}
+          evidenceExcerpt={request.evidenceExcerpt}
+        />
       </Suspense>
     );
   }
@@ -101,7 +109,14 @@ export default function MaterialViewer({ request }: Props) {
   }
 
   if (caps.viewerHint === "text") {
-    return <TextPreview url={url} fileName={fileName} />;
+    return (
+      <TextPreview
+        url={url}
+        fileName={fileName}
+        windowStart={request.windowStart}
+        windowEnd={request.windowEnd}
+      />
+    );
   }
 
   // Fallback: download

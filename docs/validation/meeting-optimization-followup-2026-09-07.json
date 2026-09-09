@@ -1,0 +1,198 @@
+{
+  "date": "2026-09-07",
+  "release_ready": false,
+  "execution_status": "completed_local_validation_with_unmet_quality_gates",
+  "backend": {
+    "passed": 2249,
+    "skipped": 1,
+    "seconds": 260.68,
+    "python": "3.12.12"
+  },
+  "frontend_unit": {
+    "passed": 178,
+    "files": 34
+  },
+  "workflow_browsers": {
+    "passed": 18,
+    "engines": [
+      "chromium",
+      "firefox",
+      "webkit"
+    ],
+    "api_mode": "mocked",
+    "mobile_width": 390
+  },
+  "authenticated_full_stack": {
+    "passed": 25,
+    "minutes": 2.8,
+    "api_mode": "real_production_auth_isolated_storage",
+    "report": "backend/benchmark-results/e2e-smoke_2026-09-07T07-39-11Z.json"
+  },
+  "static_checks": {
+    "ruff": "passed",
+    "pyright_backend": "passed",
+    "frontend_lint": "passed",
+    "frontend_format": "passed",
+    "frontend_build_and_bundle_budget": "passed",
+    "openapi_types": "passed",
+    "documentation": "passed_71_markdown_files",
+    "git_diff_check": "passed"
+  },
+  "synthetic_memory_pipeline": {
+    "report": "backend/benchmark-results/memory-pipeline_2026-09-07T07-27-43.441423_00-00.json",
+    "valid": false,
+    "complete": false,
+    "stats": {
+      "pipeline_write_recall": 0.9166666666666666,
+      "pipeline_reference_key_agreement": null,
+      "pipeline_latest_value_accuracy": 0.9166666666666666,
+      "pipeline_confirmed_evidence_rate": 0.95,
+      "pipeline_events_attempted": 22,
+      "pipeline_events_correct": 18,
+      "pipeline_events_persisted": 21
+    },
+    "validity_errors": [
+      "cross_session_multihop sequence=20: expected confirmed, persisted=False, statuses=[], retirement_observed=False",
+      "same_name_meeting_disambiguation sequence=4: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+      "duplicate_observation_is_idempotent sequence=1: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+      "duplicate_observation_is_idempotent sequence=2: expected no_change, persisted=True, statuses=['confirmed'], retirement_observed=False"
+    ],
+    "inputs_unchanged_during_run": true,
+    "paired_comparison": false,
+    "human_reviewed": false,
+    "scope_note": "Memory extraction logic unchanged after this run; later changes concern source identities, RAG metrics and startup reconciliation."
+  },
+  "production_retrieval_diagnostic": {
+    "command": "production-retrieval-identity-diagnostic",
+    "complete": true,
+    "generation_evaluated_cases": 0,
+    "generation_skipped_cases": 30,
+    "full_answer_quality_evaluation_completed": false,
+    "release_ready": false,
+    "judge_evaluated_cases": 0,
+    "judge_skipped_cases": 30,
+    "reranker_evaluated_queries": 29,
+    "all_source_identities_complete": true,
+    "source_identity_evaluated_queries": 30,
+    "stats": {
+      "file_recall_at_10": 1.0,
+      "evidence_chunk_recall_at_10": 1.0,
+      "evidence_chunk_hit_at_10": 1.0,
+      "evidence_chunk_mrr": 0.8955555555555555
+    },
+    "run_fingerprint": "359ac8f3f7c40bc95f3fcba827254caa5c8f15ffcb070345e50661c3b4ee3a1c",
+    "acceptance_wrapper_sha256": "ab94494cbf5383499fad58389af6de46687f9176aa8b5d3dc165c116d7777610",
+    "limitations": [
+      "references not human reviewed",
+      "retrieval-only run; generation and independent judging skipped",
+      "chunk metric excludes explicitly typed derived summaries; not paired with older metric",
+      "not combined with scores from previous generation"
+    ],
+    "status": "completed",
+    "cases": 30,
+    "human_reviewed": false,
+    "inputs_unchanged_during_each_case": true,
+    "paired_comparison": false,
+    "process_exit_code": 0,
+    "query_rewrite_timeout_fallbacks": 3
+  },
+  "data_integrity": {
+    "status": "current_validation_fingerprints_match",
+    "historical_recovery_boundary": "docs/quality-acceptance-2026-09-07.md",
+    "database_logical_contents_equal": true,
+    "uploads_bytes_equal": true,
+    "vector_files_bytes_equal": true,
+    "counts": {
+      "meetings": 3,
+      "meeting_files": 14,
+      "user_memories": 207,
+      "memory_fact_versions": 227
+    },
+    "historical_full_recovery_proven": false
+  },
+  "external_acceptance_pending": [
+    "human-reviewed real meeting holdout",
+    "real-user workflow usability",
+    "rolling 30-day SLO",
+    "previous unresolved deployment and dependency acceptance"
+  ],
+  "artifacts_directory": "backend/benchmark-results/optimization-20260907",
+  "short_soak": {
+    "workload": "synthetic_single_instance_api",
+    "concurrency": 2,
+    "requested_seconds": 60.0,
+    "workload_seconds": 60.115283250001085,
+    "initial_start_seconds": 26.789301917000557,
+    "crash_recovery_seconds": 28.881284957999014,
+    "operations": {
+      "memory_write": {
+        "evaluated": 771,
+        "errors": 0,
+        "p50_seconds": 0.009367041995574255,
+        "p95_seconds": 0.03433241699531209,
+        "p99_seconds": 0.06922191599733196
+      },
+      "facts_query": {
+        "evaluated": 771,
+        "errors": 0,
+        "p50_seconds": 0.010544291006226558,
+        "p95_seconds": 0.03087295799923595,
+        "p99_seconds": 0.051901499995437916
+      },
+      "upload_index_rag": {
+        "evaluated": 2,
+        "errors": 0,
+        "p50_seconds": 9.879302125002141,
+        "p95_seconds": 10.044299790999503,
+        "p99_seconds": 10.044299790999503
+      },
+      "chat": {
+        "evaluated": 2,
+        "errors": 0,
+        "p50_seconds": 7.419856082997285,
+        "p95_seconds": 7.767791625003156,
+        "p99_seconds": 7.767791625003156
+      }
+    },
+    "models_enabled": true,
+    "model_interval_seconds": 300,
+    "resource_samples": [
+      {
+        "elapsed_seconds": 9.981917000004614,
+        "rss_kib": null
+      }
+    ],
+    "rss_evaluated_samples": 0,
+    "rss_skipped_samples": 1,
+    "duration_gate_passed": true,
+    "chat_p95_target_seconds": 3.0,
+    "chat_p95_gate_passed": false,
+    "model_quality_score": null,
+    "errors": [],
+    "persisted_writes": 771,
+    "job_counts_after_recovery": {
+      "completed": 4,
+      "expired_running": 0,
+      "oldest_expired_seconds": 0
+    },
+    "jobs_recovered": true,
+    "job_drain_seconds": 233.73997087500175,
+    "integrity": "ok",
+    "backup_integrity": "ok",
+    "release_ready": false,
+    "limitations": [
+      "synthetic data",
+      "bounded run; does not establish rolling 30-day SLO",
+      "no human quality labels",
+      "no multi-instance evaluation"
+    ],
+    "report": "backend/benchmark-results/optimization-soak-2026-09-07.json"
+  },
+  "intermediate_failures_retained": [
+    "manual confirmation blocked on remote embedding before async publication fix",
+    "stale tab refresh locator before scoping fix",
+    "upstream skill generation HTTP 504 timeout; final full-stack rerun passed",
+    "RSS probe denied by macOS sandbox; now recorded as skipped",
+    "intermediate retrieval run invalidated by implementation fingerprint change; restarted from zero"
+  ]
+}

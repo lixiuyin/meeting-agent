@@ -22,10 +22,14 @@ import asyncio
 import itertools
 import json
 import logging
+import threading
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..models.errors import ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +38,11 @@ logger = logging.getLogger(__name__)
 class StreamEvent:
     """A single typed event in the streaming pipeline."""
 
-    type: str  # "step" | "token" | "sources" | "trace" | "error" | "done"
+    type: str  # "step" | "token" | "sources" | "trace" | "status" | "error" | "done"
     data: dict[str, Any] = field(default_factory=dict)
     seq: int = 0  # HIGH-5: Monotonic sequence for causal ordering
     parent_step: str | None = None  # HIGH-5: Parent step name for causality chain
+    buffered_bytes: int = field(default=0, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"type": self.type, "seq": self.seq, **self.data}
@@ -49,29 +54,97 @@ class StreamEvent:
 class StreamBus:
     """Async iterator that buffers typed events for SSE consumption.
 
-    Thread-safe: emit() can be called from any thread; events are
-    queued via asyncio.Queue and yielded by the async for loop.
-
-    The queue is intentionally unbounded so terminal events (error/done/sentinel)
-    are never dropped under bursty token streams.
+    ``emit`` may be called from worker threads. Foreign-thread writes are
+    marshalled onto the iterator's owning event loop before touching the
+    asyncio queue.
     """
 
-    def __init__(self, maxsize: int | None = None) -> None:
+    def __init__(self, maxsize: int | None = None, max_buffer_bytes: int | None = None) -> None:
         # CONC-2: Default maxsize=2000 prevents unbounded memory growth from
         # slow clients while leaving enough room for bursty token streams.
         effective_max = maxsize if maxsize is not None and maxsize > 0 else 2000
         self._queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue(maxsize=effective_max)
+        self._max_buffer_bytes = (
+            max_buffer_bytes if max_buffer_bytes is not None and max_buffer_bytes > 0 else 4 << 20
+        )
+        self._buffered_bytes = 0
         # Terminal slot: done/error events stored independently of the main
         # queue so they can never be lost due to back-pressure (H-CONC-5).
         self._terminal_event: StreamEvent | None = None
-        # Structural slots: sources/trace events stored independently so
-        # long token streams never drop them from the main queue (M-5).
-        self._sources_event: StreamEvent | None = None
-        self._trace_event: StreamEvent | None = None
+        # Critical overflow events remain ordered. Adjacent answer tokens are
+        # coalesced, while sources/trace/web results retain their position.
+        self._overflow_events: deque[StreamEvent] = deque()
         self._terminal_emitted: bool = False
         self._closed = False
-        self._seq = itertools.count()  # Atomic monotonic counter
-        self._lock = asyncio.Lock()  # protects terminal/structural event read-and-clear
+        self._seq = itertools.count()
+        self._state_lock = threading.RLock()
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+            self._owner_thread_id: int | None = threading.get_ident()
+        except RuntimeError:
+            self._loop = None
+            self._owner_thread_id = None
+
+    def _bind_owner_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        with self._state_lock:
+            if self._loop is None:
+                self._loop = loop
+                self._owner_thread_id = threading.get_ident()
+            elif self._loop is not loop:
+                raise RuntimeError("A StreamBus cannot be consumed by multiple event loops")
+
+    def _dispatch(self, callback, *args: Any) -> None:
+        loop = self._loop
+        if (
+            loop is not None
+            and loop.is_running()
+            and threading.get_ident() != self._owner_thread_id
+        ):
+            loop.call_soon_threadsafe(callback, *args)
+            return
+        callback(*args)
+
+    @staticmethod
+    def _event_size(event: StreamEvent) -> int:
+        if event.type == "token":
+            return len(str(event.data.get("content", "")).encode("utf-8"))
+        return len(json.dumps(event.to_dict(), ensure_ascii=False).encode("utf-8"))
+
+    def _set_backpressure_error(self) -> None:
+        if self._terminal_emitted or self._terminal_event is not None:
+            return
+        event = StreamEvent(
+            type="error",
+            data={
+                "message": "Stream client is too slow; buffered output limit exceeded",
+                "code": ErrorCode.STREAM_BACKPRESSURE_LIMIT,
+            },
+            seq=next(self._seq),
+        )
+        self._terminal_event = event
+        self._closed = True
+        with suppress(asyncio.QueueFull):
+            self._queue.put_nowait(None)
+        logger.error("StreamBus buffered output exceeded %d bytes", self._max_buffer_bytes)
+
+    def _append_overflow(self, event: StreamEvent) -> None:
+        size = self._event_size(event)
+        if self._buffered_bytes + size > self._max_buffer_bytes:
+            self._set_backpressure_error()
+            return
+        if event.type == "token" and self._overflow_events:
+            previous = self._overflow_events[-1]
+            if previous.type == "token":
+                previous.data["content"] = str(previous.data.get("content", "")) + str(
+                    event.data.get("content", "")
+                )
+                previous.buffered_bytes += size
+                self._buffered_bytes += size
+                return
+        event.buffered_bytes = size
+        self._overflow_events.append(event)
+        self._buffered_bytes += size
 
     def emit(self, event: StreamEvent) -> None:
         """Enqueue an event (best-effort, non-blocking).
@@ -80,32 +153,49 @@ class StreamBus:
         can reconstruct causal ordering even when events arrive out-of-order
         from concurrent pipeline branches.
         """
-        if self._closed:
-            return
-        event.seq = next(self._seq)
-        # Terminal events (done/error) go to dedicated slot — never dropped.
-        # CPython attribute assignment is atomic under the GIL, so reading
-        # _terminal_event in __anext__ (guarded by _lock) will always see
-        # the fully assigned object, never a partial write.
-        # M-4: Guard with _terminal_emitted so a late error cannot overwrite
-        # an already-emitted done event.
-        if event.type in ("done", "error"):
-            if not self._terminal_emitted:
-                self._terminal_event = event
-            return
-        # Structural events (sources/trace) go to dedicated slots so they
-        # survive long token streams that fill the main queue (M-5).
-        if event.type == "sources":
-            self._sources_event = event
-            return
-        if event.type == "trace":
-            self._trace_event = event
-            return
-        # Non-terminal: drain one if full to make room.
-        try:
-            self._queue.put_nowait(event)
-        except asyncio.QueueFull:
-            logger.warning("StreamBus queue full, dropping event: %s", event.type)
+        self._dispatch(self._emit_now, event)
+
+    def _emit_now(self, event: StreamEvent) -> None:
+        with self._state_lock:
+            if self._closed:
+                return
+            event.seq = next(self._seq)
+            # Terminal events (done/error) go to dedicated slot — never dropped.
+            # CPython attribute assignment is atomic under the GIL, so reading
+            # _terminal_event in __anext__ (guarded by _lock) will always see
+            # the fully assigned object, never a partial write.
+            # The first terminal event wins.  In particular, a later ``done`` must
+            # never erase an earlier error and make a failed request look
+            # successful to the client.
+            if event.type in ("done", "error"):
+                if not self._terminal_emitted and self._terminal_event is None:
+                    self._terminal_event = event
+                    with suppress(asyncio.QueueFull):
+                        self._queue.put_nowait(None)
+                return
+            critical = event.type in {"token", "sources", "trace", "status", "web_results"}
+            if self._overflow_events:
+                if critical:
+                    self._append_overflow(event)
+                else:
+                    logger.warning(
+                        "StreamBus backpressured, dropping progress event: %s", event.type
+                    )
+                return
+            size = self._event_size(event)
+            if self._buffered_bytes + size > self._max_buffer_bytes:
+                self._set_backpressure_error()
+                return
+            event.buffered_bytes = size
+            try:
+                self._queue.put_nowait(event)
+                self._buffered_bytes += size
+            except asyncio.QueueFull:
+                if critical:
+                    self._append_overflow(event)
+                    logger.warning("StreamBus queue full, buffering critical event: %s", event.type)
+                else:
+                    logger.warning("StreamBus queue full, dropping progress event: %s", event.type)
 
     def close(self) -> None:
         """Signal end of stream.
@@ -113,17 +203,19 @@ class StreamBus:
         For bounded queues, drain events if necessary to make room
         for the sentinel so the consumer always terminates.
         """
-        if self._closed:
-            return
-        self._closed = True
-        for _ in range(3):
-            try:
-                self._queue.put_nowait(None)
+        self._dispatch(self._close_now)
+
+    def _close_now(self) -> None:
+        with self._state_lock:
+            if self._closed:
                 return
-            except asyncio.QueueFull:
-                with suppress(asyncio.QueueEmpty):
-                    self._queue.get_nowait()
-        logger.error("StreamBus sentinel enqueue failed: queue unexpectedly full")
+            self._closed = True
+            # A terminal slot is sufficient to end iteration once queued content is
+            # drained.  Do not evict answer tokens merely to insert a sentinel.
+            if self._terminal_event is not None:
+                return
+            with suppress(asyncio.QueueFull):
+                self._queue.put_nowait(None)
 
     # -- Convenience emitters --
 
@@ -152,6 +244,13 @@ class StreamBus:
     def emit_web_results(self, results: list[dict]) -> None:
         """Emit web search results."""
         self.emit(StreamEvent(type="web_results", data={"items": results}))
+
+    def emit_status(self, status: str, *, reason: str | None = None) -> None:
+        """Emit a machine-readable answer status without mixing it into text."""
+        data: dict[str, Any] = {"status": status}
+        if reason:
+            data["reason"] = reason
+        self.emit(StreamEvent(type="status", data=data))
 
     def emit_error(
         self,
@@ -190,21 +289,32 @@ class StreamBus:
         Skipped once a terminal event is set (M-15) to avoid queueing
         heartbeats after the stream has already ended.
         """
-        if self._closed or self._terminal_event is not None:
-            return
-        event = StreamEvent(type="heartbeat")
-        event.seq = next(self._seq)
-        # Token traffic is flowing when the queue is full; the frontend stall
-        # timer is being reset by the events ahead of this heartbeat, so it is
-        # safe to drop.  Count stalls for SLO alerting.
-        try:
-            self._queue.put_nowait(event)
-        except asyncio.QueueFull:
-            from ..core.metrics import SSE_HEARTBEAT_STALLED_TOTAL
+        self._dispatch(self._emit_heartbeat_now)
 
-            SSE_HEARTBEAT_STALLED_TOTAL.inc()
+    def _emit_heartbeat_now(self) -> None:
+        with self._state_lock:
+            if self._closed or self._terminal_event is not None or self._overflow_events:
+                return
+            event = StreamEvent(type="heartbeat", seq=next(self._seq))
+            event.buffered_bytes = self._event_size(event)
+            # Token traffic is flowing when the queue is full; the frontend stall
+            # timer is being reset by the events ahead of this heartbeat, so it is
+            # safe to drop.  Count stalls for SLO alerting.
+            try:
+                self._queue.put_nowait(event)
+                self._buffered_bytes += event.buffered_bytes
+            except asyncio.QueueFull:
+                from ..core.metrics import SSE_HEARTBEAT_STALLED_TOTAL
 
-    def emit_done(self, session_id: str, *, error: bool = False) -> None:
+                SSE_HEARTBEAT_STALLED_TOTAL.inc()
+
+    def emit_done(
+        self,
+        session_id: str,
+        *,
+        error: bool = False,
+        message_ids: list[int] | None = None,
+    ) -> None:
         """Emit the final done event.
 
         When *error* is True the frontend can use it as a signal to terminate
@@ -214,8 +324,13 @@ class StreamBus:
         payload: dict[str, object] = {"session_id": session_id}
         if error:
             payload["error"] = True
-        self.emit(StreamEvent(type="done", data=payload))
-        self.close()
+        if message_ids:
+            payload["message_ids"] = message_ids
+        self._dispatch(self._emit_done_now, payload)
+
+    def _emit_done_now(self, payload: dict[str, object]) -> None:
+        self._emit_now(StreamEvent(type="done", data=payload))
+        self._close_now()
 
     # -- Async iterator protocol --
 
@@ -228,21 +343,21 @@ class StreamBus:
             self.close()
 
     def __aiter__(self) -> AsyncIterator[dict[str, Any]]:
+        self._bind_owner_loop()
         return self
 
     async def __anext__(self) -> dict[str, Any]:
-        # Yield structural events (sources, trace) before queue items so they
-        # are never starved by token backpressure (M-5).
-        async with self._lock:
-            if self._sources_event is not None:
-                event = self._sources_event
-                self._sources_event = None
+        self._bind_owner_loop()
+        with self._state_lock:
+            if self._overflow_events and self._queue.empty():
+                event = self._overflow_events.popleft()
+                self._buffered_bytes -= event.buffered_bytes
                 return event.to_dict()
-            if self._trace_event is not None:
-                event = self._trace_event
-                self._trace_event = None
-                return event.to_dict()
-            if self._terminal_event is not None and self._queue.empty():
+            if (
+                self._terminal_event is not None
+                and self._queue.empty()
+                and not self._overflow_events
+            ):
                 event = self._terminal_event
                 self._terminal_event = None
                 self._terminal_emitted = True
@@ -254,22 +369,19 @@ class StreamBus:
                 raise StopAsyncIteration from None
             event = await self._queue.get()
         if event is None:
-            async with self._lock:
-                # Drain any remaining structural events before terminating.
-                if self._sources_event is not None:
-                    se = self._sources_event
-                    self._sources_event = None
-                    return se.to_dict()
-                if self._trace_event is not None:
-                    te = self._trace_event
-                    self._trace_event = None
-                    return te.to_dict()
+            with self._state_lock:
+                if self._overflow_events:
+                    buffered = self._overflow_events.popleft()
+                    self._buffered_bytes -= buffered.buffered_bytes
+                    return buffered.to_dict()
                 if self._terminal_event is not None:
                     te = self._terminal_event
                     self._terminal_event = None
                     self._terminal_emitted = True
                     return te.to_dict()
             raise StopAsyncIteration
+        with self._state_lock:
+            self._buffered_bytes -= event.buffered_bytes
         return event.to_dict()
 
 

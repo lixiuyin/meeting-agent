@@ -5,11 +5,12 @@ import {
   createSkill,
   formatApiErrorMessage,
   invokeSkill,
-  listMeetings,
+  listAllMeetings,
   listSkills,
   type MeetingInfo,
   type SkillItem,
 } from "../api/client";
+import { isRequestCanceled } from "../api/client-core";
 import { CreateSkillModal } from "../components/generation/CreateSkillModal";
 import { GenerationConfigCard } from "../components/generation/GenerationConfigCard";
 import { GenerationOutputCard } from "../components/generation/GenerationOutputCard";
@@ -21,6 +22,7 @@ import {
   type CreateSkillFormValues,
 } from "../components/generation/skillDisplay";
 import type { MeetingGroup } from "../components/generation/types";
+import { buildMeetingGroups } from "../components/generation/meetingGroups";
 import { reportNonCriticalError } from "../utils/monitoring";
 
 export default function GenerationPage() {
@@ -32,15 +34,27 @@ export default function GenerationPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [creatingSkill, setCreatingSkill] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>();
-  const [selectedTitle, setSelectedTitle] = useState<string | undefined>();
+  const [selectedMeetingKey, setSelectedMeetingKey] = useState<string | undefined>();
   const [extraInstructions, setExtraInstructions] = useState("");
   const [result, setResult] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [resultIdentity, setResultIdentity] = useState<{
+    skillName: string;
+    skillDisplayName: string;
+    meetingTitle: string;
+  } | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
   const resetOutput = useCallback(() => {
+    ++generationRef.current;
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
+    setIsLoading(false);
     setResult("");
+    setResultIdentity(null);
     setError(null);
     setCopied(false);
   }, []);
@@ -48,22 +62,33 @@ export default function GenerationPage() {
   useEffect(() => {
     return () => {
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      generationAbortRef.current?.abort();
     };
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
       setLoadingMeetings(true);
-      listMeetings({ limit: 100, status: "ready" })
-        .then((res) => setMeetings(res.data.meetings))
-        .catch((err) =>
-          message.error(
-            formatApiErrorMessage(err, formatMessage({ id: "generation.loadMeetingsFailed" })),
-          ),
-        )
-        .finally(() => setLoadingMeetings(false));
+      listAllMeetings({ status: "ready", signal: controller.signal })
+        .then((incoming) => {
+          if (!controller.signal.aborted) setMeetings(incoming);
+        })
+        .catch((err) => {
+          if (!controller.signal.aborted) {
+            message.error(
+              formatApiErrorMessage(err, formatMessage({ id: "generation.loadMeetingsFailed" })),
+            );
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingMeetings(false);
+        });
     }, 0);
-    return () => window.clearTimeout(timeoutId);
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [formatMessage]);
 
   const loadSkills = useCallback(async () => {
@@ -99,33 +124,12 @@ export default function GenerationPage() {
   );
 
   const meetingGroups = useMemo<MeetingGroup[]>(() => {
-    const grouped = new Map<string, MeetingInfo[]>();
-    meetings.forEach((meeting) => {
-      const list = grouped.get(meeting.title) || [];
-      list.push(meeting);
-      grouped.set(meeting.title, list);
-    });
-    const groups = Array.from(grouped.entries()).map(([, files]) => {
-      const sortedFiles = [...files].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      );
-      return {
-        title: sortedFiles[0].title,
-        files: sortedFiles,
-        earliestCreatedAt: sortedFiles[0].created_at,
-        ids: sortedFiles.map((f) => f.id),
-        number: 0,
-      };
-    });
-    groups.sort(
-      (a, b) => new Date(a.earliestCreatedAt).getTime() - new Date(b.earliestCreatedAt).getTime(),
-    );
-    return groups.map((group, index) => ({ ...group, number: index + 1 }));
+    return buildMeetingGroups(meetings);
   }, [meetings]);
 
   const selectedGroup = useMemo(
-    () => meetingGroups.find((group) => group.title === selectedTitle),
-    [meetingGroups, selectedTitle],
+    () => meetingGroups.find((group) => group.key === selectedMeetingKey),
+    [meetingGroups, selectedMeetingKey],
   );
 
   const handleGenerate = async () => {
@@ -138,24 +142,43 @@ export default function GenerationPage() {
       return;
     }
 
+    generationAbortRef.current?.abort();
+    const controller = new AbortController();
+    generationAbortRef.current = controller;
+    const generation = ++generationRef.current;
+    const identity = {
+      skillName: selectedSkill.name,
+      skillDisplayName: selectedSkill.display_name,
+      meetingTitle: selectedGroup.title,
+    };
     setIsLoading(true);
     setResult("");
+    setResultIdentity(null);
     setError(null);
 
     try {
       const query = extraInstructions.trim() || selectedSkill.description;
-      const res = await invokeSkill({
-        skill_name: selectedSkill.name,
-        query,
-        meeting_ids: selectedGroup.ids,
-      });
+      const res = await invokeSkill(
+        {
+          skill_name: selectedSkill.name,
+          query,
+          meeting_ids: selectedGroup.ids,
+        },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || generation !== generationRef.current) return;
       setResult(res.data.content);
+      setResultIdentity(identity);
     } catch (err) {
+      if (controller.signal.aborted || isRequestCanceled(err)) return;
       const msg = formatApiErrorMessage(err, formatMessage({ id: "generation.failed" }));
       setError(msg);
       message.error(msg);
     } finally {
-      setIsLoading(false);
+      if (generation === generationRef.current) {
+        generationAbortRef.current = null;
+        setIsLoading(false);
+      }
     }
   };
 
@@ -177,7 +200,7 @@ export default function GenerationPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${selectedSkill?.name || "skill"}-${selectedGroup?.title || "meeting"}.md`;
+    a.download = `${resultIdentity?.skillName || "skill"}-${resultIdentity?.meetingTitle || "meeting"}.md`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -204,9 +227,9 @@ export default function GenerationPage() {
     [resetOutput],
   );
 
-  const handleSelectTitle = useCallback(
+  const handleSelectMeeting = useCallback(
     (value?: string) => {
-      setSelectedTitle(value);
+      setSelectedMeetingKey(value);
       resetOutput();
     },
     [resetOutput],
@@ -227,6 +250,7 @@ export default function GenerationPage() {
       });
       await loadSkills();
       setSelectedSkillName(normalizedName);
+      resetOutput();
       setIsCreateModalOpen(false);
       message.success(formatMessage({ id: "generation.skillCreated" }));
     } catch (err) {
@@ -258,8 +282,8 @@ export default function GenerationPage() {
           onOpenCreateModal={() => setIsCreateModalOpen(true)}
           skillIcons={SKILL_ICONS}
           meetingGroups={meetingGroups}
-          selectedTitle={selectedTitle}
-          onSelectMeeting={handleSelectTitle}
+          selectedMeetingKey={selectedMeetingKey}
+          onSelectMeeting={handleSelectMeeting}
           loadingMeetings={loadingMeetings}
           selectedGroup={selectedGroup}
           iconForFileType={iconForFileType}
@@ -273,7 +297,7 @@ export default function GenerationPage() {
           isLoading={isLoading}
           error={error}
           copied={copied}
-          selectedSkillDisplayName={selectedSkill?.display_name}
+          selectedSkillDisplayName={resultIdentity?.skillDisplayName ?? selectedSkill?.display_name}
           onCopy={handleCopy}
           onDownload={handleDownload}
         />

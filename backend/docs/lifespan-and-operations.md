@@ -1,51 +1,68 @@
-# 应用生命周期与运行时运维
+# Application Lifespan and Runtime Operations
 
-> 覆盖 FastAPI 启动 / 关闭流程、数据库升级、后台任务、故障恢复与日常运维要点。
->
-> 代码位置：`backend/src/api/lifespan.py`、`backend/src/api/middleware.py`、`backend/src/services/processor/_recovery.py`。
+This document covers FastAPI startup/shutdown, database upgrades, background tasks, recovery, and routine operations.
 
-## 1. 设计原则：关键路径 vs 尽力路径
+Source locations: `backend/src/api/lifespan/`, `backend/src/api/middleware.py`, and `backend/src/services/processor/_recovery.py`.
 
-`lifespan.py` 把启动拆成两段：
+For logs, request IDs, pipeline traces, Prometheus metrics, and probe diagnosis, see [`observability.md`](./observability.md). For authentication and production security boundaries, see [`security-and-tenancy.md`](./security-and-tenancy.md).
 
-- **Critical path**（数据库升级完成后 `await _run_critical_startup()`）：任一步致命失败可中止启动  
-  - OpenTelemetry `setup_tracing()`（无 endpoint 时为 no-op）  
-  - 可选 Sentry（`SENTRY_DSN`）  
-  - **安全守卫**：`ENVIRONMENT != "dev"` 且未配置 `API_KEY` → `RuntimeError`  
-  - `get_llm()`（`asyncio.to_thread`，30s 超时；超时不终止进程，但首聊可能失败）  
-  - `init_traffic_controller()`  
-  - `get_embeddings()` + `embed_query("connectivity check")` 验证非空  
-  - `get_vectorstore()`；best-effort 预热 memory / session summary / entity 向量库  
-  - best-effort 预热 **Skill matcher** embedding；若 `RAGANYTHING_ENABLED` 则校验包并预热 RAGAnything  
+## 1. Critical versus best-effort startup
 
-- **Best-effort path**（`recover_stale_meetings` 起）：失败记指标 + 日志，进程继续服务  
-  - `recover_stale_meetings()`  
-  - 会话缓存、过期记忆、orphan 向量、启动期 decay  
-  - **`memory_decay_loop`**、**每小时过期记忆 purge**（监督任务）  
-  - `backfill_chat_messages_fts`；memory/entity **sync_missing_vectors**；session summary 启动回填 / 空闲循环（受配置开关控制）  
-  - `rebuild_bm25_from_chroma` + `check_and_rebuild_bm25_if_drifted`  
-  - **WAL 每小时 checkpoint**、**多模态 index reconcile 每 10 分钟**、**每日 retention purge**（`create_supervised_task`）
+`backend/src/api/lifespan/` divides startup into fail-closed invariants and
+best-effort capability/recovery work:
 
-好处：**可观测 + 可选子系统不拖死核心启动**。
+- **Fail-closed path:**
+  - configuration validation while `Settings` is constructed;
+  - production worker-count guard (`UVICORN_WORKERS` must be 1);
+  - runtime-directory permission hardening;
+  - Alembic upgrade plus legacy/Alembic consistency verification;
+  - non-development `API_KEY` requirement;
+  - reranker consistency (`RERANKER_TOP_N >= TOP_K`).
+- **Capability pre-warm** in `await run_critical_startup()`:
+  - OpenTelemetry `setup_tracing()` (no-op without an endpoint);
+  - optional Sentry through `SENTRY_DSN`;
+  - `get_llm()` through `asyncio.to_thread`, with a 30-second timeout;
+  - `init_traffic_controller()`;
+  - `get_embeddings()` plus `embed_query("connectivity check")` to verify dimension and connectivity;
+  - primary, memory, session-summary, and entity vector-store warm-up;
+  - best-effort Skill matcher embedding warm-up and conditional RAGAnything validation/warm-up.
+- **Best-effort recovery and loops** after pre-warm. Failures are logged and
+  counted while the process continues:
+  - embedded durable-job workers when `DURABLE_JOB_EXECUTION_MODE=embedded`;
+  - stale meeting recovery;
+  - session cache, expired memory, orphan-vector, and startup-decay maintenance;
+  - supervised `memory_decay_loop` and hourly expired-memory purge;
+  - FTS5 backfill, memory/entity `sync_missing_vectors`, and session-summary backfill/idle loop;
+  - `rebuild_bm25_from_chroma()` and drift checks;
+  - hourly WAL checkpoint, ten-minute multimodal index reconciliation, and daily retention purge
 
-## 2. 数据库升级（启动第一步）
+The outer lifespan keeps a failed fail-closed phase available for diagnosis in
+development and records it in readiness; non-development startup aborts. LLM,
+embedding, connectivity, and vector-store pre-warm failures are currently
+recorded as degraded capabilities and do not by themselves abort startup. A
+healthy process therefore does not guarantee that every configured remote AI
+provider is available; use route behavior, capability diagnostics, and metrics
+in addition to liveness/readiness.
 
-`lifespan.__aenter__` **最先**执行：
+## 2. Database upgrade: the first startup action
+
+`lifespan.__aenter__` begins with:
 
 ```text
-await asyncio.to_thread(_run_alembic_upgrade)
+await asyncio.to_thread(run_alembic_upgrade)
 ```
 
-行为摘要（`lifespan._run_alembic_upgrade`）：
+`lifespan._critical.run_alembic_upgrade` behaves as follows:
 
-- 能导入 Alembic 且存在 `backend/alembic.ini` → `command.upgrade(alembic_cfg, "head")`。  
-- 否则 → 调用 `init_db()`（纯 `_migrations.py` 路径）。
+- run `command.upgrade(alembic_cfg, "head")` when Alembic and `backend/alembic.ini` are available;
+- production fails closed if either is unavailable;
+- development alone may use the frozen legacy `init_db()` bootstrap for diagnostics and tests.
 
-因此文档与排障应默认 **「生产启动 = Alembic head」**，而不是仅 `init_db()`。
+Operationally, assume **production startup means Alembic at head**, not only `init_db()`.
 
-## 3. 安全守卫（关键路径内）
+## 3. Startup security guard
 
-`_run_critical_startup()` 在初始化 LLM 之前：
+Before initializing the LLM, `run_critical_startup()` checks:
 
 ```python
 if settings.ENVIRONMENT != "dev" and not settings.API_KEY.get_secret_value():
@@ -55,122 +72,116 @@ if settings.ENVIRONMENT != "dev" and not settings.API_KEY.get_secret_value():
     )
 ```
 
-**`ENVIRONMENT` 非 `dev` 时必须配置 `API_KEY`**。dev 判定以 `settings.ENVIRONMENT == "dev"` 为准。
+Non-dev environments must configure `API_KEY`; dev is exactly `settings.ENVIRONMENT == "dev"`.
 
-### 3.1 Sentry 敏感信息过滤
+### 3.1 Sentry filtering
 
-当 `SENTRY_DSN` 配置后，`lifespan.py` 会注册 `before_send` 回调，对 Sentry 事件做敏感信息脱敏：
+When `SENTRY_DSN` is set, lifespan registers a `before_send` callback that removes `X-API-Key`, `Authorization`, and similar request headers, cleans sensitive user context, and prevents API keys or database paths from entering error messages.
 
-- 移除 request headers 中的 `X-API-Key`、`Authorization` 等
-- 清理 user context 中的敏感字段
-- 确保 error message 不包含 API key、数据库路径等内部细节
+## 4. Simplified startup sequence
 
-## 4. 启动时序（简化视图）
-
-```
+```text
 uvicorn → lifespan.__aenter__
    │
-   ├── [critical] await asyncio.to_thread(_run_alembic_upgrade)
-   │   - Alembic upgrade head（或回退 init_db）
+   ├── [fail closed] harden runtime permissions
+   ├── [fail closed] await asyncio.to_thread(run_alembic_upgrade)
+   │   - Alembic upgrade head; dev-only frozen legacy bootstrap fallback
    │
-   ├── [critical] await _run_critical_startup()
-   │   - OTEL + Sentry（可选）
-   │   - API_KEY 守卫（非 dev）
-   │   - LLM / traffic / reranker config 校验 / embeddings ping / vectorstore + 预热
-   │   - memory / session / entity / file-summary vectorstore 预热
-   │   - orphan memory vector 清理
-   │   - RAGAnything 校验 + 预热（条件执行）
+   ├── await run_critical_startup()
+   │   - optional OTEL + Sentry
+   │   - API_KEY guard in non-dev
+   │   - API-key/reranker invariants; traffic initialization
+   │   - best-effort LLM, embedding ping, and vector-store warm-up
+   │   - memory, session, entity, and file-summary vector-store warm-up
+   │   - orphan memory-vector cleanup
+   │   - conditional RAGAnything validation and warm-up
    │
-   ├── [best-effort] recover_stale_meetings
-   │   - 仅处理卡死超过 **5 分钟**  grace 的记录（避免与进行中的任务竞态）
-   │   - 条件：COALESCE(processing_started_at, updated_at) < now - 5 minutes
+   ├── [durable] start embedded worker pool when configured
+   ├── [best-effort] resume interrupted jobs + recover stale meetings
+   │   - only rows stale for more than 5 minutes, avoiding races with active work
+   │   - COALESCE(processing_started_at, updated_at) < now - 5 minutes
    │   - meeting_files → status='error', error_message='Processing interrupted'
    │   - meetings → status='failed'
    │
-   ├── [best-effort] stale_recovery_loop（每 15 分钟）
-   ├── [best-effort] bm25_drift_loop（每 6 小时）
-   ├── [best-effort] recover stale generating summaries + file summary requeue
-   ├── [best-effort] meeting summary reconcile + rebuild swap reconcile
-   ├── [best-effort] session_cache / expired_memories / pending_vector_cleanup / startup_decay
-   ├── [best-effort] memory_decay_loop + hourly expired purge
-   ├── [best-effort] FTS5 backfill、memory + KG + file-summary vector sync、index-state reconcile
-   ├── [best-effort] session summary startup backfill + idle summary loop
-   ├── [best-effort] BM25 rebuild + drift check + legacy metadata backfill
-   ├── [best-effort] WAL checkpoint / index reconcile / retention / idempotency cleanup 循环
-   ├── [best-effort] skill matcher embedding 预热
-   └── （完整顺序以 lifespan.py 为准）
+   ├── [best-effort] stale recovery loop every 15 minutes
+   ├── [best-effort] BM25 drift loop every 6 hours
+   ├── [best-effort] stale summary recovery and file-summary requeue
+   ├── [best-effort] meeting-summary and rebuild-swap reconciliation
+   ├── [best-effort] session cache, expired memory, pending-vector cleanup, startup decay
+   ├── [best-effort] memory decay and hourly expired purge
+   ├── [best-effort] FTS5 backfill, memory/KG/file-summary vector sync, index reconciliation
+   ├── [best-effort] session-summary backfill and idle-summary loop
+   ├── [best-effort] BM25 rebuild, drift check, and legacy metadata backfill
+   ├── [best-effort] WAL checkpoint, index reconciliation, retention, idempotency cleanup
+   ├── [best-effort] Skill matcher embedding warm-up
+   └── exact ordering: backend/src/api/lifespan/
 ```
 
-## 5. 关闭时序（Graceful shutdown）
+## 5. Graceful shutdown
 
-`lifespan.__aexit__` 大致顺序：
+`lifespan.__aexit__` approximately performs:
 
-1. `_bg.cancel_all()` — 取消所有 `create_supervised_task` 注册的后台任务，等待 5s
-2. 持久化会话缓存（`_persist_session_cache`）
-3. `stop_memory_decay_loop`
-4. `cancel_background_tasks()` — `services/chain` 登记的 fact-extraction 等
-5. `persist_vectorstore()` — Chroma 持久化
-6. 关闭 search / ASR / vision 共享 `httpx` 客户端
-7. 关闭 **reranker** HTTP 客户端（`_close_reranker_http_client`）
-8. 关闭 **parser** 云 API 客户端（`close_parser_http_client`）
-9. 对其余 `asyncio` 任务 `cancel` + `asyncio.wait`（超时 5s）
-10. `close_all_connections()` — SQLite
-11. 关闭专用 executor（`_PARSER_LOOP_EXECUTOR`、`_VECTOR_SEARCH_EXECUTOR`）
+1. `_bg.cancel_all()` cancels supervised tasks (including embedded durable-job
+   workers) and waits up to five seconds; claimed-job leases are released by
+   worker cancellation handling;
+2. persist session cache through `_persist_session_cache`;
+3. stop memory decay;
+4. persist/flush the shared Chroma wrapper through `persist_vectorstore()`;
+5. close shared search, AssemblyAI, vision, reranker, and parser HTTP clients;
+6. close pooled SQLite connections.
 
-### 5.1 后台任务两类托管
+### 5.1 Two classes of background work
 
-- **长跑监督任务**：`create_supervised_task`（`utils/supervised_task.py`）。  
-- **链路上短时任务**：`services/chain._background_tasks`。  
+- **Long-running supervised tasks:** registered through `create_supervised_task` in `utils/supervised_task.py`.
+- **Durable domain jobs:** stored in `durable_jobs` and claimed by
+  `services/jobs.py` with leases, retries, dedupe and dead-letter state.
 
-**不要**假设存在单一的 `app.state.background_tasks` 集合。
+Do not assume there is one global `app.state.background_tasks` collection.
 
-## 6. 故障恢复（Stale Meetings）
+## 6. Stale-meeting recovery
 
-**现象**：进程被 kill / OOM 后，会议或文件长时间停在 `processing`。
+If the process is killed or OOMs, a meeting or file may remain in `processing`. Recovery runs only when `status='processing'` and `COALESCE(processing_started_at, updated_at) < datetime('now', '-5 minutes')`.
 
-**机制**（`processor/_recovery.py`）：
+The file row becomes `error` with the fixed message `Processing interrupted`; the meeting row becomes `failed`, and `processing_started_at` is cleared. Users can call `POST /meetings/{id}/reprocess` or reprocess one file. If needed, call `delete_meeting_chunks(meeting_id, file_id=...)` before retrying.
 
-- 仅当 `status='processing'` 且 `COALESCE(processing_started_at, updated_at) < datetime('now', '-5 minutes')` 才重置。  
-- 文件行 → `error` + 固定 `error_message`；会议行 → `failed`；并清空 `processing_started_at`。
+## 7. Middleware and request chain
 
-用户可 **`POST /meetings/{id}/reprocess`** 或单文件 reprocess；必要时 `delete_meeting_chunks(meeting_id, file_id=...)` 清理向量后再试。
-
-## 7. 中间件与请求处理链
-
-```
-CORS（可选）
+```text
+CORS (optional)
   ↓
 RequestIdMiddleware        # X-Request-ID + X-Response-Time
   ↓
-slowapi rate limiter       # 默认限额 + 多路由覆盖（见 api-reference.md）
+slowapi rate limiter       # default and route-specific limits
   ↓
 JSON structured logging    # LOG_FORMAT=json
   ↓
 FastAPI router
 ```
 
-中间件在 `setup_middleware()` 中装配，**不在**模块 import 时执行，以免干扰 pytest monkey-patch 顺序。
+Middleware is installed by `setup_middleware()`, not at module import time, so pytest monkey-patching order is not disturbed.
 
-## 8. 后台任务清单（摘录）
+## 8. Background-task inventory
 
-| 任务 | 说明 | 位置（示例） |
+| Task | Behavior | Example location |
 |---|---|---|
-| `memory_decay_loop` | 周期衰减 | `services/memory/_service/_decay_sync.py` |
-| `expired_memory_purge_loop` | 每小时过期记忆清理 | `api/lifespan.py`（内联 loop） |
-| `stale_recovery_loop` | 每 15 分钟恢复卡死会议 | `api/lifespan.py`（内联 loop） |
-| `bm25_drift_loop` | 每 6 小时 BM25 漂移检测 | `api/lifespan.py`（内联 loop） |
-| `wal_checkpoint_loop` | 每小时 WAL checkpoint | `api/lifespan.py`（内联 loop） |
-| `index_reconcile_loop` | 每 10 分钟多模态索引一致性 + BM25 漂移检测 | `api/lifespan.py`（内联 loop） |
-| `retention_purge_loop` | 每日数据保留清理 | `api/lifespan.py`（内联 loop） |
-| `idempotency_cleanup_loop` | 每小时幂等键清理 | `api/lifespan.py`（内联 loop） |
-| `idle_session_summary_loop` | 空闲会话定期摘要 | `api/lifespan.py`（内联 loop） |
-| `skill_matcher_prewarm` | 启动时预热 Skill matcher embedding | `api/lifespan.py`（内联 task） |
-| 上传处理 | 每次上传 BackgroundTasks | `processor/_pipeline.py` |
-| 事实提取 | 对话后异步 | `chain/_steps_generate.py` |
-| 会话摘要 | 启动回填 | `memory/_summary_service.py` |
-| Chroma 持久化 | 关闭时 flush | `rag/_vectorstore.py` |
+| `memory_decay_loop` | Periodic decay | `services/memory/_service/_decay_sync.py` |
+| `expired_purge_loop` | Hourly expired-memory cleanup | `api/lifespan/_loops.py` |
+| `stale_recovery_loop` | Resume/recover interrupted processing every 15 minutes | `api/lifespan/_loops.py` |
+| `bm25_drift_loop` | Detect BM25 drift every 6 hours | `api/lifespan/_loops.py` |
+| `wal_checkpoint_loop` | Hourly WAL checkpoint | `api/lifespan/_loops.py` |
+| `index_reconcile_loop` | Ten-minute multimodal, BM25, and summary-vector reconciliation | `api/lifespan/_loops.py` |
+| `retention_loop` | Daily retention plus audit/vector-deletion cleanup | `api/lifespan/_loops.py` |
+| idempotency cleanup | Periodic idempotency-key lifecycle cleanup | `api/lifespan/__init__.py` |
+| `idle_summary_loop` | Periodic summaries for idle sessions | `api/lifespan/_loops.py` |
+| Skill matcher pre-warm | Startup corpus/query embedding warm-up | `api/lifespan/__init__.py` |
+| `durable_job_worker_loop` | Executes leased durable jobs | `services/jobs.py` |
+| Upload processing | Durable `file_processing` job | `processor/_scheduler.py` |
+| Fact extraction | Durable after chat persistence | `chain/_steps_generate.py` |
+| File/meeting summary | Durable `file_summary` / `meeting_summary` jobs | `services/summaries.py`, `services/jobs.py` |
+| Session summary | Startup backfill and idle-session loop | `memory/_summary_service.py` |
+| Chroma persistence | Flush on shutdown | `rag/_vectorstore.py` |
 
-## 9. 运维常用命令
+## 9. Common operations
 
 ```bash
 cd backend
@@ -178,30 +189,30 @@ cd backend
 uv sync --dev
 uv run uvicorn src.main:app --reload
 
-# 仅数据库：与启动等价的 Alembic
+# Database upgrade equivalent to production startup
 uv run alembic upgrade head
 
-# 无 Alembic 时的遗留迁移
+# Legacy migration fallback when Alembic is unavailable
 uv run python -c "from src.core.database import init_db; init_db()"
 
 uv run python -m src.mcp
 uv run python -m pytest -x
 ```
 
-## 10. 排查指引
+## 10. Troubleshooting
 
-| 现象 | 可能原因 | 处理 |
+| Symptom | Likely cause | Action |
 |---|---|---|
-| `API_KEY must be set` | 非 dev 未配 key | 配置 `API_KEY` |
-| 阻塞在 embedding ping | 上游不可达 | 检查 `EMBEDDING_*` 与网络 |
-| Alembic / `init_db` 失败 | 迁移冲突、库损坏 | 备份 DB，检查 `schema_version` / `alembic_version` |
-| 会议长期 `processing` | 任务仍在跑或未过 grace | 等 5min+ 或重启触发 recover |
-| 关闭时 Task destroyed 警告 | 未纳入上述两类托管 | 使用 `create_supervised_task` 或 chain 登记 |
+| `API_KEY must be set` | Missing key in non-dev | Configure `API_KEY` |
+| Embedding ping blocks | Upstream unavailable | Check `EMBEDDING_*` and network access; production startup fails when the active retriever requires it |
+| Alembic or `init_db` fails | Migration conflict or corrupt database | Back up the DB; inspect `schema_version` and `alembic_version` |
+| Meeting remains `processing` | Work is active or has not passed the grace period | Wait at least five minutes or restart to trigger recovery |
+| Task-destroyed warning on shutdown | Task was not registered in either lifecycle group | Use `create_supervised_task` or register it with the chain task manager |
 
-## 11. 可观测性触点
+## 11. Observability touchpoints
 
-- **日志**：`LOG_FORMAT=json`  
-- **Trace**：`core/trace.py` span；摄入管线会 `logger.info("ingest_trace %s", json.dumps(trace.to_dict()))` — **非**独立 `trace` 表（除非另行扩展）  
-- **Metrics**：`GET /metrics`  
-- **Health**：`GET /api/v1/health`  
-- **WS**：`WS /api/v1/ws` 进度与完成事件  
+- **Logs:** `LOG_FORMAT=json`;
+- **Trace:** spans from `core/trace.py`; ingestion emits `ingest_trace` JSON through the logger, not a separate trace table;
+- **Metrics:** `GET /metrics`;
+- **Health:** `GET /api/v1/health`;
+- **WebSocket:** `WS /api/v1/ws` for progress and completion events.

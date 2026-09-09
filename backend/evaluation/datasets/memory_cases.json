@@ -1,0 +1,196 @@
+{
+  "schema_version": 2,
+  "annotation_revision": 2,
+  "annotation_notes": "Billing log sentences declare a policy subject, not a project. Require billing-log subject identity and current value; Design/Security Review project isolation remains required. Revision 2 is not score-comparable with earlier implicit-project labels.",
+  "comparison": "paired_same_reasoner_memory_off_vs_memory_on",
+  "cases": [
+    {
+      "id": "selective_update",
+      "competency": "selective_forgetting",
+      "events": [
+        {"sequence": 1, "key": "mobile_launch_date", "fact": "The mobile launch date is February 15.", "expected_value_terms": ["February 15"], "expected_negative": false},
+        {"sequence": 2, "key": "mobile_launch_date", "fact": "The mobile launch date moved to March 3.", "expected_value_terms": ["March 3"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["mobile_launch_date"],
+      "conditions": ["memory_off", "memory_on"],
+      "query": "What is the latest mobile launch date?",
+      "expected_answer": "March 3",
+      "stale_answer": "February 15"
+    },
+    {
+      "id": "cross_session_multihop",
+      "competency": "long_range_understanding",
+      "events": [
+        {"sequence": 1, "key": "database_migration_owner", "fact": "Bob owns the database migration.", "expected_value_terms": ["Bob"], "expected_negative": false},
+        {"sequence": 20, "key": "database_migration_dependency", "fact": "The database migration depends on storage budget approval.", "expected_value_terms": ["storage budget approval"], "expected_negative": false},
+        {"sequence": 40, "key": "storage_budget_resolution", "fact": "Finance approved the storage budget on January 20.", "expected_value_terms": ["January 20"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["database_migration_owner", "database_migration_dependency", "storage_budget_resolution"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 37,
+      "query": "Which dependency blocking Bob's work was resolved, and when?",
+      "expected_answer": "The storage budget approval dependency was resolved on January 20."
+    },
+    {
+      "id": "memory_required_control",
+      "competency": "accurate_retrieval",
+      "events": [
+        {"sequence": 18, "key": "analytics_production_credential", "fact": "Carol was waiting for third-party analytics API production access.", "expected_value_terms": ["third-party analytics API production access"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["analytics_production_credential"],
+      "distractor_events": 20,
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "query": "Which production credential was Carol waiting for?",
+      "expected_answer": "Third-party analytics API production access.",
+      "acceptance": "memory_on must outperform both controls with the same reasoning model"
+    },
+    {
+      "id": "cjk_preference_update",
+      "competency": "selective_forgetting",
+      "events": [
+        {"sequence": 1, "key": "用户首选语言", "fact": "用户首选使用英文回答。", "expected_value_terms": ["English"], "expected_negative": false},
+        {"sequence": 9, "key": "用户首选语言", "fact": "用户现在首选使用中文回答。", "expected_value_terms": ["Chinese"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["用户首选语言"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 8,
+      "query": "用户现在希望使用什么语言回答？",
+      "expected_answer": "中文",
+      "stale_answer": "英文"
+    },
+    {
+      "id": "paraphrased_constraint_retrieval",
+      "competency": "accurate_retrieval",
+      "events": [
+        {"sequence": 3, "key": "deployment_freeze_window", "fact": "Production changes are prohibited after 16:00 UTC on Fridays.", "expected_value_terms": ["16:00 UTC", "Friday"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["deployment_freeze_window"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 15,
+      "query": "When does the weekly release lockout begin?",
+      "expected_answer": "The production release lockout begins at 16:00 UTC every Friday."
+    },
+    {
+      "id": "latest_owner_correction",
+      "competency": "selective_forgetting",
+      "events": [
+        {"sequence": 2, "key": "incident_review_owner", "fact": "Nina owns the incident review.", "expected_value_terms": ["Nina"], "expected_negative": false},
+        {"sequence": 30, "key": "incident_review_owner", "fact": "Omar replaced Nina as owner of the incident review.", "expected_value_terms": ["Omar"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["incident_review_owner"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 28,
+      "query": "Who currently owns the incident review?",
+      "expected_answer": "Omar",
+      "stale_answer": "Nina owns"
+    },
+    {
+      "id": "explicit_unknown_abstention",
+      "competency": "abstention",
+      "events": [
+        {"sequence": 12, "key": "project.orbit.release_owner", "fact": "The release owner for Project Orbit is explicitly unknown and has not been assigned.", "expected_value_terms": ["unknown"], "expected_negative": true}
+      ],
+      "expected_memory_keys": ["project.orbit.release_owner"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 10,
+      "query": "Who owns the Project Orbit release?",
+      "expected_answer": "The owner is unknown and has not been assigned."
+    },
+    {
+      "id": "negated_approval_update",
+      "competency": "negation_update",
+      "events": [
+        {"sequence": 1, "key": "decision.atlas.security_approval", "fact": "The Atlas security exception was approved.", "expected_value_terms": ["approved"], "expected_negative": false},
+        {"sequence": 16, "key": "decision.atlas.security_approval", "fact": "The Atlas security exception is not approved; the earlier approval was withdrawn.", "expected_value_terms": ["not approved"], "expected_negative": true}
+      ],
+      "expected_memory_keys": ["decision.atlas.security_approval"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 14,
+      "query": "Is the Atlas security exception currently approved?",
+      "expected_answer": "No. The earlier approval was withdrawn.",
+      "stale_answer": "was approved"
+    },
+    {
+      "id": "same_name_meeting_disambiguation",
+      "competency": "entity_scope_disambiguation",
+      "events": [
+        {"sequence": 4, "key": "project.design_review.alex_role", "fact": "In the Design Review, Alex owns the mobile UI specification.", "expected_value_terms": ["mobile UI specification"], "expected_negative": false},
+        {"sequence": 8, "key": "project.security_review.alex_role", "fact": "In the Security Review, Alex owns the threat model.", "expected_value_terms": ["threat model"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["project.design_review.alex_role", "project.security_review.alex_role"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 8,
+      "query": "What does Alex own in the Design Review?",
+      "expected_answer": "The mobile UI specification."
+    },
+    {
+      "id": "temporal_validity_latest_policy",
+      "competency": "temporal_validity",
+      "events": [
+        {"sequence": 2, "key": "project.billing.retention_policy", "expected_project_id": null, "expected_subject_terms": ["billing log"], "fact": "Billing logs are retained for 30 days.", "expected_value_terms": ["30 days"], "expected_negative": false},
+        {"sequence": 25, "key": "project.billing.retention_policy", "expected_project_id": null, "expected_subject_terms": ["billing log"], "fact": "The current billing log retention policy is 90 days; it replaced the 30-day policy.", "expected_value_terms": ["90 days"], "expected_negative": false}
+      ],
+      "expected_memory_keys": ["project.billing.retention_policy"],
+      "conditions": ["memory_off", "distractor_only", "memory_on"],
+      "distractor_events": 23,
+      "query": "What is the currently valid billing log retention period?",
+      "expected_answer": "90 days",
+      "stale_answer": "30 days"
+    }
+  ],
+  "pipeline_cases": [
+    {
+      "id": "conditional_owner_requires_review",
+      "competency": "safe_assertion_lifecycle",
+      "events": [
+        {
+          "sequence": 1,
+          "key": "project.orbit.owner",
+          "fact": "If the budget is approved, Alice will own Orbit.",
+          "expected_value_terms": ["Alice", "Orbit"],
+          "expected_negative": false,
+          "expected_outcome": "pending"
+        }
+      ],
+      "expected_memory_keys": ["project.orbit.owner"]
+    },
+    {
+      "id": "attributed_owner_requires_review",
+      "competency": "safe_assertion_lifecycle",
+      "events": [
+        {
+          "sequence": 1,
+          "key": "project.orbit.owner",
+          "fact": "Bob said that Alice owns Orbit.",
+          "expected_value_terms": ["Alice", "Orbit"],
+          "expected_negative": false,
+          "expected_outcome": "pending"
+        }
+      ],
+      "expected_memory_keys": ["project.orbit.owner"]
+    },
+    {
+      "id": "duplicate_observation_is_idempotent",
+      "competency": "safe_assertion_lifecycle",
+      "events": [
+        {
+          "sequence": 1,
+          "key": "project.orbit.owner",
+          "fact": "Alice owns Orbit.",
+          "expected_value_terms": ["Alice", "Orbit"],
+          "expected_negative": false,
+          "expected_outcome": "confirmed"
+        },
+        {
+          "sequence": 2,
+          "key": "project.orbit.owner",
+          "fact": "Alice owns Orbit.",
+          "expected_value_terms": ["Alice", "Orbit"],
+          "expected_negative": false,
+          "expected_outcome": "no_change"
+        }
+      ],
+      "expected_memory_keys": ["project.orbit.owner"]
+    }
+  ]
+}

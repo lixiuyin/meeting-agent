@@ -29,6 +29,7 @@ const containerBaseStyle: React.CSSProperties = {
   borderRadius: 12,
   transition: "all 0.2s ease",
   cursor: "pointer",
+  position: "relative",
 };
 
 const iconContainerStyle: React.CSSProperties = {
@@ -94,19 +95,17 @@ function MeetingListItem({
       layout
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      role="button"
-      tabIndex={0}
       style={containerStyle}
     >
+      <button
+        type="button"
+        className="card-primary-action"
+        aria-label={`Open meeting ${meeting.title}`}
+        onClick={handleClick}
+      />
       {isSelectionMode ? (
         <div
+          className="card-interactive-control"
           onClick={handleCheckboxClick}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
@@ -196,6 +195,7 @@ function MeetingListItem({
 
         {!isSelectionMode && (
           <div
+            className="card-interactive-control"
             style={{ display: "flex", gap: 8 }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}

@@ -5,6 +5,29 @@ from skills.models import SkillDefinition
 
 
 class TestSkillLoader:
+    def test_default_loader_merges_builtin_and_persistent_custom_dir(self, tmp_path):
+        custom = tmp_path / "skills"
+        skill_dir = custom / "custom"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.md").write_text(
+            """---
+name: custom_generator
+display_name: Custom
+description: custom persistent skill
+intent_matching:
+  method: keyword
+---
+
+# Custom
+""",
+            encoding="utf-8",
+        )
+        loader = SkillLoader(custom_skills_dir=custom)
+        names = {skill.name for skill in loader.load_all()}
+        assert "tech_proposal_generator" in names
+        assert "custom_generator" in names
+        assert loader.skills_dir == custom
+
     def test_load_all_includes_builtin_tech_proposal(self):
         loader = SkillLoader()
         skills = loader.load_all()

@@ -134,8 +134,8 @@ class TestGetSessionHistory:
 
 
 class TestMemoryServiceDecay:
-    def test_decay_memories_updates_importance(self):
-        """decay_memories() persists lower importance for stale memories."""
+    def test_decay_memories_updates_freshness(self):
+        """decay_memories() persists freshness without eroding salience."""
         from datetime import datetime, timedelta
 
         from src.core import database as db
@@ -157,7 +157,9 @@ class TestMemoryServiceDecay:
         with get_connection() as conn:
             row = db.get_memory_full(conn, user_id=user_id, key="fact_decay")
         assert row is not None
-        assert float(row["importance"]) < 3.0
+        assert float(row["importance"]) == 3.0
+        assert float(row["salience"]) == 3.0
+        assert float(row["freshness_score"]) < 1.0
 
     def test_decay_disabled_returns_zero(self):
         """decay_memories() respects MEMORY_DECAY_ENABLED=False."""
@@ -257,11 +259,16 @@ class TestMemorySemanticScope:
         mock_vs.similarity_search.return_value = vector_results
 
         monkeypatch.setattr(settings, "GLOBAL_MEMORY_LIMIT", 1)
+        monkeypatch.setattr(settings, "SCOPED_MEMORY_STRICT", False)
         with (
             patch(
                 "src.services.memory._service._search.get_memory_vectorstore", return_value=mock_vs
             ),
             patch("src.services.memory._service._search.db.get_memories_batch", return_value=batch),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             entries = await service.search_semantic(
@@ -275,3 +282,22 @@ class TestMemorySemanticScope:
         assert "scoped" in keys
         assert "other_scope" not in keys
         assert sum(1 for entry in entries if not entry.meeting_ids) == 1
+
+
+def test_memory_vector_breaker_allows_exactly_one_half_open_probe(monkeypatch):
+    from src.services.memory import _vectorstore as module
+
+    key = module._vector_cb_key("user_memories", "probe-user")
+    with module._vector_cb_lock:
+        module._vector_cb_state[key] = (
+            module._VECTOR_CB_MAX_FAILURES,
+            0.0,
+            module._VECTOR_CB_INITIAL_WAIT_S,
+            False,
+        )
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1000.0)
+    try:
+        assert module._vector_cb_open("user_memories", "probe-user") is False
+        assert module._vector_cb_open("user_memories", "probe-user") is True
+    finally:
+        module._vector_cb_reset("user_memories", "probe-user")

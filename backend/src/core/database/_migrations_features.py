@@ -491,4 +491,89 @@ _MIGRATIONS_FEATURES: list[tuple[int, str, str]] = [
         );
         """,
     ),
+    (
+        49,
+        "Add trigram FTS index for CJK full-text retrieval",
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS bm25_chunks_cjk USING fts5(
+            content,
+            metadata,
+            meeting_id UNINDEXED,
+            chunk_id UNINDEXED,
+            content='bm25_index',
+            content_rowid='id',
+            tokenize='trigram'
+        );
+
+        INSERT INTO bm25_chunks_cjk(bm25_chunks_cjk) VALUES('rebuild');
+
+        CREATE TRIGGER IF NOT EXISTS bm25_chunks_cjk_ai AFTER INSERT ON bm25_index BEGIN
+            INSERT INTO bm25_chunks_cjk(rowid, content, metadata, meeting_id, chunk_id)
+            VALUES (new.id, new.content, new.metadata, new.meeting_id, new.chunk_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS bm25_chunks_cjk_ad AFTER DELETE ON bm25_index BEGIN
+            INSERT INTO bm25_chunks_cjk(
+                bm25_chunks_cjk, rowid, content, metadata, meeting_id, chunk_id
+            )
+            VALUES ('delete', old.id, old.content, old.metadata, old.meeting_id, old.chunk_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS bm25_chunks_cjk_au AFTER UPDATE ON bm25_index BEGIN
+            INSERT INTO bm25_chunks_cjk(
+                bm25_chunks_cjk, rowid, content, metadata, meeting_id, chunk_id
+            )
+            VALUES ('delete', old.id, old.content, old.metadata, old.meeting_id, old.chunk_id);
+            INSERT INTO bm25_chunks_cjk(rowid, content, metadata, meeting_id, chunk_id)
+            VALUES (new.id, new.content, new.metadata, new.meeting_id, new.chunk_id);
+        END;
+        """,
+    ),
+    (
+        50,
+        "Add lifecycle fields to pending vector deletion jobs",
+        """
+        ALTER TABLE pending_vector_deletions
+            ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'dead_letter'));
+        ALTER TABLE pending_vector_deletions ADD COLUMN last_error TEXT;
+        ALTER TABLE pending_vector_deletions ADD COLUMN updated_at TIMESTAMP;
+        CREATE INDEX IF NOT EXISTS idx_pending_vec_status
+            ON pending_vector_deletions(status, attempts, created_at);
+        """,
+    ),
+    (
+        51,
+        "Add observable account deletion batches",
+        """
+        CREATE TABLE IF NOT EXISTS account_deletion_requests (
+            id TEXT PRIMARY KEY,
+            idempotency_key_hash TEXT NOT NULL UNIQUE,
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE pending_vector_deletions ADD COLUMN deletion_batch_id TEXT
+            REFERENCES account_deletion_requests(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_pending_vec_deletion_batch
+            ON pending_vector_deletions(deletion_batch_id, status);
+        """,
+    ),
+    (
+        52,
+        "Harden deferred deletion ownership and leasing",
+        """
+        ALTER TABLE pending_vector_deletions ADD COLUMN lease_owner TEXT;
+        ALTER TABLE pending_vector_deletions ADD COLUMN lease_expires_at TIMESTAMP;
+        ALTER TABLE account_deletion_requests ADD COLUMN user_id TEXT;
+        DELETE FROM pending_vector_deletions
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM pending_vector_deletions
+            GROUP BY collection, embedding_id
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_vec_resource_unique
+            ON pending_vector_deletions(collection, embedding_id);
+        CREATE INDEX IF NOT EXISTS idx_pending_vec_lease
+            ON pending_vector_deletions(status, lease_expires_at);
+        CREATE INDEX IF NOT EXISTS idx_account_deletion_user
+            ON account_deletion_requests(user_id, created_at);
+        """,
+    ),
 ]

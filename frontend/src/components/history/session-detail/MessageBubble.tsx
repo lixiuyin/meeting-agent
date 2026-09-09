@@ -1,13 +1,15 @@
-import { Avatar } from "antd";
+import { Alert, Avatar } from "antd";
 import { RobotOutlined, UserOutlined } from "@ant-design/icons";
+import { useIntl } from "react-intl";
 import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SourceItem } from "../../../api/client";
 import { CitationMarkdown } from "./CitationMarkdown";
 import { SourceChips } from "./SourceChips";
 import { sourceKeyFor } from "./sourceHelpers";
+import { sanitizeAgentAnswer, isLegacyPartialAnswer } from "../../home/chat-bubble/sourceHelpers";
 import { SourceDetailModal } from "./SourceDetailModal";
-import type { SessionMessage } from "./types";
+import { isAgentRole, type SessionMessage } from "./types";
 
 export function MessageBubble({
   msg,
@@ -16,6 +18,7 @@ export function MessageBubble({
   msg: SessionMessage;
   reducedMotion: boolean;
 }) {
+  const { formatMessage } = useIntl();
   const [openSourcePopoverKey, setOpenSourcePopoverKey] = useState<string | null>(null);
   const [flashSourceKey, setFlashSourceKey] = useState<string | null>(null);
   const flashTimerRef = useRef<number | null>(null);
@@ -24,6 +27,8 @@ export function MessageBubble({
     source: SourceItem;
   } | null>(null);
   const citationSources = useMemo(() => msg.sources ?? [], [msg.sources]);
+  const isAgent = isAgentRole(msg.role);
+  const displayContent = isAgent ? sanitizeAgentAnswer(msg.content) : msg.content;
 
   useEffect(
     () => () => {
@@ -95,10 +100,17 @@ export function MessageBubble({
             textAlign: "left",
           }}
         >
-          {msg.role === "agent" ? (
+          {isAgent && (msg.degraded || isLegacyPartialAnswer(msg.content)) && (
+            <Alert
+              type="warning"
+              showIcon
+              message={formatMessage({ id: "chat.partialResponse" })}
+            />
+          )}
+          {isAgent ? (
             <div className="markdown-body">
               <CitationMarkdown
-                content={msg.content}
+                content={displayContent}
                 sourceCount={(msg.sources ?? []).length}
                 onCiteClick={handleCiteClick}
               />
@@ -106,7 +118,7 @@ export function MessageBubble({
           ) : (
             msg.content
           )}
-          {msg.role === "agent" && msg.sources && msg.sources.length > 0 && (
+          {isAgent && msg.sources && msg.sources.length > 0 && (
             <SourceChips
               sources={msg.sources}
               openSourcePopoverKey={openSourcePopoverKey}

@@ -107,15 +107,12 @@ async def transcribe(
             is_video=is_video,
         )
 
-    audio_path: Path | None = None
+    audio_path = file_path
     temp_audio_path: Path | None = None
     try:
         if is_video:
             temp_audio_path = await asyncio.to_thread(extract_audio, file_path)
             audio_path = temp_audio_path
-        else:
-            audio_path = file_path
-        assert audio_path is not None
         result = await transcribe_assemblyai(audio_path)
         if trace:
             trace.finish_span("transcribe")
@@ -162,15 +159,12 @@ async def transcribe_with_timestamps(
             is_video=is_video,
         )
 
-    audio_path: Path | None = None
+    audio_path = file_path
     temp_audio_path: Path | None = None
     try:
         if is_video:
             temp_audio_path = await asyncio.to_thread(extract_audio, file_path)
             audio_path = temp_audio_path
-        else:
-            audio_path = file_path
-        assert audio_path is not None
         segments = await transcribe_assemblyai_with_segments(audio_path)
         if trace:
             trace.finish_span("transcribe")

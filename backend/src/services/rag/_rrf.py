@@ -2,11 +2,14 @@
 
 import hashlib
 import logging
+import threading
 
 from ...core.config import settings
 from ...core.metrics import RRF_FALLBACK_KEY_TOTAL
 
 logger = logging.getLogger(__name__)
+_missing_chunk_warning_emitted = False
+_missing_chunk_warning_lock = threading.Lock()
 
 
 def _normalize_content(text: str) -> str:
@@ -24,7 +27,9 @@ def _rrf_dedup_key(doc: dict) -> str:
     metadata schema mismatches could cause silent mis-merges.
     """
     meta = doc.get("metadata") or {}
-    chunk_id = meta.get("chunk_id")
+    # Physical IDs include a replacement generation. The logical ID remains
+    # stable so old/new generations deduplicate during the atomic handover.
+    chunk_id = meta.get("logical_chunk_id") or meta.get("chunk_id")
     if chunk_id:
         return str(chunk_id)
     content = doc.get("content", "")
@@ -41,11 +46,15 @@ def _rrf_dedup_key(doc: dict) -> str:
     if is_chunk_doc:
         # H-5: Missing chunk_id on a real chunk degrades dedup accuracy. Log
         # so operators can detect BM25 write gaps without failing the query.
-        logger.warning(
-            "RRF dedup falling back to content hash (missing chunk_id in metadata); "
-            "BM25 index may be stale. content_prefix=%.80s",
-            content,
-        )
+        global _missing_chunk_warning_emitted
+        with _missing_chunk_warning_lock:
+            if not _missing_chunk_warning_emitted:
+                logger.warning(
+                    "BM25 index may be stale: RRF dedup is using content hashes because "
+                    "chunk metadata is missing chunk_id; further occurrences are counted "
+                    "but not logged"
+                )
+                _missing_chunk_warning_emitted = True
         RRF_FALLBACK_KEY_TOTAL.inc()
     return hashlib.sha256(_normalize_content(content).encode()).hexdigest()[:32]
 
@@ -62,18 +71,19 @@ def _adaptive_k(fetch_k: int, base_k: int) -> int:
 def _normalize_path(results: list[dict], k: int, weight: float) -> dict[str, float]:
     """Compute per-path normalized RRF scores.
 
-    Each path's scores are independently normalized by the theoretical
-    maximum ``weight / (k + 1)`` so that result-count asymmetry between
-    paths doesn't bias the fusion (RRF-3).
+    Normalize the unweighted reciprocal-rank contribution against its
+    theoretical maximum and apply the path weight afterwards.  Dividing a
+    weighted contribution by a weighted maximum would cancel the weight and
+    make every non-zero hybrid alpha equivalent.
     """
-    if not results:
+    if not results or weight <= 0:
         return {}
-    theoretical_max = weight / (k + 1)
+    theoretical_max = 1.0 / (k + 1)
     scores: dict[str, float] = {}
     for rank, doc in enumerate(results):
         key = _rrf_dedup_key(doc)
-        raw = weight / (k + rank + 1)
-        scores[key] = scores.get(key, 0.0) + raw / theoretical_max
+        raw = 1.0 / (k + rank + 1)
+        scores[key] = scores.get(key, 0.0) + weight * (raw / theoretical_max)
     return scores
 
 
@@ -126,8 +136,11 @@ def _rrf_merge(
     merged = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:top_k]
     max_score = merged[0][1]
     if max_score == 0.0:
-        return [{**doc_map[key], "score": 0.0} for key, _ in merged]
-    return [{**doc_map[key], "score": score / max_score} for key, score in merged]
+        return [{**doc_map[key], "score": 0.0, "score_kind": "relevance"} for key, _ in merged]
+    return [
+        {**doc_map[key], "score": score / max_score, "score_kind": "relevance"}
+        for key, score in merged
+    ]
 
 
 def _rrf_merge_multi(
@@ -152,5 +165,8 @@ def _rrf_merge_multi(
     merged = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
     max_score = merged[0][1]
     if max_score == 0.0:
-        return [{**doc_map[key], "score": 0.0} for key, _ in merged]
-    return [{**doc_map[key], "score": score / max_score} for key, score in merged]
+        return [{**doc_map[key], "score": 0.0, "score_kind": "relevance"} for key, _ in merged]
+    return [
+        {**doc_map[key], "score": score / max_score, "score_kind": "relevance"}
+        for key, score in merged
+    ]

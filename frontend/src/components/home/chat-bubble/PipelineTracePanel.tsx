@@ -30,8 +30,21 @@ function renderSpan(
 ): ReactNode {
   const pct = s.duration_ms != null ? Math.max((s.duration_ms / totalMs) * 100, 0.5) : 0;
   const isError = s.status === "error";
-  const color = s.skipped ? "var(--color-text-muted)" : isError ? "#ff4d4f" : "var(--color-text)";
-  const barColor = isError ? "#ff4d4f" : s.skipped ? "var(--color-text-muted)" : "#1677ff";
+  const isDegraded = s.status === "degraded" || s.status === "timeout";
+  const color = s.skipped
+    ? "var(--color-text-muted)"
+    : isError
+      ? "#ff4d4f"
+      : isDegraded
+        ? "#fa8c16"
+        : "var(--color-text-primary)";
+  const barColor = isError
+    ? "#ff4d4f"
+    : isDegraded
+      ? "#fa8c16"
+      : s.skipped
+        ? "var(--color-text-muted)"
+        : "#1677ff";
 
   const metaChips: string[] = [];
   if (s.tokens_in != null) metaChips.push(`in: ${s.tokens_in}`);

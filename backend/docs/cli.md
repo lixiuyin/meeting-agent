@@ -1,119 +1,101 @@
-# CLI 使用指南
+# CLI Guide
 
-> Meeting Agent 提供了一个终端交互式前端，适合本地运维、快速排障和无浏览器场景。
->
-> 代码位置：`backend/scripts/cli_agent.py`。
+Meeting Agent provides an interactive terminal frontend for local operations, quick diagnosis, and environments without a browser.
 
-## 1. 启动
+Source: `backend/scripts/cli_agent.py`.
+
+## 1. Start the CLI
 
 ```bash
 cd backend
 uv run python -m scripts.cli_agent
 ```
 
-进入后输入 `/help` 查看命令。
+Enter `/help` after startup to list commands.
 
----
+## 2. Command reference
 
-## 2. 命令速查
+### 2.1 Meetings and files
 
-### 2.1 会议与文件
+- `/meetings [--limit n] [--offset n]`: paginated meeting list.
+- `/meeting <meeting_id>`: meeting details.
+- `/files <meeting_id> [--limit n] [--offset n]`: paginated file list.
+- `/upload <path> [--meeting id] [--title t] [--description d] [--wait]`: upload a local file.
+- `/reprocess <meeting_id> [--wait]`: reprocess every file in a meeting.
+- `/transcript <meeting_id> [--file file_id]`: show a transcript.
+- `/summary <meeting_id>`: generate a meeting summary.
+- `/export <meeting_id> --format markdown|json|txt [--output path]`: export a meeting.
 
-- `/meetings [--limit n] [--offset n]`：会议列表（分页）
-- `/meeting <meeting_id>`：会议详情
-- `/files <meeting_id> [--limit n] [--offset n]`：会议文件列表（分页）
-- `/upload <path> [--meeting id] [--title t] [--description d] [--wait]`：上传本地文件
-- `/reprocess <meeting_id> [--wait]`：重处理会议下所有文件
-- `/transcript <meeting_id> [--file file_id]`：查看 transcript
-- `/summary <meeting_id>`：生成会议摘要
-- `/export <meeting_id> --format markdown|json|txt [--output path]`：导出会议
+### 2.2 Retrieval and chat
 
-### 2.2 检索与问答
+- `/search [query]`: search through MCP tools.
+- `/retrieve <query> [--meeting 1,2] [--top-k n]`: retrieve without LLM generation.
+- `/chat_stream <question> [--meeting 1,2] [--top-k n] [--web]`: stream an answer.
+- Plain text input: run standard `ask()` chat.
 
-- `/search [query]`：基于 MCP 工具的搜索
-- `/retrieve <query> [--meeting 1,2] [--top-k n]`：仅检索，不走 LLM 生成
-- `/chat_stream <question> [--meeting 1,2] [--top-k n] [--web]`：流式回答
-- 直接输入普通文本：走标准 `ask()` 问答
+### 2.3 Sessions
 
-### 2.3 会话
-
-- `/sessions [--limit n] [--offset n]`：会话列表（分页）
-- `/session <session_id>`：查看会话消息
-- `/session_use <session_id>`：将当前问答绑定到指定会话
-- `/session_delete <session_id>`：删除会话
+- `/sessions [--limit n] [--offset n]`: paginated session list.
+- `/session <session_id>`: show session messages.
+- `/session_use <session_id>`: bind the current chat to a session.
+- `/session_delete <session_id>`: delete a session.
 
 ### 2.4 Settings
 
-- `/settings get [dotted.path]`：读取设置（全量或单项）
-- `/settings set <dotted.path> <value>`：更新设置
-- `/settings keys [prefix]`：列出可设置 key
-- `/settings bindings`：查看可用 provider 绑定
-- `/settings reload`：从 `config/main.yaml` 重新加载
-- `/settings rebuild`：触发向量重建（后台）
-- `/settings wizard <section>`：交互式向导（`llm|embedding|rag|memory|search|upload`）
+- `/settings get [dotted.path]`: read all settings or one setting.
+- `/settings set <dotted.path> <value>`: update a setting.
+- `/settings keys [prefix]`: list configurable keys.
+- `/settings bindings`: show available provider bindings.
+- `/settings reload`: reload `config/main.yaml`.
+- `/settings rebuild`: trigger a background vector rebuild.
+- `/settings wizard <section>`: interactive setup for `llm|embedding|rag|memory|search|upload`.
 
-兼容别名：
+Compatibility aliases: `/settings_get` and `/settings_set`.
 
-- `/settings_get`
-- `/settings_set`
+### 2.5 Diagnostics and helpers
 
-### 2.5 诊断与辅助
+- `/status`: diagnose DB, vector store, LLM, embedding, and MCP tools.
+- `/skills`, `/skill_match`, `/skill_invoke`: debug the Skill system.
+- `/memory`: interactive memory CRUD mode.
+- `/clear`: clear current CLI conversation context.
+- `/quit`: exit.
 
-- `/status`：DB/向量库/LLM/Embedding/MCP 工具诊断
-- `/skills`、`/skill_match`、`/skill_invoke`：技能系统调试
-- `/memory`：记忆 CRUD 交互模式
-- `/clear`：清理当前 CLI 会话上下文
-- `/quit`：退出
+## 3. Typical workflows
 
----
+### 3.1 Upload and wait
 
-## 3. 典型操作流
-
-### 3.1 上传并等待处理
-
-```bash
+```text
 /upload "~/Downloads/spec.pdf" --title "Spec Review" --wait
 /meeting 12
 /files 12
 ```
 
-### 3.2 检索与流式问答
+### 3.2 Retrieve and stream an answer
 
-```bash
+```text
 /retrieve "action items" --meeting 12 --top-k 8
-/chat_stream "总结这次评审的风险项" --meeting 12 --top-k 6
+/chat_stream "Summarize the risks from this review" --meeting 12 --top-k 6
 ```
 
-### 3.3 导出到本地文件
+### 3.3 Export locally
 
-```bash
+```text
 /export 12 --format json --output ./exports/meeting-12.json
 ```
 
----
+## 4. Interactive prompts
 
-## 4. 交互式参数引导
+Most commands prompt for missing arguments instead of failing immediately. For example, `/meeting` asks for a meeting ID, `/settings set` asks for a key and value, and `/upload` asks for a path and whether to wait.
 
-多数命令缺参数时会进入提示输入，而不是直接失败。例如：
+## 5. Important boundaries
 
-- 输入 `/meeting` 会提示输入 Meeting ID
-- 输入 `/settings set` 会提示输入 key/value
-- 输入 `/upload` 会提示输入文件路径与是否等待处理
+- The CLI and HTTP API share the same database and vector store; CLI upload, deletion, and reprocessing affect web-visible data.
+- `/settings set` updates runtime memory; a restart restores file/environment defaults.
+- Exports default to `exports/` in the current working directory; `--output` overrides the destination.
 
----
+## 6. Test coverage
 
-## 5. 注意事项
+CLI automation is in:
 
-- CLI 与 HTTP API 共享同一数据库和向量库；CLI 的上传/删除/重处理会影响网页端可见数据。
-- `/settings set` 是**运行时内存更新**，进程重启后会回到配置文件/环境变量值。
-- 导出默认写入当前工作目录下的 `exports/`；可通过 `--output` 覆盖。
-
----
-
-## 6. 测试覆盖
-
-CLI 相关自动化测试位于：
-
-- `backend/tests/test_cli_agent_parser.py`（命令解析）
-- `backend/tests/test_cli_agent_e2e.py`（子进程 e2e，含交互与导出）
-
+- `backend/tests/tools/test_cli_agent_parser.py` for command parsing;
+- `backend/tests/tools/test_cli_agent_e2e.py` for subprocess E2E, interaction, and export.

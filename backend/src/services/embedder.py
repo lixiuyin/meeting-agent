@@ -1,6 +1,7 @@
 """Text embedding service - supports multiple providers (OpenAI, Ollama, etc.)"""
 
 import asyncio
+import hashlib
 import logging
 import threading
 import time
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Thread-safe singleton
 _embeddings: Embeddings | None = None
+_embeddings_key: tuple[Any, ...] | None = None
 _lock = threading.Lock()
 
 # Some providers (e.g. OpenRouter) intermittently respond to embedding requests
@@ -462,16 +464,36 @@ def _create_openrouter_embeddings() -> Embeddings:
     )
     kwargs["api_key"] = api_key
     kwargs["base_url"] = base_url
+    # OpenRouter rejects pre-tokenized input ("Tokenized input is not supported"),
+    # so send raw strings instead of LangChain's default tiktoken token arrays.
+    kwargs["check_embedding_ctx_length"] = False
 
     return _init_embeddings(OpenAIEmbeddings, **kwargs)
 
 
+def _embedding_config_key() -> tuple[Any, ...]:
+    return (
+        settings.EMBEDDING_BINDING.lower(),
+        settings.EMBEDDING_MODEL,
+        settings.EMBEDDING_DIMENSION,
+        settings.EMBEDDING_BASE_URL,
+        settings.EMBEDDING_HOST,
+        settings.EMBEDDING_QUERY_CACHE_ENABLED,
+        settings.EMBEDDING_QUERY_CACHE_SIZE,
+        settings.EMBEDDING_STAMPEDE_WAIT_S,
+        hashlib.sha256(settings.EMBEDDING_API_KEY.get_secret_value().encode()).hexdigest(),
+        settings.LLM_BASE_URL,
+        hashlib.sha256(settings.LLM_API_KEY.get_secret_value().encode()).hexdigest(),
+    )
+
+
 def get_embeddings() -> Embeddings:
     """Get or create the singleton embeddings instance (thread-safe)"""
-    global _embeddings
-    if _embeddings is None:
+    global _embeddings, _embeddings_key
+    config_key = _embedding_config_key()
+    if _embeddings is None or _embeddings_key != config_key:
         with _lock:
-            if _embeddings is None:
+            if _embeddings is None or _embeddings_key != config_key:
                 binding = settings.EMBEDDING_BINDING.lower()
 
                 creators = {
@@ -510,6 +532,7 @@ def get_embeddings() -> Embeddings:
                     new_embeddings = raw
                 # Assign as last step so partial init is never visible to other threads.
                 _embeddings = new_embeddings
+                _embeddings_key = config_key
                 logger.info(
                     "Initialized %s embeddings with model %s (query_cache=%s)",
                     binding,
@@ -522,9 +545,10 @@ def get_embeddings() -> Embeddings:
 
 def reset_embeddings() -> None:
     """Reset the embeddings singleton so the next call creates a fresh instance."""
-    global _embeddings
+    global _embeddings, _embeddings_key
     with _lock:
         _embeddings = None
+        _embeddings_key = None
     logger.info("Embeddings singleton reset")
 
 

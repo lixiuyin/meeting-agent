@@ -113,6 +113,13 @@ class TestExtractSourcesDedup:
         sources = _extract_sources(docs)
         assert sources[0]["page_number"] == 1
 
+    def test_native_index_generation_is_exposed_as_document_revision(self):
+        docs = [self._chunk_doc(index_generation="generation-42")]
+
+        sources = _extract_sources(docs)
+
+        assert sources[0]["document_revision"] == "generation-42"
+
     def test_chunk_and_summary_no_dedup_collision(self):
         """A chunk doc and a meeting summary doc for the same meeting must
         both survive dedup because the dedup key is namespaced by source_kind."""
@@ -314,3 +321,24 @@ class TestCanonicalCitationDocsAlignment:
         # Summary refs appear in formatted output
         assert "File Summary" in formatted
         assert "Summary:" in formatted
+
+
+def test_citation_chunk_identity_survives_public_response_serialization():
+    from src.models.schemas.chat import SourceResponse
+
+    source = _extract_sources(
+        [
+            {
+                "content": "Approved evidence",
+                "score": 0.9,
+                "metadata": {
+                    "meeting_id": 1,
+                    "file_id": 2,
+                    "chunk_index": 0,
+                    "chunk_id": "native:immutable-generation:0",
+                },
+            }
+        ]
+    )[0]
+    public = SourceResponse.model_validate(source).model_dump()
+    assert public.get("chunk_id") == "native:immutable-generation:0"

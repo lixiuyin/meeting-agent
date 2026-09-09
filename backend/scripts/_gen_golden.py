@@ -18,7 +18,8 @@ from src.services.parser import parse
 
 FIXTURE_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "benchmark"
 
-PROMPT = """You are given a meeting document. Generate 3 diverse questions that can be answered from the text.
+PROMPT = """You are given a meeting document. Generate 3 diverse questions that can be
+answered from the text.
 For each question, provide:
 1. the question itself
 2. the exact text snippet(s) from the document that answer it (as a list of strings)

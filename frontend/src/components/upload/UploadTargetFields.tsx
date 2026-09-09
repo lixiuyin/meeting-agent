@@ -23,6 +23,26 @@ export function UploadTargetFields({
 
   return (
     <>
+      <Form.Item
+        name="businessDomain"
+        label={formatMessage({ id: "upload.businessDomain" })}
+        initialValue="unspecified"
+      >
+        <Select
+          options={["unspecified", "meeting", "course", "research"].map((value) => ({
+            value,
+            label: formatMessage({ id: `upload.domain.${value}` }),
+          }))}
+        />
+      </Form.Item>
+      <Form.Item name="materialRole" label={formatMessage({ id: "upload.materialRole" })}>
+        <Select
+          allowClear
+          options={["transcript", "minutes", "agenda", "decision_log", "attachment"].map(
+            (value) => ({ value, label: value }),
+          )}
+        />
+      </Form.Item>
       {mode === "existing" && (
         <Form.Item
           label={

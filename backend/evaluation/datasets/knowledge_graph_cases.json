@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "comparison": "paired_same_reasoner_knowledge_graph_off_vs_on",
+  "cases": [
+    {
+      "id": "owner_dependency_resolution",
+      "conditions": ["knowledge_graph_off", "knowledge_graph_on"],
+      "entities": [
+        {"name": "Bob", "type": "person", "description": "Bob owns the database migration."},
+        {
+          "name": "Database Migration",
+          "type": "project",
+          "description": "The database migration was blocked by storage budget approval."
+        },
+        {
+          "name": "Storage Budget Approval",
+          "type": "concept",
+          "description": "Finance approved the storage budget dependency on January 20."
+        }
+      ],
+      "relations": [
+        {"subject": "Bob", "predicate": "works_on", "object": "Database Migration"},
+        {"subject": "Database Migration", "predicate": "related_to", "object": "Storage Budget Approval"}
+      ],
+      "query": "Which dependency blocking Bob's work was resolved, and when?",
+      "expected_answer": "The storage budget approval dependency was resolved on January 20.",
+      "expected_context_terms": ["bob", "database migration", "storage budget approval", "january 20"]
+    },
+    {
+      "id": "lead_project_security_approval",
+      "conditions": ["knowledge_graph_off", "knowledge_graph_on"],
+      "entities": [
+        {"name": "Alice", "type": "person", "description": "Alice leads Project Atlas."},
+        {"name": "Project Atlas", "type": "project", "description": "Project Atlas uses the Helios rollout plan."},
+        {"name": "Helios Rollout", "type": "concept", "description": "Security approved the Helios rollout on April 12."}
+      ],
+      "relations": [
+        {"subject": "Alice", "predicate": "leads", "object": "Project Atlas"},
+        {"subject": "Project Atlas", "predicate": "uses", "object": "Helios Rollout"}
+      ],
+      "query": "When was the security approval for the initiative led by Alice?",
+      "expected_answer": "Security approved the Helios rollout on April 12.",
+      "expected_context_terms": ["alice", "project atlas", "helios rollout", "april 12"]
+    },
+    {
+      "id": "cjk_owner_tool_dependency",
+      "conditions": ["knowledge_graph_off", "knowledge_graph_on"],
+      "entities": [
+        {"name": "王明", "type": "person", "description": "王明负责检索服务。"},
+        {"name": "检索服务", "type": "project", "description": "检索服务使用向量数据库。"},
+        {"name": "向量数据库", "type": "tool", "description": "向量数据库的迁移计划在五月八日获批。"}
+      ],
+      "relations": [
+        {"subject": "王明", "predicate": "works_on", "object": "检索服务"},
+        {"subject": "检索服务", "predicate": "uses", "object": "向量数据库"}
+      ],
+      "query": "王明负责的服务所依赖的工具何时批准迁移？",
+      "expected_answer": "向量数据库的迁移计划在五月八日获批。",
+      "expected_context_terms": ["王明", "检索服务", "向量数据库", "五月八日"]
+    },
+    {
+      "id": "member_project_decision",
+      "conditions": ["knowledge_graph_off", "knowledge_graph_on"],
+      "entities": [
+        {"name": "Maya", "type": "person", "description": "Maya is a member of Team Orion."},
+        {"name": "Team Orion", "type": "organization", "description": "Team Orion leads the Aurora migration."},
+        {"name": "Aurora Migration", "type": "project", "description": "The Aurora cutover was approved for June 6."}
+      ],
+      "relations": [
+        {"subject": "Maya", "predicate": "member_of", "object": "Team Orion"},
+        {"subject": "Team Orion", "predicate": "leads", "object": "Aurora Migration"}
+      ],
+      "query": "What cutover date applies to the migration led by Maya's team?",
+      "expected_answer": "The Aurora cutover was approved for June 6.",
+      "expected_context_terms": ["maya", "team orion", "aurora migration", "june 6"]
+    }
+  ]
+}

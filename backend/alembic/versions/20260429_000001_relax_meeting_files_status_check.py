@@ -59,9 +59,7 @@ CREATE TABLE meeting_files_new (
 def upgrade() -> None:
     bind = op.get_bind()
     schema_row = bind.execute(
-        sa.text(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_files'"
-        )
+        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_files'")
     ).fetchone()
     if schema_row and "'summarizing'" in (schema_row[0] or ""):
         return
@@ -76,15 +74,11 @@ def upgrade() -> None:
 
     op.execute(
         sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_meeting_files_meeting_id "
-            "ON meeting_files(meeting_id)"
+            "CREATE INDEX IF NOT EXISTS ix_meeting_files_meeting_id ON meeting_files(meeting_id)"
         )
     )
     op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_meeting_files_status "
-            "ON meeting_files(status)"
-        )
+        sa.text("CREATE INDEX IF NOT EXISTS ix_meeting_files_status ON meeting_files(status)")
     )
 
     op.execute(sa.text("PRAGMA foreign_keys=ON"))
@@ -128,9 +122,7 @@ CREATE TABLE meeting_files_new (
 def downgrade() -> None:
     bind = op.get_bind()
     schema_row = bind.execute(
-        sa.text(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_files'"
-        )
+        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_files'")
     ).fetchone()
     # Only downgrade if the table still has the relaxed constraint
     if not schema_row or "'summarizing'" not in (schema_row[0] or ""):
@@ -158,15 +150,11 @@ def downgrade() -> None:
 
     op.execute(
         sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_meeting_files_meeting_id "
-            "ON meeting_files(meeting_id)"
+            "CREATE INDEX IF NOT EXISTS ix_meeting_files_meeting_id ON meeting_files(meeting_id)"
         )
     )
     op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_meeting_files_status "
-            "ON meeting_files(status)"
-        )
+        sa.text("CREATE INDEX IF NOT EXISTS ix_meeting_files_status ON meeting_files(status)")
     )
 
     op.execute(sa.text("PRAGMA foreign_keys=ON"))

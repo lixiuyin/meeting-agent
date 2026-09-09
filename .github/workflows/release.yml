@@ -2,17 +2,30 @@ name: Release
 
 "on":
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: "New version tag to publish (e.g. v1.2.0)"
+        required: false
+        type: string
       rollback_tag:
-        description: "Previous tag to rollback to (e.g., v1.2.0)"
+        description: "Existing image tag to promote; this does NOT roll back application data"
+        required: false
+        type: string
+      confirm_binary_only_rollback:
+        description: "Confirm data/schema recovery is handled separately"
+        required: false
+        default: false
+        type: boolean
+      data_restore_reference:
+        description: "Same-repository issue labelled data-recovery-approved"
         required: false
         type: string
 
 permissions:
   contents: write
+  issues: read
   packages: write
   id-token: write
 
@@ -20,256 +33,334 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+
 jobs:
-  # ── Step 1: Validate migrations ────────────────────────────────────
-  migrate-check:
+  validate-inputs:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up Python
-        uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5.5.0
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-
-      - name: Install backend deps
-        working-directory: backend
-        run: uv sync --dev
-
-      - name: Validate migrations (dry-run)
-        working-directory: backend
+      - name: Validate manual action
+        if: github.event_name == 'workflow_dispatch'
         env:
-          ENVIRONMENT: dev
-        run: uv run python -c "from src.core.database import init_db; init_db()"
+          RELEASE_INPUT: ${{ inputs.release_tag }}
+          ROLLBACK_INPUT: ${{ inputs.rollback_tag }}
+          BINARY_ONLY_CONFIRMED: ${{ inputs.confirm_binary_only_rollback }}
+          DATA_RESTORE_REFERENCE: ${{ inputs.data_restore_reference }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if { [ -z "$RELEASE_INPUT" ] && [ -z "$ROLLBACK_INPUT" ]; } || \
+             { [ -n "$RELEASE_INPUT" ] && [ -n "$ROLLBACK_INPUT" ]; }; then
+            echo "Set exactly one of release_tag or rollback_tag."
+            exit 1
+          fi
+          TAG="${RELEASE_INPUT:-$ROLLBACK_INPUT}"
+          case "$TAG" in v*) ;; *) echo "Tag must begin with v"; exit 1 ;; esac
+          if [ -n "$ROLLBACK_INPUT" ]; then
+            if [ "$BINARY_ONLY_CONFIRMED" != "true" ] || [ -z "$DATA_RESTORE_REFERENCE" ]; then
+              echo "Image promotion is binary-only. Confirm it and provide the verified external data recovery reference."
+              exit 1
+            fi
+            expected_prefix="https://github.com/${REPOSITORY}/issues/"
+            case "$DATA_RESTORE_REFERENCE" in
+              "$expected_prefix"[0-9]*) ;;
+              *) echo "Data recovery reference must be a same-repository GitHub issue URL."; exit 1 ;;
+            esac
+            issue_number="${DATA_RESTORE_REFERENCE##*/}"
+            case "$issue_number" in *[!0-9]*|'') echo "Invalid recovery issue number"; exit 1 ;; esac
+            labels="$(gh api "repos/${REPOSITORY}/issues/${issue_number}" \
+              --jq 'select(.pull_request == null) | .labels[].name')"
+            if ! printf '%s\n' "$labels" | grep -Fxq 'data-recovery-approved'; then
+              echo "Recovery issue must carry the data-recovery-approved label."
+              exit 1
+            fi
+          fi
 
-  # ── Step 2: Build and push Docker images ───────────────────────────
-  docker:
+  quality-gate:
     runs-on: ubuntu-latest
-    needs: migrate-check
+    needs: validate-inputs
     if: ${{ !inputs.rollback_tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Backend quality and regression suite
+        working-directory: backend
+        run: |
+          uv sync --dev
+          uv run alembic heads
+          uv run python -m scripts.check_alembic_immutability
+          uv run python -m scripts.check_env_example
+          uv run python -m scripts.check_release_readiness \
+            --evidence ../docs/validation/release-readiness.json
+          uv run ruff check src/ tests/ scripts/
+          uv run ruff format --check src/ tests/ scripts/
+          uv run pyright src/
+          uv run python -m pytest tests/ -q --tb=short
+      - name: Frontend quality and regression suite
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run format:check
+          npm run type-check
+          npm run test -- --run
+          npm run build
+      - name: Verify generated OpenAPI types
+        run: ./scripts/generate-types.sh --check
+      - name: Validate documentation links and diagrams
+        run: python scripts/check_docs.py
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+      - name: Validate single-instance Helm chart
+        run: |
+          helm lint deploy/helm/meeting-agent
+          helm template meeting-agent deploy/helm/meeting-agent \
+            --set ingress.tlsDisabled=true > /tmp/manifest.yaml
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@5166def8e8e335f4e5d616e1aff4a46c4c7e1f89 # v4.0.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@c2575c830a2376098e713df7e0e1b88a047b4366 # v3.7.1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4.1.0
+  build-candidates:
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    outputs:
+      backend-digest: ${{ steps.backend.outputs.digest }}
+      frontend-digest: ${{ steps.frontend.outputs.digest }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-qemu-action@5166def8e8e335f4e5d616e1aff4a46c4c7e1f89 # v4
+      - uses: docker/setup-buildx-action@c2575c830a2376098e713df7e0e1b88a047b4366 # v3
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata (backend)
-        id: meta_backend
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v6.0.0
-        with:
-          images: ghcr.io/${{ github.repository }}-backend
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-
-      - name: Build and push backend image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6.18.0
+      - name: Build and push immutable backend candidate
+        id: backend
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6
         with:
           context: ./backend
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta_backend.outputs.tags }}
-          labels: ${{ steps.meta_backend.outputs.labels }}
+          tags: ghcr.io/${{ github.repository }}-backend:candidate-${{ github.sha }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Sign backend image with cosign
-        uses: sigstore/cosign-installer@v3
-      - run: |
-          echo "Signing backend images..."
-          for tag in ${{ steps.meta_backend.outputs.tags }}; do
-            cosign sign --yes "$tag"
-          done
-
-      - name: Docker metadata (frontend)
-        id: meta_frontend
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v6.0.0
-        with:
-          images: ghcr.io/${{ github.repository }}-frontend
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6.18.0
+      - name: Build and push immutable frontend candidate
+        id: frontend
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6
         with:
           context: ./frontend
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta_frontend.outputs.tags }}
-          labels: ${{ steps.meta_frontend.outputs.labels }}
+          tags: ghcr.io/${{ github.repository }}-frontend:candidate-${{ github.sha }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Sign frontend image with cosign
-        run: |
-          echo "Signing frontend images..."
-          for tag in ${{ steps.meta_frontend.outputs.tags }}; do
-            cosign sign --yes "$tag"
-          done
-
-  # ── Step 3: Smoke test (run against built images) ──────────────────
-  smoke-test:
+  candidate-test:
     runs-on: ubuntu-latest
-    needs: docker
-    services:
-      backend:
-        image: ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}
-        ports:
-          - 8000:8000
-        env:
-          ENVIRONMENT: dev
+    needs: build-candidates
     steps:
-      - name: Wait for backend health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8000/api/v1/health/live; then
-              echo "Backend is healthy"
-              exit 0
-            fi
-            echo "Waiting for backend... ($i/30)"
-            sleep 2
-          done
-          echo "Backend failed to start"
-          exit 1
-
-      - name: Check readiness
-        run: curl -sf http://localhost:8000/api/v1/health/ready
-
-  e2e-full-release:
-    runs-on: ubuntu-latest
-    needs: smoke-test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Start compose stack
-        run: docker compose -f docker-compose.yaml up -d --build
-      - name: Wait for health
-        run: ./scripts/wait-for-health.sh
-      - name: Install frontend test deps
-        run: cd frontend && npm ci && npx playwright install --with-deps chromium
-      - name: Run full-stack Playwright
-        run: cd frontend && npx playwright test e2e/full-stack
-      - name: Collect compose logs on failure
-        if: failure()
-        run: docker compose logs > logs.txt
-      - name: Upload failure logs
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-e2e-logs
-          path: logs.txt
-      - name: Shutdown compose stack
-        if: always()
-        run: docker compose -f docker-compose.yaml down -v
-
-  helm-validate-release:
-    runs-on: ubuntu-latest
-    needs: smoke-test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
-      - run: helm lint deploy/helm/meeting-agent
-      - run: helm template meeting-agent deploy/helm/meeting-agent > /tmp/manifest.yaml
-
-  # ── Step 4: Generate CHANGELOG and create GitHub Release ────────────
-  github_release:
-    runs-on: ubuntu-latest
-    needs: [smoke-test, e2e-full-release, helm-validate-release]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Generate CHANGELOG with git-cliff
-        uses: orhun/git-cliff-action@3c7b13de6090de4e8e558ce88f0a24c37a3d48bc # v4.4.2
-        id: git-cliff
-        with:
-          config: cliff.toml
-          args: --tag ${{ github.ref_name }}
-        env:
-          OUTPUT: CHANGELOG.md
-
-      - name: Commit CHANGELOG
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          if git diff --cached --quiet; then
-            echo "CHANGELOG unchanged, skipping commit"
-          else
-            git commit -m "docs: update CHANGELOG for ${{ github.ref_name }}"
-            for i in 1 2 3; do
-              git pull --rebase origin main && git push origin main && exit 0
-              echo "Push attempt $i failed, retrying in 5s..."
-              sleep 5
-            done
-            echo "Failed to push CHANGELOG after 3 attempts"
-            exit 1
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v3.0.0
-        with:
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: false
-
-  # ── Rollback job (manual) ──────────────────────────────────────────
-  rollback:
-    runs-on: ubuntu-latest
-    if: ${{ inputs.rollback_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Log in to GHCR
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4.1.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Rollback to ${{ inputs.rollback_tag }}
+      - name: Start exact candidate images
+        env:
+          BACKEND_IMAGE: ghcr.io/${{ github.repository }}-backend@${{ needs.build-candidates.outputs.backend-digest }}
+          FRONTEND_IMAGE: ghcr.io/${{ github.repository }}-frontend@${{ needs.build-candidates.outputs.frontend-digest }}
+          MEETING_AUTO_SUMMARIZE_FILES: "false"
+          SESSION_SUMMARY_ENABLED: "false"
+          CANDIDATE_LLM_API_KEY: ${{ secrets.QUALITY_LLM_API_KEY }}
+          CANDIDATE_LLM_BASE_URL: ${{ secrets.QUALITY_LLM_BASE_URL }}
+          CANDIDATE_LLM_MODEL: ${{ secrets.QUALITY_LLM_MODEL }}
+          CANDIDATE_EMBEDDING_API_KEY: ${{ secrets.QUALITY_EMBEDDING_API_KEY }}
+          CANDIDATE_EMBEDDING_BASE_URL: ${{ secrets.QUALITY_EMBEDDING_BASE_URL }}
+          CANDIDATE_EMBEDDING_MODEL: ${{ secrets.QUALITY_EMBEDDING_MODEL }}
         run: |
-          REPO="${{ github.repository }}"
-          TAG="${{ inputs.rollback_tag }}"
-          echo "Re-tagging ${TAG} as latest..."
-          # Pull the previous version's images; fail early if tag doesn't exist
-          docker pull ghcr.io/${REPO}-backend:${TAG} || {
-            echo "ERROR: Tag ${TAG} not found for backend image"
-            exit 1
-          }
-          docker pull ghcr.io/${REPO}-frontend:${TAG} || {
-            echo "ERROR: Tag ${TAG} not found for frontend image"
-            exit 1
-          }
-          # Re-tag as latest
-          docker tag ghcr.io/${REPO}-backend:${TAG} ghcr.io/${REPO}-backend:latest
-          docker tag ghcr.io/${REPO}-frontend:${TAG} ghcr.io/${REPO}-frontend:latest
-          # Push
-          docker push ghcr.io/${REPO}-backend:latest
-          docker push ghcr.io/${REPO}-frontend:latest
-          echo "Rollback complete: ${TAG} is now latest"
+          for name in \
+            CANDIDATE_LLM_API_KEY CANDIDATE_LLM_BASE_URL CANDIDATE_LLM_MODEL \
+            CANDIDATE_EMBEDDING_API_KEY CANDIDATE_EMBEDDING_BASE_URL \
+            CANDIDATE_EMBEDDING_MODEL; do
+            if [ -z "${!name:-}" ]; then
+              echo "Required release candidate provider secret is missing: $name"
+              exit 1
+            fi
+          done
+          candidate_data="${RUNNER_TEMP}/meeting-agent-candidate-${GITHUB_RUN_ID}"
+          mkdir -p "$candidate_data"
+          export MEETING_AGENT_DATA_DIR="$candidate_data"
+          echo "MEETING_AGENT_DATA_DIR=$candidate_data" >> "$GITHUB_ENV"
+          password_hash="$(openssl passwd -apr1 'candidate-e2e-password')"
+          escaped_password_hash="$(printf '%s' "$password_hash" | sed 's/\$/$$/g')"
+          cat > .env.compose <<EOF
+          ENVIRONMENT=production
+          CORS_ORIGINS=http://127.0.0.1:8307
+          TRUSTED_HOSTS=127.0.0.1,localhost,backend
+          API_KEY=candidate-e2e-api-key
+          PRINCIPAL_ID=candidate_e2e
+          PRINCIPAL_PEPPER=candidate-e2e-principal-pepper-change-me
+          LLM_API_KEY=$CANDIDATE_LLM_API_KEY
+          LLM_BASE_URL=$CANDIDATE_LLM_BASE_URL
+          LLM_MODEL=$CANDIDATE_LLM_MODEL
+          EMBEDDING_API_KEY=$CANDIDATE_EMBEDDING_API_KEY
+          EMBEDDING_BASE_URL=$CANDIDATE_EMBEDDING_BASE_URL
+          EMBEDDING_MODEL=$CANDIDATE_EMBEDDING_MODEL
+          FRONTEND_AUTH_USER=candidate-e2e
+          FRONTEND_AUTH_PASSWORD_HASH=$escaped_password_hash
+          EOF
+          chmod 600 .env.compose
+          docker compose -f docker-compose.yaml up -d --no-build
+      - name: Wait for local readiness
+        run: ./scripts/wait-for-health.sh
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Run full-stack Playwright against candidate
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_FULL_STACK: "1"
+          PLAYWRIGHT_SKIP_WEBSERVER: "1"
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:8307
+          E2E_BACKEND_BASE_URL: http://127.0.0.1:7008
+          E2E_API_KEY: candidate-e2e-api-key
+          E2E_HTTP_USER: candidate-e2e
+          E2E_HTTP_PASSWORD: candidate-e2e-password
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test --project=chromium --workers=1 e2e/full-stack
+      - name: Collect candidate logs
+        if: failure()
+        run: docker compose -f docker-compose.yaml logs > release-candidate.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure()
+        with:
+          name: release-candidate-logs
+          path: release-candidate.log
+      - name: Stop candidate stack
+        if: always()
+        run: docker compose -f docker-compose.yaml down -v
+
+  publish-images:
+    runs-on: ubuntu-latest
+    needs: [candidate-test, build-candidates]
+    steps:
+      - uses: docker/setup-buildx-action@c2575c830a2376098e713df7e0e1b88a047b4366 # v3
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote tested candidate digests
+        env:
+          BACKEND_DIGEST: ${{ needs.build-candidates.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ needs.build-candidates.outputs.frontend-digest }}
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ github.repository }}-backend:${RELEASE_TAG}" \
+            --tag "ghcr.io/${{ github.repository }}-backend:latest" \
+            "ghcr.io/${{ github.repository }}-backend@${BACKEND_DIGEST}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ github.repository }}-frontend:${RELEASE_TAG}" \
+            --tag "ghcr.io/${{ github.repository }}-frontend:latest" \
+            "ghcr.io/${{ github.repository }}-frontend@${FRONTEND_DIGEST}"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4
+      - name: Sign published images
+        env:
+          BACKEND_DIGEST: ${{ needs.build-candidates.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ needs.build-candidates.outputs.frontend-digest }}
+        run: |
+          cosign sign --yes "ghcr.io/${{ github.repository }}-backend@${BACKEND_DIGEST}"
+          cosign sign --yes "ghcr.io/${{ github.repository }}-frontend@${FRONTEND_DIGEST}"
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: publish-images
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: orhun/git-cliff-action@3c7b13de6090de4e8e558ce88f0a24c37a3d48bc # v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ env.RELEASE_TAG }}
+        env:
+          OUTPUT: CHANGELOG.md
+      - uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+
+  promote-previous-binaries:
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    if: ${{ inputs.rollback_tag }}
+    steps:
+      - uses: docker/setup-buildx-action@c2575c830a2376098e713df7e0e1b88a047b4366 # v3
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify target images, then promote binaries only
+        env:
+          TAG: ${{ inputs.rollback_tag }}
+          REPO: ${{ github.repository }}
+          DATA_RESTORE_REFERENCE: ${{ inputs.data_restore_reference }}
+        run: |
+          echo "::warning::This workflow promotes container images only; it does not downgrade or restore SQLite, uploads, or Chroma."
+          {
+            echo "## Binary-only image promotion"
+            echo ""
+            echo "- Image tag: ${TAG}"
+            echo "- External data recovery reference: ${DATA_RESTORE_REFERENCE}"
+            echo "- No application data was changed by this workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+          for component in backend frontend; do
+            docker pull "ghcr.io/${REPO}-${component}:${TAG}"
+          done
+          docker network create rollback-smoke
+          docker run -d --name rollback-backend --network rollback-smoke \
+            --network-alias backend -e ENVIRONMENT=dev \
+            -p 7008:8000 "ghcr.io/${REPO}-backend:${TAG}"
+          for i in $(seq 1 45); do
+            curl -fsS http://127.0.0.1:7008/api/v1/health/ready && break
+            [ "$i" -eq 45 ] && { docker logs rollback-backend; exit 1; }
+            sleep 2
+          done
+          docker run -d --name rollback-frontend --network rollback-smoke \
+            -p 8307:8080 \
+            "ghcr.io/${REPO}-frontend:${TAG}"
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8307/healthz >/dev/null && \
+              curl -fsS http://127.0.0.1:8307/api/v1/health/ready >/dev/null && break
+            [ "$i" -eq 20 ] && { docker logs rollback-frontend; exit 1; }
+            sleep 1
+          done
+          for component in backend frontend; do
+            docker buildx imagetools create \
+              --tag "ghcr.io/${REPO}-${component}:latest" \
+              "ghcr.io/${REPO}-${component}:${TAG}"
+          done
+      - name: Stop binary-promotion smoke containers
+        if: always()
+        run: |
+          docker rm -f rollback-backend rollback-frontend || true
+          docker network rm rollback-smoke || true

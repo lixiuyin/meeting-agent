@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 
+from ..llm._prompt_safety import escape_prompt_data
 from ..rag._indexer import display_speakers
 
 # Strip transcription artifacts (e.g. literal ``[Speaker]`` tokens that AssemblyAI
 # occasionally emits) from chunk content before it is rendered to the LLM context
 # or returned to the UI. Existing chunks indexed before the ASR/indexer cleanup
 # was added still carry these tokens, so we scrub them at display time.
-_SPEAKER_ARTIFACT_RE = re.compile(r"\s*\[Speaker\]\s*", re.IGNORECASE)
+_SPEAKER_ARTIFACT_RE = re.compile(r"[^\S\n]*\[Speaker\][^\S\n]*", re.IGNORECASE)
+_RETRIEVAL_CONTEXT_PREFIX_RE = re.compile(r"^\s*\[Retrieval context:[^\]]*\]\s*", re.IGNORECASE)
 
 
 def _scrub_speaker_artifact(text: str) -> str:
@@ -19,7 +22,12 @@ def _scrub_speaker_artifact(text: str) -> str:
     if not text:
         return text
     cleaned = _SPEAKER_ARTIFACT_RE.sub(" ", text)
-    return re.sub(r"\s{2,}", " ", cleaned).strip()
+    return re.sub(r"[^\S\n]{2,}", " ", cleaned).strip()
+
+
+def _scrub_display_content(text: str) -> str:
+    """Remove index-only metadata before content reaches prompts or clients."""
+    return _scrub_speaker_artifact(_RETRIEVAL_CONTEXT_PREFIX_RE.sub("", text, count=1))
 
 
 def _extract_image_combined_caption(raw_content: str) -> str | None:
@@ -89,6 +97,14 @@ def _format_docs(docs: list[dict]) -> str:
         ts_end = meta.get("timestamp_end")
         speaker = meta.get("speaker")
         source_kind = _infer_source_kind(meta)
+        evidence_labels = "; ".join(
+            label
+            for label in (
+                f"role={meta['material_role']}" if meta.get("material_role") else "",
+                f"approval={meta['approval_status']}" if meta.get("approval_status") else "",
+            )
+            if label
+        )
 
         if source_kind == "meeting_summary":
             title = meta.get("meeting_title") or meta.get("title") or f"Meeting#{meeting_id}"
@@ -113,8 +129,10 @@ def _format_docs(docs: list[dict]) -> str:
                 ref += f" · p{page}"
             elif source_kind == "image":
                 ref += " · img"
+        if evidence_labels:
+            ref += f" · {evidence_labels}"
 
-        parts.append(f"[{i}] {ref}\n{_scrub_speaker_artifact(doc['content'])}")
+        parts.append(f"[{i}] {ref}\n{_scrub_display_content(doc['content'])}")
     return "\n\n".join(parts) if parts else "No relevant meeting content found."
 
 
@@ -155,6 +173,14 @@ def _format_docs_by_meeting(
             ts_end = meta.get("timestamp_end")
             speaker = meta.get("speaker")
             source_kind = _infer_source_kind(meta)
+            evidence_labels = "; ".join(
+                label
+                for label in (
+                    f"role={meta['material_role']}" if meta.get("material_role") else "",
+                    f"approval={meta['approval_status']}" if meta.get("approval_status") else "",
+                )
+                if label
+            )
 
             if source_kind == "meeting_summary":
                 ref = f"Summary: {display_title}"
@@ -176,7 +202,10 @@ def _format_docs_by_meeting(
                 elif source_kind == "page" and meta.get("page_number") is not None:
                     ref = f"{ref} p.{meta['page_number']}"
 
-            section += f"**[{idx}] Source: {ref}**\n{_scrub_speaker_artifact(doc['content'])}\n\n"
+            if evidence_labels:
+                ref += f" · {evidence_labels}"
+
+            section += f"**[{idx}] Source: {ref}**\n{_scrub_display_content(doc['content'])}\n\n"
         parts.append(section.strip())
 
     return "\n\n---\n\n".join(parts) if parts else "No relevant meeting content found."
@@ -206,7 +235,9 @@ def _canonical_citation_docs(docs: list[dict]) -> list[dict]:
     return kept
 
 
-def _extract_sources(docs: list[dict], max_sources: int | None = None) -> list[dict]:
+def _extract_sources(
+    docs: list[dict], max_sources: int | None = None, *, memory_sources: list[dict] | None = None
+) -> list[dict]:
     """Extract source metadata for response, deduplicating by chunk (meeting:file:chunk).
 
     Returns at most ``max_sources`` items so the UI can render a stable top-N citations list.
@@ -227,7 +258,21 @@ def _extract_sources(docs: list[dict], max_sources: int | None = None) -> list[d
         if meeting_id is None or chunk_key in seen:
             continue
         seen.add(chunk_key)
-        raw_content = _scrub_speaker_artifact(str(doc.get("content", "") or "").strip())
+        raw_content = _scrub_display_content(str(doc.get("content", "") or "").strip())
+        chunk_id = str(meta["chunk_id"]) if meta.get("chunk_id") is not None else None
+        source_id = chunk_id
+        if source_kind in {"file_summary", "meeting_summary"}:
+            # A derived summary has its own content version, never a fabricated
+            # original chunk ID. Preserve the identity of a restored snapshot.
+            identity = f"{source_kind}:{meeting_id}:{file_id}:{raw_content}"
+            source_id = meta.get("source_id") or (
+                f"{source_kind}:{hashlib.sha256(identity.encode()).hexdigest()}"
+            )
+        # Avoid duplicating the complete retrieved corpus in an SSE metadata
+        # event. The authenticated file endpoints remain the source of truth.
+        source_preview = raw_content[:4000]
+        if len(raw_content) > len(source_preview):
+            source_preview = source_preview.rstrip() + "…"
         slide_number = page if source_kind == "slide" and page is not None else None
         content_type = meta.get("content_type")
         heading_path = meta.get("heading_path")
@@ -239,11 +284,25 @@ def _extract_sources(docs: list[dict], max_sources: int | None = None) -> list[d
             {
                 "meeting_id": meeting_id,
                 "meeting_title": meta.get("title", f"Meeting#{meeting_id}"),
+                # Native ingestion publishes immutable shadow generations.
+                # Expose that generation as the citation revision unless a
+                # parser supplied a more specific document revision.
+                "document_revision": (
+                    str(meta.get("document_revision") or meta.get("index_generation"))
+                    if meta.get("document_revision") is not None
+                    or meta.get("index_generation") is not None
+                    else None
+                ),
+                "alternate_sources": meta.get("alternate_sources") or [],
                 # Keep source as original chunk text (not model summary) for verbatim citation.
-                "content": raw_content,
+                "content": source_preview,
                 "score": round(doc.get("score", 0), 4),
                 "file_id": file_id,
                 "file_name": meta.get("file_name"),
+                "chunk_id": chunk_id,
+                "source_id": source_id,
+                "window_start": meta.get("evidence_start_offset", meta.get("window_start")),
+                "window_end": meta.get("evidence_end_offset", meta.get("window_end")),
                 "chunk_index": chunk_index,
                 "page_number": meta.get("page_number"),
                 "slide_number": slide_number,
@@ -257,20 +316,20 @@ def _extract_sources(docs: list[dict], max_sources: int | None = None) -> list[d
                 "source_kind": source_kind,
                 "content_type": content_type if isinstance(content_type, str) else None,
                 "image_caption": (
-                    raw_content
+                    source_preview
                     if content_type == "image_caption"
                     else _extract_image_combined_caption(raw_content)
                     if content_type == "image_combined"
                     else None
                 ),
                 "image_ocr": (
-                    raw_content
+                    source_preview
                     if content_type == "image_ocr"
                     else _extract_image_combined_ocr(raw_content)
                     if content_type == "image_combined"
                     else None
                 ),
-                "table_markdown": raw_content if content_type == "table" else None,
+                "table_markdown": source_preview if content_type == "table" else None,
                 "image_path": image_path if isinstance(image_path, str) else None,
                 "image_thumbnail_path": (
                     image_thumbnail_path if isinstance(image_thumbnail_path, str) else None
@@ -291,7 +350,7 @@ def _extract_sources(docs: list[dict], max_sources: int | None = None) -> list[d
         )
         if max_sources is not None and len(sources) >= max_sources:
             break
-    return sources
+    return sources + (memory_sources or [])
 
 
 def _build_system_context(
@@ -316,17 +375,24 @@ def _build_system_context(
                 combined_memory = f"{combined_memory}\n{entity_context}"
             else:
                 combined_memory = entity_context
-        parts.append(f"<user_memory>\n{combined_memory}\n</user_memory>")
+        parts.append(f"<user_memory>\n{escape_prompt_data(combined_memory)}\n</user_memory>")
     if session_context:
-        parts.append(f"<prior_conversations>\n{session_context}\n</prior_conversations>")
+        parts.append(
+            f"<prior_conversations>\n{escape_prompt_data(session_context)}\n</prior_conversations>"
+        )
     if web_context:
-        parts.append(f"<web_search>\n{web_context}\n</web_search>")
+        parts.append(f"<web_search>\n{escape_prompt_data(web_context)}\n</web_search>")
     if meeting_summaries_context:
-        parts.append(f"<meeting_summaries>\n{meeting_summaries_context}\n</meeting_summaries>")
+        parts.append(
+            f"<meeting_summaries>\n{escape_prompt_data(meeting_summaries_context)}\n"
+            "</meeting_summaries>"
+        )
     if file_summaries_context:
-        parts.append(f"<file_summaries>\n{file_summaries_context}\n</file_summaries>")
+        parts.append(
+            f"<file_summaries>\n{escape_prompt_data(file_summaries_context)}\n</file_summaries>"
+        )
     if meeting_context and meeting_context != "No relevant meeting content found.":
-        parts.append(f"[Meeting Content]\n{meeting_context}")
+        parts.append(f"[Meeting Content]\n{escape_prompt_data(meeting_context)}")
     return "\n\n".join(parts) if parts else "No context available."
 
 

@@ -4,7 +4,7 @@ from src.core import database as db
 from src.services.processor._recovery import recover_stale_meetings
 
 
-def test_recovery_marks_only_second_grace_pending_summaries_failed():
+def test_recovery_does_not_treat_old_pending_summaries_as_failures():
     with db.get_write_connection() as conn:
         recent_id = db.create_meeting(conn, title="recent", user_id="default")
         first_grace_id = db.create_meeting(conn, title="first grace", user_id="default")
@@ -36,4 +36,4 @@ def test_recovery_marks_only_second_grace_pending_summaries_failed():
     statuses = {row["id"]: row["summary_status"] for row in rows}
     assert statuses[recent_id] == "pending"
     assert statuses[first_grace_id] == "pending"
-    assert statuses[second_grace_id] == "failed"
+    assert statuses[second_grace_id] == "pending"

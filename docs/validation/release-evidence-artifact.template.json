@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "gate": "production_quality_passed",
+  "passed": false,
+  "reviewer": "replace-with-reviewer-identity",
+  "generated_at": "2026-09-08T00:00:00Z",
+  "expires_at": "2026-09-09T00:00:00Z",
+  "implementation_fingerprints": {
+    "dataset_fingerprint_sha256": "replace-with-current-clean-run",
+    "harness_fingerprint_sha256": "replace-with-current-clean-run",
+    "implementation_fingerprint_sha256": "replace-with-current-clean-run"
+  },
+  "details": {
+    "benchmark_valid": false,
+    "benchmark_release_ready": false,
+    "human_reviewed": false,
+    "observed_cases": 0,
+    "judge_repeats": 0,
+    "independent_judge": false,
+    "reranker_evaluated_queries": 0,
+    "quality_thresholds_passed": false,
+    "benchmark_sha256": "replace-with-private-report-sha256",
+    "holdout_sha256": "replace-with-reviewed-holdout-sha256"
+  }
+}

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from ...api.middleware import limiter
 from ...core.config import settings
-from ...core.security import verify_api_key
+from ...core.security import _derive_user_id_from_api_key, verify_api_key
 from ...models.schemas.websocket import (
     WSEchoMessage,
     WSPingMessage,
@@ -99,12 +99,7 @@ def _derive_ws_user_id(api_key: str | None) -> str:
         return "default"
     if not api_key:
         return "anonymous"
-    digest = hmac_mod.new(
-        b"ws-user-derive",
-        api_key.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"api_{digest[:24]}"
+    return _derive_user_id_from_api_key(api_key)
 
 
 def _verify_ws_auth(
@@ -123,11 +118,13 @@ def _verify_ws_auth(
                 return True, "default"
             return False, "anonymous"
         return True, "default"
-    # Production: require either valid API key or valid short-lived token
+    # Production currently accepts one configured proxy key. Both HTTP and
+    # WebSocket paths must derive the exact same principal from that key.
+    configured_user_id = _derive_user_id_from_api_key(configured_key)
     if api_key and hmac_mod.compare_digest(api_key, configured_key):
-        return True, _derive_ws_user_id(api_key)
-    if token and _validate_ws_token(token, user_id="default"):
-        return True, "default"
+        return True, configured_user_id
+    if token and _validate_ws_token(token, user_id=configured_user_id):
+        return True, configured_user_id
     return False, "anonymous"
 
 
@@ -197,7 +194,7 @@ async def websocket_endpoint(
         while True:
             if time.monotonic() - connected_at > _WS_MAX_LIFETIME:
                 logger.info("WebSocket client %s reached max lifetime, disconnecting", client_id)
-                websocket_manager.disconnect(client_id)
+                websocket_manager.disconnect(client_id, user_id=user_id, websocket=websocket)
                 await websocket.close(code=1001, reason="Max lifetime reached")
                 break
             try:
@@ -211,7 +208,7 @@ async def websocket_endpoint(
                         client_id,
                         missed_pings,
                     )
-                    websocket_manager.disconnect(client_id)
+                    websocket_manager.disconnect(client_id, user_id=user_id, websocket=websocket)
                     await websocket.close(code=1000, reason="Idle timeout")
                     break
                 await websocket.send_text(serialize_ws_message(WSPingMessage()))
@@ -236,4 +233,4 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error("WebSocket error for %s: %s", client_id, e, exc_info=True)
     finally:
-        websocket_manager.disconnect(client_id)
+        websocket_manager.disconnect(client_id, user_id=user_id, websocket=websocket)

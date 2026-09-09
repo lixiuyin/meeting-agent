@@ -1,0 +1,19 @@
+{
+  "query_id": "q009",
+  "answer": "The presentation (slide 3) lists three blockers: the mobile app is waiting on UI designs, the database migration is blocked by budget approval, and the analytics pipeline needs API access [2]. The meeting notes elaborate: UI designs from the design team have an ETA of January 22, the database migration needs additional cloud storage budget approval, and the third-party API has not yet provided production access [1].",
+  "source_ids": [
+    "sample.pdf:chunk_0",
+    "sample.pptx:chunk_0",
+    "sample.pptx:chunk_1",
+    "sample.pptx:chunk_2"
+  ],
+  "review": {
+    "reviewer_kind": "coding_agent",
+    "reviewer": "Codex",
+    "date": "2026-09-07",
+    "scope": "factual answer and stable source identity against existing handwritten fixture gold",
+    "production_human_review": false,
+    "source_report": "rag-snapshot_2026-09-07T09-57-59.286089_00-00.json",
+    "gold_sha256": "094ebd1a7d2c87f3a683333acce0923ee9b0602ff48ee017eaba5512bf7c0236"
+  }
+}

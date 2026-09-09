@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useChatStream } from "./useChatStream";
+import { collapseOldMessages, useChatStream, type ChatMessage } from "./useChatStream";
 import * as client from "../api/client";
 
 describe("useChatStream", () => {
@@ -17,7 +17,7 @@ describe("useChatStream", () => {
     expect(result.current.streamRequestId).toBeNull();
   });
 
-  it("appends user and agent messages on stream start", async () => {
+  it("rejects a done event that has no visible answer", async () => {
     vi.spyOn(client, "sendChatStream").mockImplementation(async function* () {
       yield { type: "done", session_id: "sess-123" };
     });
@@ -32,7 +32,9 @@ describe("useChatStream", () => {
     expect(result.current.messages[0].role).toBe("user");
     expect(result.current.messages[0].content).toBe("Hello");
     expect(result.current.messages[1].role).toBe("agent");
-    expect(result.current.sessionId).toBe("sess-123");
+    expect(result.current.messages[1].content).toContain("no usable answer");
+    expect(result.current.streamErrorCode).toBe("EMPTY_LLM_RESPONSE");
+    expect(result.current.sessionId).toBeUndefined();
     expect(result.current.isStreaming).toBe(false);
   });
 
@@ -72,6 +74,7 @@ describe("useChatStream", () => {
     ];
     vi.spyOn(client, "sendChatStream").mockImplementation(async function* () {
       yield { type: "sources", items: sources };
+      yield { type: "token", content: "Answer [1]" };
       yield { type: "done", session_id: "sess-789" };
     });
 
@@ -82,6 +85,24 @@ describe("useChatStream", () => {
     });
 
     expect(result.current.messages[1].sources).toEqual(sources);
+  });
+
+  it("keeps degraded generation status separate from answer content", async () => {
+    vi.spyOn(client, "sendChatStream").mockImplementation(async function* () {
+      yield { type: "status", status: "degraded", reason: "fast_path_timeout" };
+      yield { type: "token", content: "Relevant source excerpts (partial result):" };
+      yield { type: "done", session_id: "sess-degraded" };
+    });
+
+    const { result } = renderHook(() => useChatStream());
+
+    await act(async () => {
+      await result.current.startStream({ question: "What happened?" });
+    });
+
+    expect(result.current.messages[1].degraded).toBe(true);
+    expect(result.current.messages[1].degradationReason).toBe("fast_path_timeout");
+    expect(result.current.messages[1].content).toBe("Relevant source excerpts (partial result):");
   });
 
   it("sets streamError on non-abort errors", async () => {
@@ -180,6 +201,19 @@ describe("useChatStream", () => {
     sendChatStreamSpy.mockRestore();
   });
 
+  it("attaches persisted IDs from the done event to the completed turn", async () => {
+    vi.spyOn(client, "sendChatStream").mockImplementation(async function* () {
+      yield { type: "token", content: "answer" };
+      yield { type: "done", session_id: "sess-ids", message_ids: [41, 42] };
+    });
+    const { result } = renderHook(() => useChatStream());
+    await act(() => result.current.startStream({ question: "question" }));
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ role: "user", serverId: 41 }),
+      expect.objectContaining({ role: "agent", serverId: 42 }),
+    ]);
+  });
+
   it("clears pending tokens and flush timer on abort", async () => {
     let yieldSecondToken: (() => void) | null = null;
     const sendChatStreamSpy = vi
@@ -214,5 +248,24 @@ describe("useChatStream", () => {
     expect(result.current.messages[1]?.content).toBe("a");
 
     sendChatStreamSpy.mockRestore();
+  });
+});
+
+describe("collapseOldMessages", () => {
+  it("reports and accumulates the actual number of removed messages", () => {
+    const initial: ChatMessage[] = Array.from({ length: 201 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "agent",
+      content: `message-${index}`,
+      id: `message-${index}`,
+    }));
+    const first = collapseOldMessages(initial);
+    expect(first).toHaveLength(200);
+    expect(first[2].collapsedCount).toBe(2);
+    expect(first[2].content).toContain("(2)");
+
+    const second = collapseOldMessages([...first, { role: "user", content: "next", id: "next" }]);
+    expect(second).toHaveLength(200);
+    expect(second[2].collapsedCount).toBe(3);
+    expect(second[2].content).toContain("(3)");
   });
 });

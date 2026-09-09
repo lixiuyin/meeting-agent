@@ -3,4 +3,4 @@ name: meeting-agent
 description: Meeting Agent — RAG-based Q&A for meeting recordings and documents
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "v0.1.0"

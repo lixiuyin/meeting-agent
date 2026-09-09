@@ -3,17 +3,20 @@
 # L-6: Security defaults review:
 # - Services use ClusterIP (internal-only). Avoid changing to NodePort or
 #   LoadBalancer — use the ingress controller for external access instead.
-# - Secrets must be supplied via `--set` or an override file that is NEVER
-#   committed to git.  The secretName references a pre-existing k8s Secret.
+# - Secrets must be supplied via `--set-string` or an override file that is
+#   NEVER committed to git. Set createSecret=false when secretName references
+#   a pre-existing Secret managed outside this release.
 # - Enable TLS on the ingress for production deployments.
 # - Enable NetworkPolicy in multi-tenant clusters to restrict pod-to-pod traffic.
-# - HPA is disabled by default; single-replica is the recommended starting
-#   point (see H-6 in the codebase for multi-worker caveats).
+# - The chart intentionally has no HPA/PDB surface. The SQLite + local Chroma
+#   architecture is single-instance, and an availability policy for one pod
+#   would either be misleading or block routine maintenance.
 
 backend:
   image:
     repository: ghcr.io/lixiuyin/meeting-agent-backend
-    tag: ""  # Pin to a specific version via --set or override file for reproducible rollbacks
+    tag: ""  # Empty uses Chart.appVersion; pin explicitly for reproducible rollbacks
+    digest: ""  # Preferred for production: sha256:<64 hex>; overrides tag
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -29,12 +32,14 @@ backend:
       port: 8000
     initialDelaySeconds: 60
     periodSeconds: 30
+    timeoutSeconds: 5
   readinessProbe:
     httpGet:
       path: /api/v1/health/ready
       port: 8000
     initialDelaySeconds: 30
     periodSeconds: 10
+    timeoutSeconds: 5
   service:
     port: 8000
   # Pod-level security context (applies to all containers in the pod).
@@ -54,17 +59,23 @@ backend:
         - ALL
   config:
     ENVIRONMENT: production
+    CORS_ORIGINS: https://meeting-agent.example.com
+    TRUSTED_HOSTS: meeting-agent.example.com
   secretName: meeting-agent-secrets
-  # Sensitive env vars — supply via --set or an overrides file (never commit).
-  # Values must be base64-encoded when passed through helm --set.
+  createSecret: false
+  # Sensitive env vars — supply as plain strings via --set-string or an
+  # overrides file (never commit). Kubernetes performs the base64 encoding.
   secrets: {}
-  #  API_KEY: <base64>
-  #  LLM_API_KEY: <base64>
-  #  ASSEMBLYAI_API_KEY: <base64>
-  #  MARKER_API_KEY: <base64>
-  #  MINERU_API_KEY: <base64>
-  #  PADDLEOCR_API_KEY: <base64>
-  #  PROMETHEUS_API_KEY: <base64>  # Separate key for /metrics scraper access
+  #  API_KEY: <plain string>
+  #  PRINCIPAL_PEPPER: <plain string>
+  #  LLM_API_KEY: <plain string>
+  #  ASSEMBLYAI_API_KEY: <plain string>
+  #  MARKER_API_KEY: <plain string>
+  #  MINERU_API_KEY: <plain string>
+  #  PADDLEOCR_API_KEY: <plain string>
+  #  PROMETHEUS_API_KEY: <plain string>  # Separate key for /metrics scraper access
+  #  FRONTEND_AUTH_USER: <basic-auth username>
+  #  FRONTEND_AUTH_PASSWORD_HASH: <openssl passwd -apr1 output>
   # ExternalSecrets references — inject secrets from an external provider
   # (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, etc.) via
   # the External Secrets Operator.  Each entry maps to an envFrom secretRef.
@@ -77,7 +88,8 @@ backend:
 frontend:
   image:
     repository: ghcr.io/lixiuyin/meeting-agent-frontend
-    tag: ""  # Pin to a specific version via --set or override file for reproducible rollbacks
+    tag: ""  # Empty uses Chart.appVersion; pin explicitly for reproducible rollbacks
+    digest: ""  # Preferred for production: sha256:<64 hex>; overrides tag
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -88,11 +100,15 @@ frontend:
       cpu: 500m
       memory: 512Mi
   service:
-    port: 80
+    port: 8080
   # Pod-level security context (applies to all containers in the pod).
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
   # Container-level security context (applies to the frontend container).
   containerSecurityContext:
     readOnlyRootFilesystem: true
@@ -100,11 +116,27 @@ frontend:
     capabilities:
       drop:
         - ALL
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
 
 ingress:
-  enabled: true
+  enabled: false
   className: ""
-  annotations: {}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "210"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "210"
   hosts:
     - host: meeting-agent.example.com
       paths:
@@ -120,21 +152,12 @@ ingress:
   #       - meeting-agent.example.com
   #     secretName: meeting-agent-tls
 
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 1
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 75
-
-pdb:
-  enabled: true
-  maxUnavailable: 0
-
 networkPolicy:
   enabled: true
   ingress:
     from: []
+    # Empty permits only pods in this release namespace. Add the ingress
+    # controller namespace/pod selectors when it runs in another namespace.
     # from:
     #   - namespaceSelector:
     #       matchLabels:

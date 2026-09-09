@@ -6,6 +6,7 @@ import {
   formatApiErrorMessage,
   getMeeting,
   getTranscript,
+  isRequestCanceled,
   reprocessMeeting,
   reprocessMeetingFile,
   updateMeeting,
@@ -86,7 +87,7 @@ export function useMeetingDetail(fetchMeetings: () => void) {
           intervalRef.current = null;
         }
       } catch (e) {
-        if ((e as Error)?.name === "AbortError") return;
+        if (isRequestCanceled(e)) return;
         // transient failures shouldn't spam the user
       }
     };

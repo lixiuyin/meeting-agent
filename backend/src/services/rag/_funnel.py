@@ -26,17 +26,13 @@ _CHUNK_COUNT_REFERENCE = 8.0
 def normalize_scores(docs: list[dict], *, lower_is_better: bool) -> list[dict]:
     """Return shallow copies with scores normalised to [0, 1], higher-better.
 
-    For lower-is-better (distance) scores, apply ``1 / (1 + s)``.
-    For higher-is-better (RRF / similarity) scores, passthrough (already [0,1]).
+    Explicit per-document provenance wins over the legacy direction argument,
+    which prevents mixed vector/RRF/multimodal pools from being normalized in
+    the wrong direction.
     """
-    if not docs:
-        return []
-    out: list[dict] = []
-    for doc in docs:
-        raw = float(doc.get("score", 0.0))
-        norm = (1.0 / (1.0 + raw)) if lower_is_better else raw
-        out.append({**doc, "score": norm})
-    return out
+    from ._vector import normalize_document_scores
+
+    return normalize_document_scores(docs, legacy_lower_is_better=lower_is_better)
 
 
 def aggregate_by_meeting(
@@ -90,9 +86,10 @@ def aggregate_by_file_scored(
     log-normalised chunk count, letting dense files compete fairly against
     sparse files that happen to have a single very high score.
     """
-    if chunk_count_alpha is None:
-        chunk_count_alpha = settings.RAG_FUNNEL_AGGREGATION_ALPHA
-    chunk_count_alpha = max(0.0, min(1.0, chunk_count_alpha))
+    configured_alpha = (
+        settings.RAG_FUNNEL_AGGREGATION_ALPHA if chunk_count_alpha is None else chunk_count_alpha
+    )
+    chunk_count_alpha = max(0.0, min(1.0, configured_alpha or 0.0))
     if prior_mode is None:
         prior_mode = settings.RAG_FUNNEL_FILE_PRIOR_MODE
 

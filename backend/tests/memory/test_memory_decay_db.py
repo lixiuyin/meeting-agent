@@ -95,8 +95,8 @@ class TestPhase2DatabaseColumns:
 
 
 class TestFloatDecay:
-    def test_decay_lowers_importance(self):
-        """decay_memories persists a lower importance score for stale memories."""
+    def test_decay_lowers_freshness_without_mutating_salience(self):
+        """Decay updates freshness while preserving the user's salience judgment."""
         user_id = "float_decay_user"
         with get_write_connection() as conn:
             db.set_memory(
@@ -119,7 +119,9 @@ class TestFloatDecay:
             mem = db.get_memory_full(conn, user_id=user_id, key="decay_test_fact")
 
         assert mem is not None
-        assert float(mem["importance"]) < 4.0
+        assert float(mem["importance"]) == 4.0
+        assert float(mem["salience"]) == 4.0
+        assert float(mem["freshness_score"]) < 1.0
 
     def test_decay_respects_decay_enabled_setting(self):
         """When MEMORY_DECAY_ENABLED is False, decay_memories returns 0."""
@@ -127,6 +129,57 @@ class TestFloatDecay:
             mock_settings.MEMORY_DECAY_ENABLED = False
             result = memory_service.decay_memories("any_user")
         assert result == 0
+
+    def test_second_decay_only_applies_new_elapsed_interval(self):
+        """A second immediate run must not charge the full memory age again."""
+        user_id = "incremental_decay_user"
+        past = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        with get_write_connection() as conn:
+            db.set_memory(conn, user_id=user_id, key="fact", value="value", importance=4)
+            conn.execute(
+                "UPDATE user_memories SET created_at=?, last_accessed=? "
+                "WHERE user_id=? AND key='fact'",
+                (past, past, user_id),
+            )
+
+        memory_service.decay_memories(user_id)
+        with db.get_connection() as conn:
+            first = float(db.get_memory_full(conn, user_id=user_id, key="fact")["importance"])
+        memory_service.decay_memories(user_id)
+        with db.get_connection() as conn:
+            second = float(db.get_memory_full(conn, user_id=user_id, key="fact")["importance"])
+
+        assert abs(second - first) < 0.01
+
+    def test_gc_scans_beyond_first_page_and_queues_vector_delete(self):
+        user_id = "full_scan_gc_user"
+        old = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+        with get_write_connection() as conn:
+            for index in range(100):
+                db.set_memory(
+                    conn,
+                    user_id=user_id,
+                    key=f"important_{index}",
+                    value="keep",
+                    importance=5,
+                )
+            db.set_memory(conn, user_id=user_id, key="stale", value="delete", importance=1)
+            conn.execute(
+                "UPDATE user_memories SET importance=0, salience=0, freshness_score=0, "
+                "last_accessed=?, embedding_id='vec-stale' "
+                "WHERE user_id=? AND key='stale'",
+                (old, user_id),
+            )
+
+        assert memory_service.purge_stale_memories(user_id) == 1
+        with db.get_connection() as conn:
+            assert db.get_memory_full(conn, user_id=user_id, key="stale")["archived_at"] is not None
+            assert db.list_memory_versions(conn, user_id=user_id, key="stale")
+            queued = conn.execute(
+                "SELECT 1 FROM pending_vector_deletions "
+                "WHERE collection='memory' AND embedding_id='vec-stale'"
+            ).fetchone()
+        assert queued is not None
 
 
 class TestPhase2ConfigSettings:
@@ -139,5 +192,5 @@ class TestPhase2ConfigSettings:
     def test_consolidation_defaults(self):
         from src.core.config import settings
 
-        assert settings.MEMORY_CONSOLIDATION_ENABLED is True
+        assert settings.MEMORY_CONSOLIDATION_ENABLED is False
         assert settings.MEMORY_CONSOLIDATION_MIN_CLUSTER == 3

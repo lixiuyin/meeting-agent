@@ -6,6 +6,7 @@ import {
   getSummary,
   sendMeetingSummaryStream,
   formatApiErrorMessage,
+  isRequestCanceled,
   type MeetingDetailInfo,
 } from "../../api/client";
 import { reportNonCriticalError } from "../../utils/monitoring";
@@ -71,7 +72,7 @@ export function useMeetingSummary({ detailMeetingId, setDetailFull }: Options) {
           summaryCompleted = true;
         }
       } catch (err) {
-        if ((err as { name?: string })?.name !== "AbortError") {
+        if (!isRequestCanceled(err)) {
           message.error(formatApiErrorMessage(err, "Failed to generate summary"));
         }
         setSummaryStreaming(false);
@@ -147,7 +148,7 @@ export function useMeetingSummary({ detailMeetingId, setDetailFull }: Options) {
           summaryCompleted = true;
         }
       } catch (err) {
-        if ((err as { name?: string })?.name !== "AbortError") {
+        if (!isRequestCanceled(err)) {
           message.error(formatApiErrorMessage(err, "Failed to regenerate summary"));
         }
         setSummaryStreaming(false);

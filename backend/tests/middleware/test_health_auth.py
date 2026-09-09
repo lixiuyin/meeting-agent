@@ -22,6 +22,10 @@ def auth_with_pepper(monkeypatch):
 
 
 class TestHealthAuth:
+    def test_traffic_health_requires_auth(self, auth_with_pepper, client):
+        resp = client.get("/api/v1/health/traffic")
+        assert resp.status_code == 401
+
     def test_index_consistency_requires_auth(self, auth_with_pepper, client):
         """index-consistency endpoint must require API key."""
         resp = client.get("/api/v1/health/index-consistency")

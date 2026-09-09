@@ -68,7 +68,7 @@ class TestSemanticClusterMemories:
         mock_vs.is_empty.return_value = True
 
         with patch("src.services.memory.get_memory_vectorstore", return_value=mock_vs):
-            clusters = await _semantic_cluster_memories(memories, "test_user")
+            clusters = await _semantic_cluster_memories(memories)
 
         # Should produce the same result as _text_cluster_memories
         assert len(clusters) >= 1
@@ -87,7 +87,7 @@ class TestSemanticClusterMemories:
         mock_vs._chromadb.similarity_search_with_score.side_effect = RuntimeError("chroma down")
 
         with patch("src.services.memory.get_memory_vectorstore", return_value=mock_vs):
-            clusters = await _semantic_cluster_memories(memories, "test_user_err")
+            clusters = await _semantic_cluster_memories(memories)
 
         # Must not raise; must return some clusters
         total = sum(len(c) for c in clusters)
@@ -120,7 +120,7 @@ class TestSemanticClusterMemories:
         ]
 
         with patch("src.services.embedder.get_embeddings", return_value=mock_emb):
-            clusters = await _semantic_cluster_memories(memories, "sem_cluster_user")
+            clusters = await _semantic_cluster_memories(memories)
 
         two_mem_clusters = [c for c in clusters if len(c) >= 2]
         assert len(two_mem_clusters) >= 1
@@ -128,34 +128,16 @@ class TestSemanticClusterMemories:
         assert k1 in merged_keys and k2 in merged_keys
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_text_on_small_store(self):
-        """When the vector store has too few results for a reliable median,
-        the function skips semantic clustering and no clusters are merged."""
-
-        from langchain_core.documents import Document
-
+    async def test_small_batch_uses_configured_similarity_threshold(self):
         memories = [
             {"key": "k1", "value": "python is great", "category": "pref"},
             {"key": "k2", "value": "loves python", "category": "pref"},
         ]
+        mock_emb = MagicMock()
+        mock_emb.embed_documents.return_value = [[1.0, 0.0], [0.0, 1.0]]
+        with patch("src.services.embedder.get_embeddings", return_value=mock_emb):
+            clusters = await _semantic_cluster_memories(memories)
 
-        # Only 3 results — below min_results_for_median=7
-        def fake_search(query, k, filter):
-            return [
-                (Document(page_content="a", metadata={"key": "k2"}), 0.1),
-                (Document(page_content="b", metadata={"key": "k1"}), 0.2),
-                (Document(page_content="c", metadata={"key": "ext"}), 3.0),
-            ]
-
-        mock_vs = MagicMock()
-        mock_vs.is_empty.return_value = False
-        mock_vs._chromadb.similarity_search_with_score.side_effect = fake_search
-
-        with patch("src.services.memory.get_memory_vectorstore", return_value=mock_vs):
-            clusters = await _semantic_cluster_memories(memories, "small_store_user")
-
-        # With too few results, no semantic merging should happen;
-        # each memory stays in its own cluster (union-find unchanged).
         assert all(len(c) == 1 for c in clusters)
 
     def test_config_semantic_cluster_enabled_exists(self):
@@ -192,7 +174,7 @@ class TestSemanticClusterMemories:
             caplog.at_level("WARNING", logger="src.services.memory._common"),
             patch("src.services.embedder.get_embeddings", return_value=mock_emb),
         ):
-            await _semantic_cluster_memories(memories, "regression_user")
+            await _semantic_cluster_memories(memories)
 
         mock_emb.embed_documents.assert_called_once()
         assert "ImportError" not in caplog.text

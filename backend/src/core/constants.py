@@ -6,6 +6,7 @@ individual ``_constants.py`` / ``_generate_helpers.py`` modules
 are still the primary location for package-internal values.
 """
 
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -38,15 +39,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 #   * Docker (`/app`): no sibling `backend/` exists, so fall back to
 #     `PROJECT_ROOT / "data"` which matches the volume mount at `/app/data`.
 _REPO_ROOT_CANDIDATE = PROJECT_ROOT.parent
-DATA_DIR = (
+_DEFAULT_DATA_DIR = (
     _REPO_ROOT_CANDIDATE / "data"
     if (_REPO_ROOT_CANDIDATE / "backend").is_dir()
     else PROJECT_ROOT / "data"
 )
+DATA_DIR = Path(os.getenv("DATA_DIR", str(_DEFAULT_DATA_DIR))).expanduser()
 
-UPLOAD_DIR = DATA_DIR / "uploads"
-VECTOR_DB_DIR = DATA_DIR / "vectordb"
-DB_PATH = DATA_DIR / "meetings.db"
-LOG_DIR = DATA_DIR / "logs"
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(DATA_DIR / "uploads"))).expanduser()
+VECTOR_DB_DIR = Path(os.getenv("VECTOR_DB_DIR", str(DATA_DIR / "vectordb"))).expanduser()
+DB_PATH = Path(os.getenv("DB_PATH", str(DATA_DIR / "meetings.db"))).expanduser()
+LOG_DIR = Path(os.getenv("LOG_DIR", str(DATA_DIR / "logs"))).expanduser()
 CONFIG_DIR = PROJECT_ROOT / "config"
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "main.yaml"

@@ -104,9 +104,20 @@ class TestTracing:
 
     @pytest.mark.asyncio
     async def test_health_endpoint_records_span(
-        self, span_exporter: _InMemorySpanExporter, client: AsyncClient
+        self,
+        span_exporter: _InMemorySpanExporter,
+        client: AsyncClient,
+        monkeypatch,
     ) -> None:
         """A request to ``/api/v1/health`` should produce at least one span."""
+        from src.api.routers import health as health_router
+
+        async def ready():
+            return health_router.HealthResponse(status="ok", checks={"startup": "ok"})
+
+        # This is a tracing test, so keep it hermetic and independent of live
+        # embedding/provider connectivity.
+        monkeypatch.setattr(health_router, "_check_readiness", ready)
         async with client as c:
             response = await c.get("/api/v1/health")
 

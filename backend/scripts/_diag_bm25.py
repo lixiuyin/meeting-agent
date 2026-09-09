@@ -1,8 +1,5 @@
 """Quick BM25 diagnostic: verify FTS5 table and trigger work in benchmark env."""
 
-import asyncio
-import os
-
 from _bench_env import bench_environment
 
 
@@ -55,9 +52,7 @@ def _main():
                 print("  -", r["chunk_id"], r["content"][:60])
 
             # Search with phrase query
-            results2 = fts5_search(
-                conn, 'remote control', meeting_ids=[meeting_id], limit=5
-            )
+            results2 = fts5_search(conn, "remote control", meeting_ids=[meeting_id], limit=5)
             print(f"FTS5 search results for 'remote control': {len(results2)} rows")
 
             # Empty meeting filter

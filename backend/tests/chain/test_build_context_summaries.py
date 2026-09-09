@@ -10,7 +10,7 @@ Covers the 4 bugs fixed in _steps_generate.py:
 import pytest
 
 from src.core.config import settings
-from src.core.database import get_write_connection
+from src.core.database import get_connection, get_write_connection
 from src.services.chain._context import PipelineContext
 from src.services.chain._formatting import _extract_sources
 from src.services.chain._steps_generate import (
@@ -192,6 +192,27 @@ class TestMeetingScopedFileSummaries:
             meta = doc.get("metadata", {})
             assert meta.get("meeting_id") is not None
 
+    @pytest.mark.unit
+    def test_explicit_foreign_file_id_is_rejected_for_default_principal(self):
+        with get_write_connection() as conn:
+            conn.execute(
+                "INSERT INTO meetings (id, title, status, user_id) "
+                "VALUES (3, 'Foreign', 'ready', 'other-user')"
+            )
+            conn.execute(
+                "INSERT INTO meeting_files "
+                "(id, meeting_id, file_name, file_path, file_type, status, summary) "
+                "VALUES (301, 3, 'foreign.pdf', '/fake/foreign.pdf', "
+                "'pdf', 'ready', 'foreign secret')"
+            )
+
+        text, docs = _load_file_summaries(
+            PipelineContext(question="summarize", file_ids=[301], user_id="default")
+        )
+
+        assert text == ""
+        assert docs == []
+
 
 class TestMeetingSummariesContext:
     """Change C: meeting summary loader includes selected meetings."""
@@ -228,6 +249,25 @@ class TestMeetingSummariesContext:
 
         text, docs = _load_meeting_summaries_for_context(ctx)
         assert "Alpha Meeting" in text
+
+    @pytest.mark.unit
+    def test_explicit_foreign_meeting_id_is_rejected_for_default_principal(self):
+        with get_write_connection() as conn:
+            conn.execute(
+                "INSERT INTO meetings "
+                "(id, title, status, summary_status, user_id) "
+                "VALUES (3, 'Foreign', 'ready', 'ready', 'other-user')"
+            )
+            conn.execute(
+                "INSERT INTO meeting_summaries (meeting_id, summary) VALUES (3, 'foreign secret')"
+            )
+
+        text, docs = _load_meeting_summaries_for_context(
+            PipelineContext(question="summarize", meeting_ids=[3], user_id="default")
+        )
+
+        assert text == ""
+        assert docs == []
 
 
 class TestBuildContextTruncation:
@@ -279,7 +319,7 @@ class TestCitationIndexAlignment:
 
         # Insert an orphan file with FK temporarily disabled so the
         # meeting_id points at a non-existent meeting.
-        with get_write_connection() as conn:
+        with get_connection() as conn:
             conn.execute("PRAGMA foreign_keys=OFF")
             conn.execute(
                 "INSERT INTO meeting_files (id, meeting_id, file_name, file_path, "
@@ -287,8 +327,8 @@ class TestCitationIndexAlignment:
                 "VALUES (9990, 99999, 'orphan.mp4', '/fake/orphan.mp4', "
                 "'video', 'ready', 'Orphan file summary text')"
             )
-            conn.execute("PRAGMA foreign_keys=ON")
             conn.commit()
+            conn.execute("PRAGMA foreign_keys=ON")
 
         ctx = PipelineContext(question="x", file_ids=[101, 9990])
         ctx.docs = []
@@ -388,3 +428,34 @@ class TestTruncationRebuildsContext:
                 "Pre-truncation chunk content leaked into combined_context "
                 "after all chunks were popped — H1 regression"
             )
+
+    @pytest.mark.unit
+    def test_summary_citations_are_numbered_after_truncation(self, monkeypatch):
+        import re
+
+        monkeypatch.setattr(settings, "PROMPT_TOTAL_BUDGET_TOKENS", 450)
+        ctx = PipelineContext(question="summarize meeting 1", meeting_ids=[1])
+        ctx.docs = [
+            _make_chunk_doc(1, 101, "file_1_a.mp4", chunk_index=i, content=(f"chunk-{i} " * 250))
+            for i in range(4)
+        ]
+
+        build_context(ctx)
+
+        chunk_count = sum(
+            1
+            for doc in ctx.docs
+            if (doc.get("metadata") or {}).get("source_kind")
+            not in {"file_summary", "meeting_summary"}
+        )
+        summary_labels = [
+            int(value)
+            for value in re.findall(
+                r"\[(\d+)\](?: File Summary|[^\n]*Meeting #)", ctx.combined_context
+            )
+        ]
+        if summary_labels:
+            assert sorted(summary_labels) == list(
+                range(chunk_count + 1, chunk_count + 1 + len(summary_labels))
+            )
+        assert len(_extract_sources(ctx.docs)) == len(ctx.docs)

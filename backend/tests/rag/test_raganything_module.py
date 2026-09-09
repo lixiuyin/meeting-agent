@@ -86,6 +86,16 @@ def test_scope_match_via_db_sidecar_when_doc_id_nonstandard(monkeypatch):
     assert raganything_module._scope_match("opaque-doc-id", {6}, {9}) is False
 
 
+def test_scope_match_enforces_user_ownership(monkeypatch):
+    monkeypatch.setattr(
+        raganything_module,
+        "_lookup_user_id_by_doc_id",
+        lambda _doc: "principal-a",
+    )
+    assert raganything_module._scope_match("meeting_7_file_11", set(), set(), "principal-a")
+    assert not raganything_module._scope_match("meeting_7_file_11", set(), set(), "principal-b")
+
+
 def test_retrieve_with_raganything_empty_payload_returns_empty_list(monkeypatch):
     class _FakeRag:
         async def aquery(self, *_args, **_kwargs):
@@ -128,5 +138,39 @@ def test_retrieve_with_raganything_post_filters_by_scope(monkeypatch):
 
 def test_reset_raganything_clears_singleton():
     raganything_module._raganything_singleton = object()
+    raganything_module._raganything_key = ("old", 1, 2, 3)
     raganything_module.reset_raganything()
     assert raganything_module._raganything_singleton is None
+    assert raganything_module._raganything_key is None
+
+
+def test_raganything_is_recreated_when_dependency_identity_changes(monkeypatch, tmp_path):
+    state = {
+        "working_dir": tmp_path / "first",
+        "llm": object(),
+        "embeddings": object(),
+    }
+    created: list[object] = []
+
+    monkeypatch.setattr(raganything_module, "_get_working_dir", lambda: state["working_dir"])
+    monkeypatch.setattr(raganything_module, "get_llm", lambda: state["llm"])
+    monkeypatch.setattr(raganything_module, "get_embeddings", lambda: state["embeddings"])
+
+    def _create():
+        instance = object()
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(raganything_module, "_create_raganything", _create)
+    raganything_module.reset_raganything()
+    try:
+        first = raganything_module._get_raganything()
+        assert raganything_module._get_raganything() is first
+
+        state["llm"] = object()
+        second = raganything_module._get_raganything()
+
+        assert second is not first
+        assert created == [first, second]
+    finally:
+        raganything_module.reset_raganything()

@@ -5,14 +5,16 @@ import {
   LinkOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
-import { Button, Collapse, Popover, Tag, Tooltip } from "antd";
+import { Button, Collapse, Popover, Tooltip } from "antd";
 import { useState } from "react";
+import { useIntl } from "react-intl";
 
-const VISIBLE_SOURCE_COUNT = 6;
+const VISIBLE_SOURCE_COUNT = 3;
 
 interface SourceChipsRowProps {
   msgKey: string;
   sources: SourceItem[];
+  sourceIndexes: number[];
   openSourcePopoverKey: string | null;
   onSetOpenSourcePopoverKey: (key: string | null) => void;
   onOpenSource: (source: SourceItem) => void;
@@ -23,15 +25,20 @@ interface SourceChipsRowProps {
 function SourceChipsRow({
   msgKey,
   sources,
+  sourceIndexes,
   openSourcePopoverKey,
   onSetOpenSourcePopoverKey,
   onOpenSource,
   onCopySourceSnippet,
   onSelectCitation,
 }: SourceChipsRowProps) {
+  const { formatMessage } = useIntl();
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? sources : sources.slice(0, VISIBLE_SOURCE_COUNT);
-  const hiddenCount = sources.length - VISIBLE_SOURCE_COUNT;
+  const indexed = sourceIndexes
+    .map((globalIdx) => ({ source: sources[globalIdx - 1], globalIdx }))
+    .filter((entry): entry is { source: SourceItem; globalIdx: number } => !!entry.source);
+  const visible = expanded ? indexed : indexed.slice(0, VISIBLE_SOURCE_COUNT);
+  const hiddenCount = indexed.length - VISIBLE_SOURCE_COUNT;
 
   return (
     <div
@@ -50,10 +57,9 @@ function SourceChipsRow({
         }}
       />
       <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-        Sources ({sources.length}):
+        {formatMessage({ id: "chat.citedSources" }, { count: indexed.length })}:
       </span>
-      {visible.map((s) => {
-        const globalIdx = sources.indexOf(s) + 1;
+      {visible.map(({ source: s, globalIdx }) => {
         const sourceKey = sourceKeyFor(msgKey, s);
         return (
           <Popover
@@ -82,7 +88,12 @@ function SourceChipsRow({
                   {formatSourceLocation(s) && <span>{formatSourceLocation(s)}</span>}
                   {s.speaker && s.source_kind !== "timestamp" && <span>· {s.speaker}</span>}
                   <span>· {formatContentType(s)}</span>
-                  <span>· {(s.score * 100).toFixed(0)}%</span>
+                  <span>
+                    ·{" "}
+                    {s.memory_key
+                      ? formatMessage({ id: "memory.tabs.memories" })
+                      : `Retrieval score ${s.score.toFixed(3)}`}
+                  </span>
                 </div>
                 <div
                   style={{
@@ -106,7 +117,7 @@ function SourceChipsRow({
                       marginBottom: 4,
                     }}
                   >
-                    Original content
+                    {formatMessage({ id: "chat.originalContent" })}
                   </div>
                   {sourcePreviewImageUrl(s) && (
                     <div
@@ -121,7 +132,7 @@ function SourceChipsRow({
                     >
                       <img
                         src={sourcePreviewImageUrl(s)!}
-                        alt="Source preview"
+                        alt={formatMessage({ id: "chat.sourcePreview" })}
                         style={{
                           width: "100%",
                           maxHeight: isImageDerivedSource(s) ? 280 : 120,
@@ -135,7 +146,7 @@ function SourceChipsRow({
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
                   {canOpenSource(s) && (
-                    <Tooltip title="Open source">
+                    <Tooltip title={formatMessage({ id: "chat.openSource" })}>
                       <Button
                         size="small"
                         type="text"
@@ -143,84 +154,87 @@ function SourceChipsRow({
                         onClick={() => onOpenSource(s)}
                       >
                         {s.source_kind === "file_summary"
-                          ? "View file summary"
+                          ? formatMessage({ id: "chat.viewFileSummary" })
                           : s.file_type === "audio" || s.file_type === "video"
-                            ? "Play at source"
+                            ? formatMessage({ id: "chat.playAtSource" })
                             : isImageDerivedSource(s)
-                              ? "View source image"
-                              : "View source"}
+                              ? formatMessage({ id: "chat.viewSourceImage" })
+                              : formatMessage({ id: "chat.viewSource" })}
                       </Button>
                     </Tooltip>
                   )}
-                  <Tooltip title="Copy snippet">
+                  <Tooltip title={formatMessage({ id: "chat.copySnippet" })}>
                     <Button
                       size="small"
                       type="text"
                       icon={<CopyOutlined />}
-                      aria-label="Copy snippet"
+                      aria-label={formatMessage({ id: "chat.copySnippet" })}
                       onClick={() => onCopySourceSnippet((s.content || "").trim())}
                     />
                   </Tooltip>
-                  <Tooltip title="Open in modal">
+                  <Tooltip title={formatMessage({ id: "chat.openInModal" })}>
                     <Button
                       size="small"
                       type="text"
                       onClick={() => onSelectCitation({ index: globalIdx, source: s })}
                     >
-                      Preview
+                      {formatMessage({ id: "chat.preview" })}
                     </Button>
                   </Tooltip>
                 </div>
               </div>
             }
           >
-            <Tag
+            <Button
+              type="default"
+              size="small"
               aria-label={`Open source ${globalIdx}: ${s.file_name ?? s.meeting_title ?? "untitled"}`}
               style={{
                 fontSize: 11,
                 borderRadius: 20,
-                margin: 0,
                 background: "var(--color-bg-muted)",
                 borderColor: "var(--color-border)",
-                cursor: "pointer",
+                color: "var(--color-text-secondary)",
+                maxWidth: 220,
               }}
             >
-              {sourceTypeIcon(s)} <sup>[{globalIdx}]</sup>
-            </Tag>
+              {sourceTypeIcon(s)} [{globalIdx}] {s.file_name ?? s.meeting_title ?? "Untitled"}
+            </Button>
           </Popover>
         );
       })}
       {!expanded && hiddenCount > 0 && (
-        <Tag
+        <Button
+          type="text"
+          size="small"
+          aria-expanded={false}
           style={{
             fontSize: 11,
             borderRadius: 20,
-            margin: 0,
             background: "transparent",
-            borderColor: "var(--color-border)",
-            cursor: "pointer",
             color: "var(--color-text-tertiary)",
           }}
           onClick={() => setExpanded(true)}
         >
-          +{hiddenCount} more <DownOutlined style={{ fontSize: 10 }} />
-        </Tag>
+          {formatMessage({ id: "chat.moreSources" }, { count: hiddenCount })}{" "}
+          <DownOutlined style={{ fontSize: 10 }} />
+        </Button>
       )}
-      {expanded && sources.length > VISIBLE_SOURCE_COUNT && (
-        <Tag
+      {expanded && indexed.length > VISIBLE_SOURCE_COUNT && (
+        <Button
+          type="text"
+          size="small"
+          aria-expanded={true}
           style={{
             fontSize: 11,
             borderRadius: 20,
-            margin: 0,
             background: "transparent",
-            borderColor: "var(--color-border)",
-            cursor: "pointer",
             color: "var(--color-text-tertiary)",
           }}
           onClick={() => setExpanded(false)}
         >
-          Show less
-        </Tag>
+          {formatMessage({ id: "chat.showLess" })}
+        </Button>
       )}
     </div>
   );
@@ -241,6 +255,19 @@ import { canOpenSource, sourcePreviewImageUrl } from "./sourceLinks";
 export interface CitationSelection {
   index: number;
   source: SourceItem;
+}
+
+function extractCitedSourceIndexes(content: string, sourceCount: number): number[] {
+  const indexes = new Set<number>();
+  for (const match of content.matchAll(/\[(\d+)(?:[-–](\d+))?\]/g)) {
+    const start = Number(match[1]);
+    const end = match[2] ? Number(match[2]) : start;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || end < start) continue;
+    for (let index = start; index <= Math.min(end, sourceCount); index += 1) {
+      if (index >= 1) indexes.add(index);
+    }
+  }
+  return Array.from(indexes);
 }
 interface Props {
   msg: ChatMessage;
@@ -272,7 +299,9 @@ export function AgentMetaPanels({
   onCopySourceSnippet,
   onSelectCitation,
 }: Props) {
+  const { formatMessage } = useIntl();
   if (msg.role !== "agent") return null;
+  const citedSourceIndexes = extractCitedSourceIndexes(displayContent, msg.sources?.length ?? 0);
   return (
     <>
       <div
@@ -280,11 +309,10 @@ export function AgentMetaPanels({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          opacity: 0.7,
           paddingLeft: 4,
         }}
       >
-        <Tooltip title={copiedId === msg.id ? "Copied!" : "Copy"}>
+        <Tooltip title={formatMessage({ id: copiedId === msg.id ? "chat.copied" : "chat.copy" })}>
           <Button
             type="text"
             size="small"
@@ -295,11 +323,11 @@ export function AgentMetaPanels({
               color: copiedId === msg.id ? "var(--color-success)" : "var(--color-text-muted)",
             }}
           >
-            {copiedId === msg.id ? "Copied" : "Copy"}
+            {formatMessage({ id: copiedId === msg.id ? "chat.copied" : "chat.copy" })}
           </Button>
         </Tooltip>
         {isLast && !isStreaming && (
-          <Tooltip title="Regenerate response">
+          <Tooltip title={formatMessage({ id: "chat.regenerate" })}>
             <Button
               type="text"
               size="small"
@@ -310,16 +338,17 @@ export function AgentMetaPanels({
                 color: "var(--color-text-muted)",
               }}
             >
-              Retry
+              {formatMessage({ id: "chat.retry" })}
             </Button>
           </Tooltip>
         )}
       </div>
 
-      {msg.sources && msg.sources.length > 0 && (
+      {msg.sources && msg.sources.length > 0 && citedSourceIndexes.length > 0 && (
         <SourceChipsRow
           msgKey={msgKey}
           sources={msg.sources}
+          sourceIndexes={citedSourceIndexes}
           openSourcePopoverKey={openSourcePopoverKey}
           onSetOpenSourcePopoverKey={onSetOpenSourcePopoverKey}
           onOpenSource={onOpenSource}
@@ -380,7 +409,7 @@ export function AgentMetaPanels({
         </div>
       )}
 
-      {msg.trace && (
+      {import.meta.env.DEV && msg.trace && (
         <Collapse
           ghost
           size="small"

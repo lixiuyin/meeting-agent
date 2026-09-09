@@ -5,6 +5,7 @@ import {
   getSummary,
   sendMeetingSummaryStream,
   formatApiErrorMessage,
+  isRequestCanceled,
 } from "../api/client";
 
 interface SummaryFileRef {
@@ -141,7 +142,7 @@ export function useChatSummaryModal() {
           // Non-critical — file citations just won't be navigable.
         }
       } catch (err) {
-        if ((err as { name?: string })?.name !== "AbortError") {
+        if (!isRequestCanceled(err)) {
           message.error(formatApiErrorMessage(err, "Failed to generate summary"));
         }
         setStreaming(false);
@@ -211,7 +212,7 @@ export function useChatSummaryModal() {
         // Non-critical — file citations just won't be navigable.
       }
     } catch (err) {
-      if ((err as { name?: string })?.name !== "AbortError") {
+      if (!isRequestCanceled(err)) {
         message.error(formatApiErrorMessage(err, "Failed to regenerate summary"));
       }
       setStreaming(false);

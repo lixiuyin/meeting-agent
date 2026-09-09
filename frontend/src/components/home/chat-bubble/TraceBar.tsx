@@ -36,6 +36,8 @@ function formatDuration(ms: number | null): string {
 function buildTooltipText(seg: BarSegment): string {
   const parts = [seg.label, formatDuration(seg.duration_ms)];
   if (seg.status === "error") parts.push("(error)");
+  if (seg.status === "degraded") parts.push("(degraded; fallback used)");
+  if (seg.status === "timeout") parts.push("(timeout; fallback used)");
   if (seg.skipped) parts.push("(skipped)");
   if (seg.tokens_in != null) parts.push(`in: ${seg.tokens_in}`);
   if (seg.tokens_out != null) parts.push(`out: ${seg.tokens_out}`);
@@ -75,7 +77,14 @@ function SegmentBar({ segments }: SegmentBarProps) {
       {segments.map((seg) => {
         const isSkipped = seg.skipped;
         const isError = seg.status === "error";
-        const backgroundColor = isError ? "#ff4d4f" : isSkipped ? "transparent" : seg.color;
+        const isDegraded = seg.status === "degraded" || seg.status === "timeout";
+        const backgroundColor = isError
+          ? "#ff4d4f"
+          : isDegraded
+            ? "#fa8c16"
+            : isSkipped
+              ? "transparent"
+              : seg.color;
 
         return (
           <Tooltip key={seg.label} title={buildTooltipText(seg)}>

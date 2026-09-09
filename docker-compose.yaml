@@ -1,17 +1,27 @@
 services:
   backend:
+    image: ${BACKEND_IMAGE:-meeting-agent-backend:local}
     build: ./backend
     ports:
-      - "127.0.0.1:7008:8000"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-7008}:8000"
     volumes:
-      - ./data:/app/data
+      - ${MEETING_AGENT_DATA_DIR:-./data}:/app/data
     env_file:
       - path: ./backend/.env
+        required: false
+      - path: ./.env.compose
         required: false
     environment:
       - HOST=0.0.0.0
       - PORT=8000
+      - MEETING_AUTO_SUMMARIZE_FILES=${MEETING_AUTO_SUMMARIZE_FILES:-true}
+      - COMBINED_EXTRACTION_ENABLED=${COMBINED_EXTRACTION_ENABLED:-true}
+      - SESSION_SUMMARY_ENABLED=${SESSION_SUMMARY_ENABLED:-true}
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -19,8 +29,12 @@ services:
       - /tmp
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/live"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -35,13 +49,21 @@ services:
           memory: 1G
 
   frontend:
+    image: ${FRONTEND_IMAGE:-meeting-agent-frontend:local}
     build: ./frontend
     ports:
-      - "8307:8080"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8307}:8080"
     depends_on:
       backend:
         condition: service_healthy
+    env_file:
+      - path: ./.env.compose
+        required: false
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
     security_opt:
       - no-new-privileges:true
     cap_drop:

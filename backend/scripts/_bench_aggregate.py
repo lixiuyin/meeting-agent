@@ -60,6 +60,16 @@ def aggregate(traces: list[dict]) -> dict[str, SpanStats]:
         for span in trace.get("spans", []):
             label = span["label"]
             by_label.setdefault(label, []).append(span)
+        total_ms = trace.get("total_ms")
+        if isinstance(total_ms, (int, float)):
+            by_label.setdefault("trace_total", []).append(
+                {
+                    "label": "trace_total",
+                    "phase": "total",
+                    "duration_ms": float(total_ms),
+                    "status": "success",
+                }
+            )
 
     stats: dict[str, SpanStats] = {}
     for label, spans in by_label.items():
@@ -111,7 +121,7 @@ def format_markdown(stats: dict[str, SpanStats]) -> str:
         "| label | phase | n | p50 (ms) | p95 (ms) | p99 (ms) | mean (ms) | stdev (ms) | status |",
         "|-------|-------|---|----------|----------|----------|-----------|------------|--------|",
     ]
-    for label, s in sorted(stats.items(), key=lambda x: getattr(x[1], "phase", "") + x[0]):
+    for _label, s in sorted(stats.items(), key=lambda x: getattr(x[1], "phase", "") + x[0]):
         if not isinstance(s, SpanStats):
             continue
         status_str = ", ".join(f"{k}={v}" for k, v in s.status_counts.items())
@@ -122,14 +132,91 @@ def format_markdown(stats: dict[str, SpanStats]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def format_evidence_quality_markdown(evidence_quality: dict) -> str:
+    """Render release-evidence strength separately from benchmark validity."""
+    if not evidence_quality:
+        return ""
+
+    if "grade" in evidence_quality:
+        assessments = [("overall", evidence_quality)]
+    else:
+        assessments = [
+            (str(scope), assessment)
+            for scope, assessment in evidence_quality.items()
+            if isinstance(assessment, dict) and "grade" in assessment
+        ]
+    if not assessments:
+        return ""
+
+    lines = [
+        "## Evidence Quality\n",
+        "Benchmark validity only means the run followed its protocol; release readiness also "
+        "requires representative and sufficiently strong evidence.\n",
+        "| scope | grade | release ready | dataset | cases | judge repeats | reranker queries |",
+        "|-------|-------|---------------|---------|-------|---------------|------------------|",
+    ]
+    for scope, assessment in assessments:
+        release_ready = "yes" if assessment.get("release_ready") else "no"
+        lines.append(
+            f"| {scope} | {assessment.get('grade', 'unknown')} | {release_ready} | "
+            f"{assessment.get('dataset_kind', '—')} | "
+            f"{_display(assessment.get('observed_cases'))} | "
+            f"{_display(assessment.get('judge_repeats'))} | "
+            f"{_display(assessment.get('reranker_evaluated_queries'))} |"
+        )
+
+    limitations = [
+        (scope, str(limitation))
+        for scope, assessment in assessments
+        for limitation in assessment.get("limitations", [])
+    ]
+    if limitations:
+        lines.append("\n### Evidence limitations\n")
+        lines.extend(f"- `{scope}`: `{limitation}`" for scope, limitation in limitations)
+    else:
+        lines.append("\nNo release-evidence limitations were detected.")
+
+    return "\n".join(lines) + "\n"
+
+
+def format_chat_performance_markdown(payload: dict) -> str:
+    """Render stratified latency and degradation instead of one mixed percentile."""
+    groups = payload.get("category_stats") or {}
+    if not groups:
+        return ""
+    lines = [
+        "## Chat Performance by Query Category\n",
+        "| category | samples | TTFT p50 | TTFT p95 | total p50 | total p95 | degraded |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for category, stats in groups.items():
+        lines.append(
+            f"| {category} | {stats['samples']} | {stats['ttft_p50_ms']:.2f} ms | "
+            f"{stats['ttft_p95_ms']:.2f} ms | {stats['total_p50_ms']:.2f} ms | "
+            f"{stats['total_p95_ms']:.2f} ms | {stats['degraded_count']}/{stats['samples']} "
+            f"({stats['degraded_rate']:.1%}) |"
+        )
+    gate = payload.get("performance_gate") or {}
+    lines.append(
+        "\nPerformance/degradation gate: "
+        + ("**PASS**" if gate.get("passed") else "**FAIL**")
+        + (" (enforced)." if gate.get("enforced") else " (reported only).")
+    )
+    return "\n".join(lines) + "\n"
+
+
 def format_chunk_benchmark_markdown(payload: dict) -> str:
     """Render Phase 1 or Phase 2 results as markdown tables."""
     lines: list[str] = []
 
     if payload.get("phase") == 1:
         lines.append("## Phase 1 — Chunk Strategy Comparison\n")
-        lines.append("| Method | Preset | Scoped Recall@10 | Unscoped Recall@10 | Combined | Top-2 |")
-        lines.append("|--------|--------|------------------|--------------------|----------|-------|")
+        lines.append(
+            "| Method | Preset | Scoped Recall@10 | Unscoped Recall@10 | Combined | Top-2 |"
+        )
+        lines.append(
+            "|--------|--------|------------------|--------------------|----------|-------|"
+        )
         all_results = payload.get("all_results")
         if all_results:
             for r in all_results:
@@ -157,7 +244,8 @@ def format_chunk_benchmark_markdown(payload: dict) -> str:
     elif payload.get("phase") == 2:
         lines.append("## Phase 2 — Retrieval Grid Search\n")
         lines.append(
-            "| Chunk | Preset | Provider | Rerank | Scoped Rec@10 | Unscoped Rec@10 | File Cov | NDCG | Weighted Score |"
+            "| Chunk | Preset | Provider | Rerank | Scoped Rec@10 | "
+            "Unscoped Rec@10 | File Cov | NDCG | Weighted Score |"
         )
         lines.append(
             "|-------|--------|----------|--------|---------------|-----------------|----------|------|----------------|"
@@ -169,7 +257,8 @@ def format_chunk_benchmark_markdown(payload: dict) -> str:
             lines.append(
                 f"| {cfg['name']} | {cfg['preset']} | {r['provider']} | {r['reranker'] or 'off'} | "
                 f"{_fmt(sm.get('recall@10'))} | {_fmt(um.get('recall@10'))} | "
-                f"{_fmt(um.get('file_coverage'))} | {_fmt(um.get('ndcg@10'))} | {_fmt(r.get('weighted_score'))} |"
+                f"{_fmt(um.get('file_coverage'))} | {_fmt(um.get('ndcg@10'))} | "
+                f"{_fmt(r.get('weighted_score'))} |"
             )
         lines.append("")
         rec = payload.get("recommendation")
@@ -187,6 +276,10 @@ def _fmt(val: float | None) -> str:
     return f"{val:.3f}" if val is not None else "—"
 
 
+def _display(value: object) -> str:
+    return "—" if value is None else str(value)
+
+
 def format_rag_quality_markdown(rag_quality: dict) -> str:
     """Render RAG quality results as markdown tables."""
     lines: list[str] = []
@@ -200,7 +293,8 @@ def format_rag_quality_markdown(rag_quality: dict) -> str:
         for strategy in ["semantic-only@5", "semantic-only@10", "hybrid@10", "hybrid+rerank@10"]:
             s = stats.get(strategy, {})
             lines.append(
-                f"| {strategy} | {_fmt(s.get('recall'))} | {_fmt(s.get('mrr'))} | {_fmt(s.get('ndcg'))} |"
+                f"| {strategy} | {_fmt(s.get('recall'))} | {_fmt(s.get('mrr'))} | "
+                f"{_fmt(s.get('ndcg'))} |"
             )
         lines.append("")
 
@@ -208,15 +302,17 @@ def format_rag_quality_markdown(rag_quality: dict) -> str:
     if answer:
         lines.append("## RAG Quality — Answer\n")
         lines.append(
-            "| faithfulness | answer_rel | ctx_prec | ctx_recall | rouge_l | ans_sim | parse_fail |"
+            "| faithfulness | answer_rel | ctx_prec | ctx_recall | correctness | "
+            "citation | rouge_l | ans_sim | parse_fail |"
         )
         lines.append(
-            "|--------------|-----------|----------|------------|---------|---------|------------|"
+            "|--------------|-----------|----------|------------|-------------|----------|---------|---------|------------|"
         )
         stats = answer.get("stats", {})
         lines.append(
             f"| {_fmt(stats.get('faithfulness'))} | {_fmt(stats.get('answer_relevance'))} | "
             f"{_fmt(stats.get('context_precision'))} | {_fmt(stats.get('context_recall'))} | "
+            f"{_fmt(stats.get('correctness'))} | {_fmt(stats.get('citation_quality'))} | "
             f"{_fmt(stats.get('rouge_l_f1'))} | {_fmt(stats.get('answer_similarity'))} | "
             f"{stats.get('parse_failures', 0)} |"
         )
@@ -226,16 +322,18 @@ def format_rag_quality_markdown(rag_quality: dict) -> str:
         if rows:
             lines.append("<details>\n<summary>Per-query breakdown</summary>\n")
             lines.append(
-                "| query_id | faithfulness | answer_rel | ctx_prec | ctx_recall | rouge_l | ans_sim |"
+                "| query_id | faithfulness | answer_rel | ctx_prec | ctx_recall | "
+                "correctness | citation | rouge_l | ans_sim |"
             )
             lines.append(
-                "|----------|--------------|-----------|----------|------------|---------|---------|"
+                "|----------|--------------|-----------|----------|------------|-------------|----------|---------|---------|"
             )
             for row in rows:
                 lines.append(
                     f"| {row.get('query_id', '')} | {_fmt(row.get('faithfulness'))} | "
                     f"{_fmt(row.get('answer_relevance'))} | {_fmt(row.get('context_precision'))} | "
-                    f"{_fmt(row.get('context_recall'))} | {_fmt(row.get('rouge_l_f1'))} | "
+                    f"{_fmt(row.get('context_recall'))} | {_fmt(row.get('correctness'))} | "
+                    f"{_fmt(row.get('citation_quality'))} | {_fmt(row.get('rouge_l_f1'))} | "
                     f"{_fmt(row.get('answer_similarity'))} |"
                 )
             lines.append("</details>\n")

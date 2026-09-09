@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useIntl } from "react-intl";
-import { Button, Checkbox, Collapse, List, Space, Spin, Tag, Tooltip, Typography } from "antd";
+import { Button, Checkbox, Collapse, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { DeleteOutlined, NodeIndexOutlined } from "@ant-design/icons";
 import { getEntity, type EntityItem, type EntityRelation } from "../../api/client";
 
@@ -62,64 +62,66 @@ export default function EntityRow({
   };
 
   return (
-    <List.Item
-      actions={[
-        <Tooltip key="del" title={deleteTooltip}>
-          <Button
-            type="text"
-            danger
-            icon={<DeleteOutlined />}
-            aria-label={deleteTooltip}
-            onClick={() => onDelete(entity.name)}
-          />
-        </Tooltip>,
-      ]}
+    <div
+      role="listitem"
+      className="entity-list-item"
+      style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0" }}
     >
-      <List.Item.Meta
-        avatar={<Checkbox checked={isSelected} onChange={onToggleSelect} />}
-        title={
-          <Space size={4}>
-            <Text strong>{entity.name}</Text>
-            {entity.description && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                — {entity.description}
-              </Text>
-            )}
-            <Tag color="default">x{entity.mention_count}</Tag>
-          </Space>
-        }
-        description={
-          <Collapse
-            ghost
-            size="small"
-            onChange={(keys) => {
-              if (keys.length > 0) void loadRelations();
-            }}
-            items={[
-              {
-                key: "rel",
-                label: (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <NodeIndexOutlined /> {showRelationsLabel}
-                  </Text>
-                ),
-                children: loadingRel ? (
-                  <Spin size="small" />
-                ) : relations && relations.length > 0 ? (
-                  <Space wrap>
-                    {relations.map((r) => (
-                      <RelationBadge key={`${r.other_id}-${r.predicate}`} rel={r} />
-                    ))}
-                  </Space>
-                ) : (
-                  <Text type="secondary">{noRelationsLabel}</Text>
-                ),
-              },
-            ]}
-          />
-        }
+      <Checkbox
+        checked={isSelected}
+        onChange={onToggleSelect}
+        aria-label={`Select ${entity.name}`}
+        style={{ marginTop: 4 }}
       />
-    </List.Item>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Space size={4} wrap>
+          <Text strong>{entity.name}</Text>
+          {entity.description && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              — {entity.description}
+            </Text>
+          )}
+          <Tag color="default">x{entity.mention_count}</Tag>
+        </Space>
+        <Collapse
+          ghost
+          size="small"
+          onChange={(keys) => {
+            if (keys.length > 0) void loadRelations();
+          }}
+          items={[
+            {
+              key: "rel",
+              label: (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  <NodeIndexOutlined /> {showRelationsLabel}
+                </Text>
+              ),
+              children: loadingRel ? (
+                <Spin size="small" />
+              ) : relations && relations.length > 0 ? (
+                <Space wrap>
+                  {relations.map((r) => (
+                    <RelationBadge key={`${r.other_id}-${r.predicate}`} rel={r} />
+                  ))}
+                </Space>
+              ) : (
+                <Text type="secondary">{noRelationsLabel}</Text>
+              ),
+            },
+          ]}
+        />
+      </div>
+      <Tooltip title={deleteTooltip}>
+        <Button
+          type="text"
+          danger
+          icon={<DeleteOutlined />}
+          aria-label={deleteTooltip}
+          onClick={() => onDelete(entity.name)}
+        />
+      </Tooltip>
+    </div>
   );
 }
 

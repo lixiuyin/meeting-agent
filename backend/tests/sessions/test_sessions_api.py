@@ -1,5 +1,7 @@
 """Tests for sessions API endpoints"""
 
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -73,8 +75,207 @@ class TestSessionsCRUD:
             session_ids = [s["id"] for s in data["sessions"]]
             assert sid not in session_ids
 
+    @pytest.mark.asyncio
+    async def test_delete_session_can_retract_derived_memories(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            sid = db.create_session(conn, user_id="default", title="Derived memory")
+            db.set_memory(
+                conn,
+                user_id="default",
+                key="project.alpha.owner",
+                value="Alice",
+                source="auto_extracted",
+            )
+            conn.execute(
+                "UPDATE user_memories SET session_id=? WHERE user_id='default' AND key=?",
+                (sid, "project.alpha.owner"),
+            )
+
+        async with client as c:
+            response = await c.delete(
+                f"/api/v1/sessions/{sid}?retract_derived_memories=true",
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        with db.get_connection() as conn:
+            memory = db.get_memory_full(conn, user_id="default", key="project.alpha.owner")
+            versions = db.list_memory_versions(conn, user_id="default", key="project.alpha.owner")
+        assert memory is not None
+        assert memory["assertion_status"] == "retracted"
+        assert memory["vector_state"] == "inactive"
+        assert [row["assertion_status"] for row in versions] == ["retracted", "confirmed"]
+
+    @pytest.mark.asyncio
+    async def test_delete_session_cancels_active_fact_extraction(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+        from src.services.jobs import enqueue_durable_job
+
+        with get_write_connection() as conn:
+            sid = db.create_session(conn, user_id="default", title="Session to Delete")
+
+        await enqueue_durable_job(
+            kind="fact_extraction",
+            dedupe_key=f"session:{sid}:turn-1",
+            payload={"session_id": sid, "user_id": "default"},
+        )
+
+        async with client as c:
+            response = await c.delete(f"/api/v1/sessions/{sid}", headers=auth_headers)
+
+        assert response.status_code == 200
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT status FROM durable_jobs WHERE dedupe_key=?",
+                (f"session:{sid}:turn-1",),
+            ).fetchone()
+        assert row["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_sessions_reports_missing(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            first = db.create_session(conn, user_id="default", title="Batch delete one")
+            second = db.create_session(conn, user_id="default", title="Batch delete two")
+
+        async with client as c:
+            response = await c.post(
+                "/api/v1/sessions/batch-delete",
+                headers=auth_headers,
+                json={"session_ids": [first, second, "missing-session"]},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"deleted": 2, "missing": ["missing-session"]}
+        with db.get_connection() as conn:
+            assert db.get_session(conn, first) is None
+            assert db.get_session(conn, second) is None
+
 
 class TestSessionMessages:
+    @pytest.mark.asyncio
+    async def test_edit_branch_copies_only_history_before_target(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            source = db.create_session(
+                conn,
+                user_id="default",
+                title="Original",
+                config_json=(
+                    '{"schema_version":1,"retrieval_profile":"balanced",'
+                    '"continuation_mode":"saved_snapshot"}'
+                ),
+            )
+            db.add_turn(
+                conn,
+                session_id=source,
+                human_content="first question",
+                ai_content="first answer",
+            )
+            target, _ = db.add_turn(
+                conn,
+                session_id=source,
+                human_content="message to edit",
+                ai_content="answer to replace",
+            )
+
+        async with client as c:
+            response = await c.post(
+                f"/api/v1/sessions/{source}/branches",
+                headers=auth_headers,
+                json={"from_message_id": target, "reason": "edit"},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        branch = payload["session"]
+        assert branch["id"] != source
+        assert branch["parent_session_id"] == source
+        assert branch["branched_from_message_id"] == target
+        assert branch["branch_reason"] == "edit"
+        assert payload["total"] == 2
+        assert payload["next_before_id"] is None
+        assert [item["content"] for item in payload["messages"]] == [
+            "first question",
+            "first answer",
+        ]
+        with db.get_connection() as conn:
+            branched = db.get_session(conn, branch["id"], user_id="default")
+            assert json.loads(branched["config_json"])["continuation_mode"] == "latest"
+            assert [item["content"] for item in db.get_messages(conn, source)] == [
+                "first question",
+                "first answer",
+                "message to edit",
+                "answer to replace",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_branch_rejects_an_agent_message_boundary(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            source = db.create_session(conn, user_id="default")
+            _, agent_id = db.add_turn(
+                conn,
+                session_id=source,
+                human_content="question",
+                ai_content="answer",
+            )
+        async with client as c:
+            response = await c.post(
+                f"/api/v1/sessions/{source}/branches",
+                headers=auth_headers,
+                json={"from_message_id": agent_id, "reason": "edit"},
+            )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_messages_support_reverse_cursor_pagination(self, client, auth_headers):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            sid = db.create_session(conn, user_id="default")
+            for index in range(5):
+                db.add_message(
+                    conn,
+                    session_id=sid,
+                    role="human" if index % 2 == 0 else "ai",
+                    content=f"message-{index}",
+                )
+
+        async with client as c:
+            recent = await c.get(
+                f"/api/v1/sessions/{sid}/messages?limit=2",
+                headers=auth_headers,
+            )
+            assert recent.status_code == 200
+            recent_data = recent.json()
+            older = await c.get(
+                f"/api/v1/sessions/{sid}/messages?limit=2&before_id="
+                f"{recent_data['next_before_id']}",
+                headers=auth_headers,
+            )
+
+        assert [item["content"] for item in recent_data["messages"]] == [
+            "message-3",
+            "message-4",
+        ]
+        assert [item["content"] for item in older.json()["messages"]] == [
+            "message-1",
+            "message-2",
+        ]
+        assert older.json()["next_before_id"] is not None
+
     @pytest.mark.asyncio
     async def test_get_session_messages_not_found(self, client, auth_headers):
         """GET /sessions/{id}/messages returns 404 for unknown session."""
@@ -112,6 +313,65 @@ class TestSessionMessages:
         assert len(data["messages"]) == 2
         assert data["messages"][0]["role"] == "human"
         assert data["messages"][1]["role"] == "ai"
+
+    @pytest.mark.asyncio
+    async def test_session_detail_restores_versioned_retrieval_config(self, client, auth_headers):
+        import json
+
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        config = {
+            "schema_version": 1,
+            "meeting_ids": [12],
+            "file_ids": [34],
+            "retrieval_profile": "thorough",
+            "memory_mode": "focused",
+        }
+        with get_write_connection() as conn:
+            sid = db.create_session(conn, user_id="default", config_json=json.dumps(config))
+            task_state = {
+                "schema_version": 1,
+                "objective": "List every open action item",
+                "intent": "exhaustive",
+                "meeting_ids": [12],
+            }
+            conn.execute(
+                "UPDATE chat_sessions SET task_state_json=? WHERE id=?",
+                (json.dumps(task_state), sid),
+            )
+
+        async with client as c:
+            response = await c.get(f"/api/v1/sessions/{sid}/messages", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["task_state"] == task_state
+        assert response.json()["session_config"] == config
+
+    @pytest.mark.asyncio
+    async def test_completed_latest_run_hides_older_interrupted_recovery(
+        self, client, auth_headers
+    ):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+
+        with get_write_connection() as conn:
+            sid = db.create_session(conn, user_id="default")
+            for run_id, status, created in (
+                ("old-interrupted", "interrupted", "2026-01-01 00:00:00"),
+                ("new-completed", "completed", "2026-01-02 00:00:00"),
+            ):
+                conn.execute(
+                    "INSERT INTO chat_runs(id,user_id,request_hash,question,session_id,status,"
+                    "owner,lease_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (run_id, "default", run_id, "q", sid, status, "owner", created, created),
+                )
+
+        async with client as c:
+            response = await c.get(f"/api/v1/sessions/{sid}/messages", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["pending_run"] is None
 
 
 class TestSessionSummarize:

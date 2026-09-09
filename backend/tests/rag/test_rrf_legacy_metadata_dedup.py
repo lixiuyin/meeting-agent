@@ -68,10 +68,14 @@ class TestRRFLegacyMetadataDedup:
         assert key  # still produces a stable key
         assert "BM25 index may be stale" not in caplog.text
 
-    def test_real_chunk_with_missing_chunk_id_still_warns(self, caplog):
+    def test_real_chunk_with_missing_chunk_id_still_warns(self, caplog, monkeypatch):
         """Preserve diagnostic value: a doc that has chunk-level metadata but
         is missing ``chunk_id`` is genuinely abnormal and should still warn.
         """
+        # Other tests may legitimately exercise the process-wide warn-once
+        # path first. Reset that state here so this test remains independent
+        # of collection order while still asserting the production behavior.
+        monkeypatch.setattr("src.services.rag._rrf._missing_chunk_warning_emitted", False)
         doc = {
             "content": "real chunk content",
             "metadata": {"meeting_id": 1, "chunk_index": 5, "page_number": 3},

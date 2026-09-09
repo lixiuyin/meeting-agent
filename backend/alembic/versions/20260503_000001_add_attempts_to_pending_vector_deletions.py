@@ -23,25 +23,20 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    cols = bind.execute(
-        sa.text("PRAGMA table_info(pending_vector_deletions)")
-    ).fetchall()
+    cols = bind.execute(sa.text("PRAGMA table_info(pending_vector_deletions)")).fetchall()
     col_names = [row[1] for row in cols]
     if "attempts" in col_names:
         return  # idempotent
     op.execute(
         sa.text(
-            "ALTER TABLE pending_vector_deletions "
-            "ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE pending_vector_deletions ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
         )
     )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    cols = bind.execute(
-        sa.text("PRAGMA table_info(pending_vector_deletions)")
-    ).fetchall()
+    cols = bind.execute(sa.text("PRAGMA table_info(pending_vector_deletions)")).fetchall()
     col_names = [row[1] for row in cols]
     if "attempts" not in col_names:
         return
@@ -54,21 +49,29 @@ def downgrade() -> None:
         sa.text(
             "CREATE TABLE pending_vector_deletions_new ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "meeting_id INTEGER NOT NULL, "
-            "file_id INTEGER, "
-            "chunk_id TEXT NOT NULL, "
+            "collection TEXT NOT NULL, "
+            "embedding_id TEXT NOT NULL, "
             "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
             ")"
         )
     )
     op.execute(
         sa.text(
-            "INSERT INTO pending_vector_deletions_new (id, meeting_id, file_id, chunk_id, created_at) "
-            "SELECT id, meeting_id, file_id, chunk_id, created_at "
+            "INSERT INTO pending_vector_deletions_new "
+            "(id, collection, embedding_id, created_at) "
+            "SELECT id, collection, embedding_id, created_at "
             "FROM pending_vector_deletions"
         )
     )
     op.execute(sa.text("DROP TABLE pending_vector_deletions"))
-    op.execute(sa.text("ALTER TABLE pending_vector_deletions_new RENAME TO pending_vector_deletions"))
+    op.execute(
+        sa.text("ALTER TABLE pending_vector_deletions_new RENAME TO pending_vector_deletions")
+    )
+    op.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS idx_pending_vec_collection "
+            "ON pending_vector_deletions(collection)"
+        )
+    )
 
     op.execute(sa.text("PRAGMA foreign_keys=ON"))

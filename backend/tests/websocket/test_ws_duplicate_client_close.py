@@ -65,3 +65,15 @@ class TestWsDuplicateClientClose:
         assert ws1.accepted is True
         assert ws2.accepted is True
         assert ws1.closed is False
+
+    @pytest.mark.asyncio
+    async def test_stale_disconnect_does_not_remove_replacement(self):
+        manager = WebSocketManager()
+        old_ws = FakeWebSocket()
+        new_ws = FakeWebSocket()
+
+        await manager.connect(old_ws, "client-1", "user-1")
+        await manager.connect(new_ws, "client-1", "user-1")
+        manager.disconnect("client-1", user_id="user-1", websocket=old_ws)
+
+        assert manager._connections[("user-1", "client-1")] is new_ws

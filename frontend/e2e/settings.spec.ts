@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { installSettingsApiMock } from "./fixtures/mock-api";
 
 test.describe("Settings CRUD", () => {
   test.beforeEach(async ({ page }) => {
+    await installSettingsApiMock(page);
     await page.goto("/settings");
     // Wait for settings to load (spinner disappears, Save button visible)
     await expect(page.getByRole("button", { name: /save/i })).toBeVisible({
@@ -12,8 +14,11 @@ test.describe("Settings CRUD", () => {
   });
 
   test("should display settings page", async ({ page }) => {
-    // Page header should be visible
-    await expect(page.getByText("Settings")).toBeVisible();
+    await expect(page.getByRole("tab", { name: /settings/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByText("In-Memory Only")).toBeVisible();
 
     // Tab navigation should be present
     await expect(page.getByText("AI Models")).toBeVisible();
@@ -29,12 +34,12 @@ test.describe("Settings CRUD", () => {
     await expect(page.getByText("Language Model")).toBeVisible();
 
     // Form fields should be populated with values from the API
-    const providerSelect = page.locator(".ant-select-selector").first();
+    const providerSelect = page.getByRole("combobox", { name: /provider/i }).first();
     await expect(providerSelect).toBeVisible();
 
     // Model input should be visible
-    const modelInput = page.getByPlaceholder(/model/i);
-    await expect(modelInput).first().toBeVisible();
+    const modelInput = page.getByRole("textbox", { name: /model/i }).first();
+    await expect(modelInput).toBeVisible();
 
     // Temperature field should have numeric value
     const temperatureLabel = page.getByText("Temperature");
@@ -43,12 +48,14 @@ test.describe("Settings CRUD", () => {
 
   test("should show LLM configuration fields", async ({ page }) => {
     await expect(page.getByText("Language Model")).toBeVisible();
-    await expect(page.getByText("Provider")).toBeVisible();
-    await expect(page.getByText("Model")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: /provider/i }).first()).toBeVisible();
+    await expect(page.getByRole("textbox", { name: /model/i }).first()).toBeVisible();
   });
 
   test("should navigate to RAG tab and show fields", async ({ page }) => {
     await page.getByText("RAG & Retrieval").click();
+    await expect(page.getByText("RAG operating modes")).toBeVisible();
+    await page.getByRole("button", { name: /advanced rag configuration/i }).click();
     await expect(page.getByText("Retrieval-Augmented Generation")).toBeVisible();
     await expect(page.getByText("Chunk Size")).toBeVisible();
     await expect(page.getByText("Chunk Overlap")).toBeVisible();
@@ -57,6 +64,8 @@ test.describe("Settings CRUD", () => {
 
   test("should navigate to Memory tab and show fields", async ({ page }) => {
     await page.getByText("Memory & Context").click();
+    await expect(page.getByText("Memory operating modes")).toBeVisible();
+    await page.getByRole("button", { name: /advanced memory configuration/i }).click();
     await expect(page.getByText("Core Memory Settings")).toBeVisible();
     await expect(page.getByText("Max Facts Per Turn")).toBeVisible();
   });
@@ -95,7 +104,7 @@ test.describe("Settings CRUD", () => {
       .filter({ hasText: /max.?tokens/i })
       .locator(".ant-input-number-input");
 
-    if (await maxTokensInputs.count() > 0) {
+    if ((await maxTokensInputs.count()) > 0) {
       await maxTokensInputs.first().click();
       await maxTokensInputs.first().fill("");
       await maxTokensInputs.first().fill("9999");
@@ -116,7 +125,7 @@ test.describe("Settings CRUD", () => {
       .filter({ hasText: /max.?tokens/i })
       .locator(".ant-input-number-input");
 
-    if (await maxTokensInputs.count() > 0) {
+    if ((await maxTokensInputs.count()) > 0) {
       await maxTokensInputs.first().click();
       await maxTokensInputs.first().fill("");
       await maxTokensInputs.first().fill("9999");
@@ -138,9 +147,21 @@ test.describe("Settings CRUD", () => {
 
   test("should navigate to System tab", async ({ page }) => {
     await page.getByText("System").click();
-    // System tab shows retention or server info sections
-    await expect(
-      page.getByText(/retention|server info|readonly/i),
-    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("Data Retention Policies")).toBeVisible();
+    await expect(page.getByText("Server Information")).toBeVisible();
   });
+});
+
+test("system panel reports a failed background rebuild", async ({ page }) => {
+  await installSettingsApiMock(page);
+  await page.route("**/api/v1/settings/rebuild-status", (route) =>
+    route.fulfill({
+      json: { active: false, result: "failed" },
+    }),
+  );
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: /^setting System$/i }).click();
+  await expect(
+    page.getByText("Vector rebuild failed. Inspect server logs before retrying."),
+  ).toBeVisible();
 });

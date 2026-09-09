@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 # Set up test environment
 os.environ["API_KEY"] = "test-key"
@@ -28,10 +29,11 @@ from src.api.routers.settings._get import (  # noqa: E402
 )
 from src.api.routers.settings._update import (  # noqa: E402
     _is_masked_value,
-    _rebuild_required,
     _update_settings_in_memory,
+    _validated_settings_candidate,
 )
 from src.core.config import settings  # noqa: E402
+from src.core.settings_policy import classify_settings_changes  # noqa: E402
 
 
 class TestMaskSecret:
@@ -102,6 +104,8 @@ class TestGetCurrentSettings:
         assert response.memory is not None
         assert response.search is not None
         assert response.upload is not None
+        assert "EMBEDDING_DIMENSION" in response.activation_policy.reindex_required
+        assert "HOST" in response.activation_policy.restart_required
 
 
 class TestUpdateSettingsInMemory:
@@ -161,6 +165,32 @@ class TestUpdateSettingsInMemory:
         assert settings.LLM_MODEL == "new-model"
         assert orig_chunk_size == settings.CHUNK_SIZE  # RAG settings untouched
 
+    def test_staged_updates_are_not_visible_until_atomic_publish(self):
+        previous = settings.copy_live()
+        original_model = settings.LLM_MODEL
+        candidate = settings.copy_live()
+        try:
+            with settings.stage_updates(candidate):
+                settings.LLM_MODEL = "candidate-model"
+                assert candidate.LLM_MODEL == "candidate-model"
+                assert original_model == settings.LLM_MODEL
+            settings.replace_live(candidate)
+            assert settings.LLM_MODEL == "candidate-model"
+        finally:
+            settings.replace_live(previous)
+
+    def test_candidate_runs_full_settings_validation(self):
+        from pydantic import ValidationError
+
+        from src.models.schemas import ASRSettings, SettingsUpdateRequest
+
+        request = SettingsUpdateRequest.model_construct(
+            asr=ASRSettings.model_construct(provider="definitely-not-supported")
+        )
+
+        with pytest.raises(ValidationError):
+            _validated_settings_candidate(request)
+
 
 class TestEmbeddingRebuildGuard:
     def test_requires_rebuild_when_embedding_dimension_changes(self):
@@ -179,8 +209,9 @@ class TestEmbeddingRebuildGuard:
                 dimension=changed_dimension,
             )
         )
-        needs_rebuild, _ = _rebuild_required(req)
-        assert needs_rebuild is True
+        candidate = _validated_settings_candidate(req)
+        changes = classify_settings_changes(settings, candidate)
+        assert "EMBEDDING_DIMENSION" in changes["reindex_required"]
 
     def test_no_rebuild_when_embedding_unchanged(self):
         from src.models.schemas import EmbeddingSettings, SettingsUpdateRequest
@@ -194,8 +225,9 @@ class TestEmbeddingRebuildGuard:
                 dimension=settings.EMBEDDING_DIMENSION,
             )
         )
-        needs_rebuild, _ = _rebuild_required(req)
-        assert needs_rebuild is False
+        candidate = _validated_settings_candidate(req)
+        changes = classify_settings_changes(settings, candidate)
+        assert changes["reindex_required"] == []
 
     def test_retriever_provider_rejects_legacy_raganything(self):
         from src.models.schemas import RAGSettings
@@ -240,3 +272,20 @@ class TestSettingsAPIIntegration:
         assert "/settings" in routes  # GET /settings
         assert any("bindings" in r for r in routes)
         assert any("rebuild-vectors" in r for r in routes)
+
+    @pytest.mark.asyncio
+    async def test_reindex_change_returns_machine_readable_policy_error(self):
+        from src.main import app
+
+        current = _get_current_settings().embedding.model_dump()
+        current["dimension"] = current["dimension"] + 1
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.put(
+                "/api/v1/settings",
+                json={"embedding": current},
+            )
+
+        assert response.status_code == 409
+        payload = response.json()
+        assert payload["code"] == "SETTINGS_REINDEX_REQUIRED"
+        assert "EMBEDDING_DIMENSION" in payload["details"]["reindex_required"]

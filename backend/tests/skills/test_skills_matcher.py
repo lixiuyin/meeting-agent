@@ -250,3 +250,93 @@ async def test_embed_query_timeout_logs_warning(monkeypatch, caplog):
     assert any("semantic embed timed out" in r.message for r in caplog.records), (
         f"Expected embed timeout warning, got: {[r.message for r in caplog.records]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_cold_skill_corpus_is_embedded_in_one_batch():
+    """Cold matching uses two provider calls: one query and one skill batch."""
+
+    class _CountingEmbeddings:
+        def __init__(self):
+            self.query_calls = 0
+            self.document_calls: list[list[str]] = []
+
+        @staticmethod
+        def _vector(_text: str) -> list[float]:
+            return [1.0, 0.0, 0.0]
+
+        def embed_query(self, text: str):
+            self.query_calls += 1
+            return self._vector(text)
+
+        def embed_documents(self, texts: list[str]):
+            self.document_calls.append(list(texts))
+            return [self._vector(text) for text in texts]
+
+    skills = [
+        SkillSummary(
+            name=f"skill_{index}",
+            display_name=f"Skill {index}",
+            description=f"description {index}",
+            intent_matching=IntentMatchingConfig(
+                method="hybrid",
+                threshold=0.4,
+                keywords={
+                    "required": [f"trigger {index}"],
+                    "weight": 0.5,
+                    "semantic_weight": 0.5,
+                },
+                examples=[f"example {index}"],
+            ),
+        )
+        for index in range(6)
+    ]
+    service = IntentMatchingService()
+    embeddings = _CountingEmbeddings()
+    service.semantic_matcher._embeddings = embeddings
+
+    result = await service.match("unrelated question", skills, use_llm=False)
+
+    assert result is not None
+    assert embeddings.query_calls == 1
+    assert len(embeddings.document_calls) == 1
+    assert len(embeddings.document_calls[0]) == 12
+    assert set(service.semantic_matcher._cache) == {skill.name for skill in skills}
+
+
+@pytest.mark.asyncio
+async def test_batched_skill_embeddings_preserve_per_skill_vector_boundaries():
+    class _DeterministicEmbeddings:
+        @staticmethod
+        def _vector(text: str) -> list[float]:
+            return [float(len(text)), float(sum(text.encode("utf-8")) % 101), 1.0]
+
+        def embed_query(self, text: str):
+            return self._vector(text)
+
+        def embed_documents(self, texts: list[str]):
+            return [self._vector(text) for text in texts]
+
+    skills = [
+        SkillSummary(
+            name=f"skill_{index}",
+            display_name=f"Skill {index}",
+            description=f"description {index}",
+            intent_matching=IntentMatchingConfig(
+                method="semantic",
+                threshold=0.0,
+                examples=[f"first example {index}", f"second example {index}"],
+            ),
+        )
+        for index in range(3)
+    ]
+    service = IntentMatchingService()
+    embeddings = _DeterministicEmbeddings()
+    service.semantic_matcher._embeddings = embeddings
+
+    service.semantic_matcher.precompute_skills_embeddings(skills)
+
+    for skill in skills:
+        expected_texts = [*skill.intent_matching.examples, skill.description]
+        expected = np.array([embeddings._vector(text) for text in expected_texts])
+        np.testing.assert_array_equal(service.semantic_matcher._cache[skill.name], expected)

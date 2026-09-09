@@ -2,7 +2,69 @@
 
 import asyncio
 
+from src.core.exceptions import LLMEmptyResponseError
+from src.services.chain._api_stream import (
+    _normalise_stream_content,
+    _should_skip_stream_rerank,
+    _stream_user_error_message,
+)
+from src.services.chain._context import PipelineContext
 from src.services.stream_bus import StreamBus
+
+
+def test_stream_content_normalization_omits_reasoning_blocks():
+    event = type(
+        "Chunk",
+        (),
+        {
+            "content": [
+                {"type": "reasoning", "text": "private reasoning"},
+                {"type": "text", "text": "Visible answer"},
+            ]
+        },
+    )()
+
+    assert _normalise_stream_content(event) == "Visible answer"
+
+
+def test_empty_provider_response_has_explicit_terminal_error():
+    error = _stream_user_error_message(LLMEmptyResponseError("empty"))
+
+    assert error["code"] == "EMPTY_LLM_RESPONSE"
+    assert "no usable answer" in error["message"]
+
+
+def test_latency_guard_applies_to_simple_facts_across_profiles(monkeypatch):
+    monkeypatch.setattr(
+        "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", True
+    )
+    assert _should_skip_stream_rerank(PipelineContext(question="Who owns Atlas?"))
+    assert _should_skip_stream_rerank(
+        PipelineContext(question="Who owns Atlas?", retrieval_profile="fast")
+    )
+    for question in (
+        "AI会取代全部工作吗?",
+        "比较所有会议并解释它们的因果关系",
+        "这些会议主要讲了什么内容?",
+    ):
+        assert not _should_skip_stream_rerank(
+            PipelineContext(question=question, retrieval_profile="fast")
+        )
+
+
+def test_latency_guard_respects_operator_and_query_boundaries(monkeypatch):
+    ctx = PipelineContext(question="Who owns Atlas?")
+    monkeypatch.setattr(
+        "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", False
+    )
+    assert not _should_skip_stream_rerank(ctx)
+
+    monkeypatch.setattr(
+        "src.services.chain._api_stream.settings.CHAT_STREAM_LATENCY_GUARD_ENABLED", True
+    )
+    assert not _should_skip_stream_rerank(
+        PipelineContext(question="Who owns Atlas?", use_web_search=True, web_search_mode="always")
+    )
 
 
 class TestStreamBus:
@@ -129,8 +191,8 @@ class TestStreamBus:
         assert closed is True
         assert events[-1]["type"] == "done"
 
-    def test_structural_events_yielded_before_queue(self):
-        """Sources and trace events are yielded before queued tokens."""
+    def test_structural_events_preserve_emission_order(self):
+        """Tokens and structural events keep their original emission order."""
         bus = StreamBus()
 
         async def _run():
@@ -144,11 +206,29 @@ class TestStreamBus:
             return events
 
         events = asyncio.run(_run())
-        types_in_order = [e["type"] for e in events if e["type"] in ("sources", "trace", "token")]
-        # Sources and trace should appear early despite being emitted after token "a"
-        assert types_in_order[0] in ("sources", "trace")
-        assert types_in_order[1] in ("sources", "trace")
-        assert types_in_order[0] != types_in_order[1]
+        assert [(event["type"], event.get("content")) for event in events] == [
+            ("token", "a"),
+            ("sources", None),
+            ("trace", None),
+            ("token", "b"),
+            ("done", None),
+        ]
+
+    def test_degraded_status_is_a_separate_structural_event(self):
+        """Degradation metadata must not be mixed into the answer token text."""
+        bus = StreamBus()
+
+        async def _run():
+            bus.emit_status("degraded", reason="fast_path_timeout")
+            bus.emit_token("Relevant source excerpts (partial result):")
+            bus.emit_done(session_id="s")
+            return [event async for event in bus]
+
+        events = asyncio.run(_run())
+        assert events[0]["type"] == "status"
+        assert events[0]["status"] == "degraded"
+        assert events[0]["reason"] == "fast_path_timeout"
+        assert events[1]["type"] == "token"
 
     def test_error_terminal_event_yields(self):
         """When only emit_error is called (no done), the error is yielded."""
@@ -167,8 +247,8 @@ class TestStreamBus:
         assert types[0] == "sources"
         assert types[1] == "error"
 
-    def test_done_overrides_error_as_terminal(self):
-        """When both error and done are emitted, done (the last terminal) wins."""
+    def test_first_terminal_error_cannot_be_overridden_by_done(self):
+        """A later done must never disguise an already-reported failure."""
         bus = StreamBus()
 
         async def _run():
@@ -180,5 +260,5 @@ class TestStreamBus:
 
         events = asyncio.run(_run())
         assert len(events) == 1
-        assert events[0]["type"] == "done"
-        assert events[0].get("error") is True
+        assert events[0]["type"] == "error"
+        assert events[0]["code"] == "TRANSIENT"

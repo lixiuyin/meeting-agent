@@ -1,5 +1,7 @@
 """Integration tests for skill-aware chain pipeline."""
 
+import asyncio
+
 import pytest
 
 from src.services.chain._api import ask
@@ -120,6 +122,35 @@ class TestChainSkillIntegration:
         assert result.skill_confidence is None
         assert len(pipeline_calls) == 1
         assert pipeline_calls[0] is None
+
+    @pytest.mark.asyncio
+    async def test_ask_trace_exposes_skill_timeout_fallback(self, monkeypatch):
+        async def _mock_run_pipeline(ctx, skill_definition=None, *, skill_task=None):
+            assert skill_definition is None
+            if skill_task is not None:
+                assert await skill_task is None
+            ctx.session_id = "test-session-timeout"
+            ctx.answer = "Fallback answer."
+            ctx.docs = []
+
+        class _SlowMatcher:
+            async def match(self, query, skills):
+                await asyncio.sleep(0.05)
+                return None
+
+        monkeypatch.setattr("src.services.chain._api._run_pipeline", _mock_run_pipeline)
+        monkeypatch.setattr("src.services.chain._api._get_skill_matcher", lambda: _SlowMatcher())
+        monkeypatch.setattr(
+            "src.services.chain._api._get_skill_loader", lambda: _make_mock_loader()
+        )
+        monkeypatch.setattr("src.services.chain._api.settings.SKILL_MATCH_TIMEOUT_S", 0.001)
+
+        result = await ask("Explain the meeting blockers in detail")
+
+        skill_span = next(span for span in result.trace["spans"] if span["label"] == "skill_match")
+        assert skill_span["status"] == "timeout"
+        assert skill_span["metadata"]["outcome"] == "timeout_fallback"
+        assert result.answer == "Fallback answer."
 
     @pytest.mark.asyncio
     async def test_casual_intent_bypasses_skill_matching(self, monkeypatch):

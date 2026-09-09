@@ -58,7 +58,7 @@ def parser():
 
 @pytest.fixture
 def sample_pdf(tmp_path):
-    import fitz
+    import pymupdf as fitz
 
     path = tmp_path / "test.pdf"
     doc = fitz.open()
@@ -83,6 +83,18 @@ def _binary_response(content: bytes, status: int = 200) -> MagicMock:
     resp.status_code = status
     resp.content = content
     resp.text = "<binary>"
+    return resp
+
+
+def _stream_response(content: bytes, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = {"content-length": str(len(content))}
+
+    async def chunks():
+        yield content
+
+    resp.aiter_bytes = chunks
     return resp
 
 
@@ -226,6 +238,7 @@ class TestBatchHappyPath:
         mock_settings.MINERU_MAX_WAIT_SECONDS = 5
         mock_settings.PARSER_POLL_INTERVAL_SECONDS = 0.0
         mock_settings.RAG_INDEX_IMAGE_CAPTIONS = False
+        mock_settings.MINERU_RESULT_ALLOWED_HOSTS = "upload.example,cdn.example"
 
         batch_resp = _ok(
             {
@@ -259,7 +272,7 @@ class TestBatchHappyPath:
                 },
             }
         )
-        zip_resp = _binary_response(
+        zip_resp = _stream_response(
             _zip_with_results(
                 markdown="# Title\n\nBody",
                 content_list=[
@@ -268,10 +281,12 @@ class TestBatchHappyPath:
             )
         )
 
-        mock_client = AsyncMock()
-        mock_client.post.return_value = batch_resp
-        mock_client.put.return_value = upload_resp
-        mock_client.get.side_effect = [running_resp, done_resp, zip_resp]
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=batch_resp)
+        mock_client.put = AsyncMock(return_value=upload_resp)
+        mock_client.get = AsyncMock(side_effect=[running_resp, done_resp])
+        mock_client.stream.return_value.__aenter__.return_value = zip_resp
+        mock_client.stream.return_value.__aexit__.return_value = False
         mock_client_fn.return_value = mock_client
 
         result = await parser.parse(sample_pdf, _make_scanned_profile())
@@ -281,10 +296,11 @@ class TestBatchHappyPath:
         assert result.metadata["data_id"] == "test-pdf"
         # content_list won — markdown is ignored when content_list is present
         assert "Body" in result.pages[0].text
-        # Verified order: post (batch) → put (upload) → get (poll x2 + zip)
+        # Verified order: post (batch) → put (upload) → get (poll x2) → stream zip
         assert mock_client.post.await_count == 1
         assert mock_client.put.await_count == 1
-        assert mock_client.get.await_count == 3
+        assert mock_client.get.await_count == 2
+        mock_client.stream.assert_called_once_with("GET", "https://cdn.example/result.zip")
         # PUT must suppress Content-Type per docs.
         put_kwargs = mock_client.put.await_args.kwargs
         assert put_kwargs["headers"]["Content-Type"] == ""
@@ -300,6 +316,7 @@ class TestBatchHappyPath:
         mock_settings.MINERU_MAX_WAIT_SECONDS = 5
         mock_settings.PARSER_POLL_INTERVAL_SECONDS = 0.0
         mock_settings.RAG_INDEX_IMAGE_CAPTIONS = False
+        mock_settings.MINERU_RESULT_ALLOWED_HOSTS = "upload.example"
 
         batch_resp = _ok(
             {
@@ -360,6 +377,26 @@ class TestZipUnpacking:
         markdown, content_list = parser._unpack_zip(buf.getvalue())
         assert "Just markdown" in markdown
         assert content_list == []
+
+    def test_rejects_suspicious_compression_ratio(self, parser):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("full.md", "A" * 1_000_000)
+        with pytest.raises(ValueError, match="compression ratio"):
+            parser._unpack_zip(buf.getvalue())
+
+    @patch("src.services.parser.providers.mineru_api.settings")
+    def test_rejects_non_allowlisted_signed_url(self, mock_settings, parser):
+        mock_settings.MINERU_RESULT_ALLOWED_HOSTS = "mineru.net,.mineru.net"
+        with pytest.raises(ParserProviderError, match="non-allowlisted"):
+            parser._validate_signed_url("http://127.0.0.1/private")
+
+    @patch("src.services.parser.providers.mineru_api.settings")
+    def test_accepts_official_cdn_but_rejects_lookalike(self, mock_settings, parser):
+        mock_settings.MINERU_RESULT_ALLOWED_HOSTS = "cdn-mineru.openxlab.org.cn"
+        parser._validate_signed_url("https://cdn-mineru.openxlab.org.cn/result.zip")
+        with pytest.raises(ParserProviderError, match="non-allowlisted"):
+            parser._validate_signed_url("https://cdn-mineru.openxlab.org.cn.evil.test/result.zip")
 
 
 class TestContentMapping:

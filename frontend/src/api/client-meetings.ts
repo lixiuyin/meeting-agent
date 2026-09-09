@@ -1,4 +1,5 @@
 import type { AxiosResponse } from "axios";
+import type { components } from "./generated";
 import {
   ApiError,
   api,
@@ -8,43 +9,23 @@ import {
   TIMEOUT_UPLOAD,
 } from "./client-core";
 
-export interface MeetingFileInfo {
-  id: number;
-  file_type: "video" | "audio" | "pdf" | "ppt" | "doc" | "xls" | "csv" | "txt" | "image";
-  file_name: string;
-  status: "uploading" | "processing" | "summarizing" | "ready" | "failed" | "error";
-  created_at: string;
-  transcript_preview: string | null;
-  error_message: string | null;
-  summary?: string | null;
-  summary_status?: "pending" | "generating" | "ready" | "failed" | null;
-}
+export type MeetingFileInfo = components["schemas"]["MeetingFileResponse"];
+export type MeetingInfo = components["schemas"]["MeetingResponse"];
+export type MeetingDetailInfo = components["schemas"]["MeetingDetailResponse"];
 
-export interface MeetingInfo {
-  id: number;
-  title: string;
-  description: string | null;
-  file_type: "video" | "audio" | "pdf" | "ppt" | "doc" | "xls" | "csv" | "txt" | "image" | null;
-  file_name: string | null;
-  /** Distinct file_types across all attached files. Length > 1 = mixed modality. */
-  file_types?: ("video" | "audio" | "pdf" | "ppt" | "doc" | "xls" | "csv" | "txt" | "image")[];
-  status: "uploading" | "processing" | "summarizing" | "ready" | "failed" | "error";
-  meeting_date: string | null;
-  created_at: string;
-  transcript_preview: string | null;
-  file_url: string | null;
-  error_message?: string | null;
-}
+export type EvidenceLocation = components["schemas"]["EvidenceLocationResponse"];
 
-export interface MeetingDetailInfo {
-  id: number;
-  title: string;
-  description: string | null;
-  status: "uploading" | "processing" | "summarizing" | "ready" | "failed" | "error";
-  meeting_date: string | null;
-  created_at: string;
-  updated_at: string;
-  files: MeetingFileInfo[];
+export function locateFileEvidence(
+  meetingId: number,
+  fileId: number,
+  payload: components["schemas"]["EvidenceLocationRequest"],
+  options?: { signal?: AbortSignal },
+) {
+  return api.post<EvidenceLocation>(
+    `/meetings/${meetingId}/files/${fileId}/evidence-location`,
+    payload,
+    options,
+  );
 }
 
 export interface SummaryStreamTokenEvent {
@@ -110,6 +91,12 @@ export interface UpdateSpeakersResponse {
   message: string;
 }
 
+export async function createWebSocketToken(): Promise<string> {
+  const { data } = await api.post<{ token: string }>("/ws/token");
+  if (!data.token) throw new ApiError(500, "WebSocket token response was empty");
+  return data.token;
+}
+
 export type FileTimelineResponse =
   | {
       kind: "segments";
@@ -145,8 +132,10 @@ export type FileTimelineResponse =
   | { kind: "text"; file_id: number; file_name: string; text: string; word_count: number };
 
 let _fileTokenCache: { token: string; expiresAt: number } | null = null;
-let _tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let _tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let _fileTokenGeneration = 0;
 const _signedFileUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const _signedFileUrlPromises = new Map<string, Promise<string>>();
 
 interface SignedFileUrlResponse {
   url: string;
@@ -157,16 +146,22 @@ interface SignedFileUrlResponse {
 const _fileCacheKey = (meetingId: number, fileId: number) => `${meetingId}:${fileId}`;
 
 async function _fetchSignedFileUrl(meetingId: number, fileId: number): Promise<string> {
-  const { data } = await api.post<SignedFileUrlResponse>(
-    `/meetings/${meetingId}/files/${fileId}/signed-url`,
-  );
   const cacheKey = _fileCacheKey(meetingId, fileId);
-  const absoluteUrl = new URL(data.url, window.location.origin).toString();
-  _signedFileUrlCache.set(cacheKey, {
-    url: absoluteUrl,
-    expiresAt: data.expires_at * 1000,
-  });
-  return absoluteUrl;
+  const pending = _signedFileUrlPromises.get(cacheKey);
+  if (pending) return pending;
+  const request = api
+    .post<SignedFileUrlResponse>(`/meetings/${meetingId}/files/${fileId}/signed-url`)
+    .then(({ data }) => {
+      const absoluteUrl = new URL(data.url, window.location.origin).toString();
+      _signedFileUrlCache.set(cacheKey, {
+        url: absoluteUrl,
+        expiresAt: data.expires_at * 1000,
+      });
+      return absoluteUrl;
+    })
+    .finally(() => _signedFileUrlPromises.delete(cacheKey));
+  _signedFileUrlPromises.set(cacheKey, request);
+  return request;
 }
 
 export async function prefetchMeetingFileUrl(meetingId: number, fileId: number): Promise<void> {
@@ -180,19 +175,40 @@ export async function prefetchMeetingFileUrl(meetingId: number, fileId: number):
   }
 }
 
+export async function resolveMeetingFileUrl(meetingId: number, fileId: number): Promise<string> {
+  const cacheKey = _fileCacheKey(meetingId, fileId);
+  const cached = _signedFileUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 15_000) return cached.url;
+  try {
+    return await _fetchSignedFileUrl(meetingId, fileId);
+  } catch {
+    return new URL(
+      `${getApiBaseUrl()}/meetings/${meetingId}/files/${fileId}`,
+      window.location.origin,
+    ).toString();
+  }
+}
+
 export async function prefetchMeetingFileUrls(meetingId: number, fileIds: number[]): Promise<void> {
   await Promise.all(fileIds.map((fileId) => prefetchMeetingFileUrl(meetingId, fileId)));
 }
 
-async function _refreshFileToken(): Promise<void> {
+async function _refreshFileToken(generation: number): Promise<number> {
   try {
-    const { data } = await api.post<{ token: string }>("/meetings/file-token");
+    const { data } = await api.post<{ token: string }>("/meetings/file-token", undefined, {
+      timeout: 3_000,
+    });
+    if (generation !== _fileTokenGeneration) return 240_000;
     _fileTokenCache = {
       token: data.token,
       expiresAt: Date.now() + 280_000,
     };
-  } catch {
+    return 240_000;
+  } catch (error) {
     // Non-fatal: file downloads may fail until token is obtained
+    // Respect the endpoint's one-minute rate-limit window; retry other
+    // transient failures sooner so an offline startup can recover promptly.
+    return error instanceof ApiError && error.status === 429 ? 60_000 : 10_000;
   }
 }
 
@@ -200,26 +216,34 @@ let _fileTokenPromise: Promise<void> | null = null;
 
 export async function initFileToken(): Promise<void> {
   if (_fileTokenPromise) return _fileTokenPromise;
-  _fileTokenPromise = (async () => {
+  const generation = _fileTokenGeneration;
+  const promise = (async () => {
     try {
-      await _refreshFileToken();
-      if (!_tokenRefreshTimer) {
-        _tokenRefreshTimer = setInterval(_refreshFileToken, 240_000);
+      const retryDelay = await _refreshFileToken(generation);
+      if (generation === _fileTokenGeneration && !_tokenRefreshTimer) {
+        _tokenRefreshTimer = setTimeout(() => {
+          _tokenRefreshTimer = null;
+          void initFileToken();
+        }, retryDelay);
       }
     } finally {
-      _fileTokenPromise = null;
+      if (generation === _fileTokenGeneration) _fileTokenPromise = null;
     }
   })();
-  return _fileTokenPromise;
+  _fileTokenPromise = promise;
+  return promise;
 }
 
 export function cleanupFileToken(): void {
+  _fileTokenGeneration += 1;
+  _fileTokenPromise = null;
   if (_tokenRefreshTimer) {
-    clearInterval(_tokenRefreshTimer);
+    clearTimeout(_tokenRefreshTimer);
     _tokenRefreshTimer = null;
   }
   _fileTokenCache = null;
   _signedFileUrlCache.clear();
+  _signedFileUrlPromises.clear();
 }
 
 export function getMeetingFileUrl(meetingId: number, fileId: number): string {
@@ -263,6 +287,8 @@ export async function uploadMeeting(
     title?: string;
     description?: string;
     meetingId?: number;
+    businessDomain?: "unspecified" | "meeting" | "course" | "research";
+    materialRole?: "transcript" | "minutes" | "agenda" | "decision_log" | "attachment";
     signal?: AbortSignal;
   },
 ): Promise<
@@ -278,6 +304,8 @@ export async function uploadMeeting(
   if (options.title) form.append("title", options.title);
   if (options.description) form.append("description", options.description);
   if (options.meetingId) form.append("meeting_id", options.meetingId.toString());
+  if (options.businessDomain) form.append("business_domain", options.businessDomain);
+  if (options.materialRole) form.append("material_role", options.materialRole);
   return api.post<{
     meeting_id: number;
     file_id: number | null;
@@ -290,8 +318,34 @@ export async function listMeetings(params?: {
   status?: string;
   limit?: number;
   offset?: number;
+  signal?: AbortSignal;
 }): Promise<AxiosResponse<{ total: number; meetings: MeetingInfo[] }>> {
-  return api.get<{ total: number; meetings: MeetingInfo[] }>("/meetings", { params });
+  const { signal, ...query } = params ?? {};
+  return api.get<{ total: number; meetings: MeetingInfo[] }>("/meetings", {
+    params: query,
+    signal,
+  });
+}
+
+export async function listAllMeetings(options?: {
+  status?: string;
+  signal?: AbortSignal;
+}): Promise<MeetingInfo[]> {
+  const pageSize = 100;
+  const byId = new Map<number, MeetingInfo>();
+  let offset = 0;
+  for (;;) {
+    const response = await listMeetings({
+      status: options?.status,
+      limit: pageSize,
+      offset,
+      signal: options?.signal,
+    });
+    for (const meeting of response.data.meetings) byId.set(meeting.id, meeting);
+    offset += response.data.meetings.length;
+    if (response.data.meetings.length < pageSize || offset >= response.data.total) break;
+  }
+  return Array.from(byId.values());
 }
 
 export async function getMeeting(
@@ -345,6 +399,33 @@ export async function reprocessMeetingFile(
   fileId: number,
 ): Promise<AxiosResponse> {
   return api.post(`/meetings/${meetingId}/files/${fileId}/reprocess`);
+}
+
+export type MaterialRole = "transcript" | "minutes" | "agenda" | "decision_log" | "attachment";
+export type BusinessDomain = "unspecified" | "meeting" | "course" | "research";
+export type ApprovalStatus = "unreviewed" | "draft" | "reviewed" | "approved" | "rejected";
+export type MeetingFileSemanticEvent = components["schemas"]["MeetingFileSemanticEventResponse"];
+
+export async function updateMeetingFileSemantics(
+  meetingId: number,
+  fileId: number,
+  data: {
+    material_role?: MaterialRole;
+    business_domain?: BusinessDomain;
+    approval_status?: ApprovalStatus;
+    approval_reason?: string | null;
+  },
+): Promise<AxiosResponse<MeetingFileInfo>> {
+  return api.patch<MeetingFileInfo>(`/meetings/${meetingId}/files/${fileId}/semantics`, data);
+}
+
+export async function getMeetingFileSemanticHistory(
+  meetingId: number,
+  fileId: number,
+): Promise<AxiosResponse<MeetingFileSemanticEvent[]>> {
+  return api.get<MeetingFileSemanticEvent[]>(
+    `/meetings/${meetingId}/files/${fileId}/semantics/history`,
+  );
 }
 
 export interface SummaryData {
@@ -464,8 +545,9 @@ export async function* sendMeetingSummaryStream(
 
 export async function getTranscript(
   meetingId: number,
-): Promise<AxiosResponse<{ transcript: string }>> {
-  return api.get<{ transcript: string }>(`/meetings/${meetingId}/transcript`);
+  options?: { signal?: AbortSignal },
+): Promise<AxiosResponse<{ transcript: string; files?: { file_id: number; content: string }[] }>> {
+  return api.get(`/meetings/${meetingId}/transcript`, { signal: options?.signal });
 }
 
 export async function getTimestamps(
@@ -512,10 +594,13 @@ export async function updateSpeakerNames(
   });
 }
 
-export function getSpeakerAudioUrl(meetingId: number, fileId: number, speakerCode: string): string {
+export async function getSpeakerAudioUrl(
+  meetingId: number,
+  fileId: number,
+  speakerCode: string,
+): Promise<string> {
   const url = `${getApiBaseUrl()}/meetings/${meetingId}/files/${fileId}/speakers/${encodeURIComponent(speakerCode)}/audio`;
-  if (_fileTokenCache?.token) {
-    return `${url}?token=${encodeURIComponent(_fileTokenCache.token)}`;
-  }
-  return url;
+  const signedFileUrl = new URL(await resolveMeetingFileUrl(meetingId, fileId));
+  const token = signedFileUrl.searchParams.get("token");
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }

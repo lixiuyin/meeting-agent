@@ -10,6 +10,7 @@ Usage:
 
 import math
 import struct
+import textwrap
 import wave
 from pathlib import Path
 
@@ -67,19 +68,25 @@ Next meeting: January 29, 2026
 def generate_sample_pdf() -> None:
     """Create a text-heavy 2-page PDF (marker path)."""
     path = FIXTURE_DIR / "sample.pdf"
-    c = canvas.Canvas(str(path), pagesize=letter)
+    c = canvas.Canvas(str(path), pagesize=letter, invariant=1)
     width, height = letter
     text_object = c.beginText(40, height - 40)
     text_object.setFont("Helvetica", 11)
 
-    lines = SAMPLE_TEXT.splitlines()
-    for line in lines:
-        if text_object.getY() < 60:
-            c.drawText(text_object)
-            c.showPage()
-            text_object = c.beginText(40, height - 40)
-            text_object.setFont("Helvetica", 11)
-        text_object.textLine(line)
+    for source_line in SAMPLE_TEXT.splitlines():
+        wrapped_lines = textwrap.wrap(
+            source_line,
+            width=88,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        for line in wrapped_lines:
+            if text_object.getY() < 60:
+                c.drawText(text_object)
+                c.showPage()
+                text_object = c.beginText(40, height - 40)
+                text_object.setFont("Helvetica", 11)
+            text_object.textLine(line)
 
     c.drawText(text_object)
     c.save()
@@ -97,7 +104,14 @@ def generate_scanned_pdf() -> None:
     except Exception:
         font = ImageFont.load_default()
 
-    text = "Scanned Document\n\nThis is a test page for OCR fallback benchmarking.\n"
+    text = (
+        "Scanned Document\n\n"
+        "This image-only page exercises the OCR fallback.\n"
+        "It contains enough text to satisfy the scanned-page\n"
+        "quality gate and verify that the parser returns\n"
+        "readable, complete content instead of reporting\n"
+        "a false empty success.\n"
+    )
     draw.multiline_text((50, 50), text, fill="black", font=font)
     img.save(path, "PDF", resolution=100.0)
     print(f"Generated {path} ({path.stat().st_size} bytes)")

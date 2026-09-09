@@ -7,9 +7,8 @@ import time
 from typing import Protocol, cast
 
 from ....core.config import settings as global_settings
-from ....core.database import get_write_connection
 from ....core.metrics import MEMORY_MERGE_TOTAL
-from .._common import _INITIAL_IMPORTANCE, _MAX_IMPORTANCE, _MIN_IMPORTANCE, logger
+from .._common import logger
 from .._parsers import _parse_consolidation_json, _semantic_cluster_memories, _text_cluster_memories
 from . import settings
 
@@ -26,7 +25,24 @@ class _ConsolidationHost(Protocol):
         expires_at: str | None = None,
         category: str | None = None,
         session_id: str | None = None,
+        meeting_ids: list[int] | None = None,
+        file_ids: list[int] | None = None,
+        supersedes: list[str] | None = None,
     ) -> None: ...
+
+
+def _union_cluster_scope(cluster: list[dict], field: str) -> list[int] | None:
+    """Union normalized provenance IDs across every source memory."""
+    values: set[int] = set()
+    for memory in cluster:
+        raw = memory.get(field)
+        parts = raw if isinstance(raw, (list, tuple, set)) else str(raw or "").split(",")
+        for part in parts:
+            try:
+                values.add(int(str(part).strip()))
+            except (TypeError, ValueError):
+                continue
+    return sorted(values) or None
 
 
 class _MemoryConsolidationMixin:
@@ -46,15 +62,20 @@ class _MemoryConsolidationMixin:
         try:
             import re
 
-            from ...llm import cached_retry_invoke, get_contradiction_resolution_prompt, get_llm
+            from ...llm import (
+                cached_retry_invoke,
+                escape_prompt_data,
+                get_contradiction_resolution_prompt,
+                get_llm,
+            )
 
             llm = get_llm()
             prompt_template = get_contradiction_resolution_prompt()
             prompt = prompt_template.format(
-                existing_key=existing_key,
-                existing_value=existing_value,
-                new_key=new_key,
-                new_value=new_value,
+                existing_key=escape_prompt_data(existing_key),
+                existing_value=escape_prompt_data(existing_value),
+                new_key=escape_prompt_data(new_key),
+                new_value=escape_prompt_data(new_value),
             )
             response = await asyncio.to_thread(cached_retry_invoke, llm, prompt)
             content = response.content
@@ -148,15 +169,15 @@ class _MemoryConsolidationMixin:
                     continue
 
                 consolidated_importance = min(
-                    _MAX_IMPORTANCE,
-                    max(_MIN_IMPORTANCE, int(result.get("importance", _INITIAL_IMPORTANCE + 1))),
+                    settings.MEMORY_MAX_IMPORTANCE,
+                    max(
+                        settings.MEMORY_MIN_IMPORTANCE,
+                        int(result.get("importance", settings.MEMORY_INITIAL_IMPORTANCE + 1)),
+                    ),
                 )
                 consolidated_category = result.get("category") or category
 
-                # HIGH-6: Write consolidated memory FIRST, then mark originals
-                # as superseded.  If the consolidated write fails, originals
-                # remain intact (no data loss).  Both operations run in the
-                # same write transaction for atomicity.
+                superseded_keys = [m["key"] for m in cluster if m["key"] != consolidated_key]
                 try:
                     host.set(
                         user_id,
@@ -165,6 +186,9 @@ class _MemoryConsolidationMixin:
                         source="consolidated",
                         importance=consolidated_importance,
                         category=consolidated_category,
+                        meeting_ids=_union_cluster_scope(cluster, "meeting_ids"),
+                        file_ids=_union_cluster_scope(cluster, "file_ids"),
+                        supersedes=superseded_keys,
                     )
                 except Exception:
                     logger.warning(
@@ -174,17 +198,6 @@ class _MemoryConsolidationMixin:
                         exc_info=True,
                     )
                     continue
-                with get_write_connection() as conn:
-                    for m in cluster:
-                        if m["key"] != consolidated_key:
-                            from ....core import database as db
-
-                            db.mark_memory_superseded(
-                                conn,
-                                user_id=user_id,
-                                key=m["key"],
-                                superseded_by=consolidated_key,
-                            )
                 consolidated += 1
                 MEMORY_MERGE_TOTAL.labels(status="success").inc()
 
@@ -211,14 +224,19 @@ class _MemoryConsolidationMixin:
     async def _merge_memory_cluster(self, user_id: str, cluster: list[dict], category: str) -> bool:
         """LLM-merge a single cluster of related memories into one consolidated fact."""
         try:
-            from ...llm import cached_retry_invoke, get_llm, get_memory_consolidation_prompt
+            from ...llm import (
+                cached_retry_invoke,
+                escape_prompt_data,
+                get_llm,
+                get_memory_consolidation_prompt,
+            )
 
             facts_text = "\n".join(
                 f"- key: {json.dumps(m['key'])}, value: {json.dumps(m['value'])}" for m in cluster
             )
             llm = get_llm()
             prompt_template = get_memory_consolidation_prompt()
-            prompt = prompt_template.format(facts=facts_text)
+            prompt = prompt_template.format(facts=escape_prompt_data(facts_text))
             response = await asyncio.to_thread(cached_retry_invoke, llm, prompt)
             content = response.content
             if isinstance(content, list):
@@ -234,17 +252,15 @@ class _MemoryConsolidationMixin:
                 return False
 
             consolidated_importance = min(
-                _MAX_IMPORTANCE,
+                settings.MEMORY_MAX_IMPORTANCE,
                 max(
-                    _MIN_IMPORTANCE,
-                    int(result.get("importance", _INITIAL_IMPORTANCE + 1)),
+                    settings.MEMORY_MIN_IMPORTANCE,
+                    int(result.get("importance", settings.MEMORY_INITIAL_IMPORTANCE + 1)),
                 ),
             )
             consolidated_category = result.get("category") or category
 
-            # HIGH-6: Write consolidated memory FIRST, then mark originals
-            # as superseded.  If the consolidated write fails, originals
-            # remain intact (no data loss).
+            superseded_keys = [m["key"] for m in cluster if m["key"] != consolidated_key]
             host = cast(_ConsolidationHost, self)
             try:
                 host.set(
@@ -254,6 +270,9 @@ class _MemoryConsolidationMixin:
                     source="consolidated",
                     importance=consolidated_importance,
                     category=consolidated_category,
+                    meeting_ids=_union_cluster_scope(cluster, "meeting_ids"),
+                    file_ids=_union_cluster_scope(cluster, "file_ids"),
+                    supersedes=superseded_keys,
                 )
             except Exception:
                 logger.warning(
@@ -263,18 +282,6 @@ class _MemoryConsolidationMixin:
                     exc_info=True,
                 )
                 return False
-
-            with get_write_connection() as conn:
-                for m in cluster:
-                    if m["key"] != consolidated_key:
-                        from ....core import database as db
-
-                        db.mark_memory_superseded(
-                            conn,
-                            user_id=user_id,
-                            key=m["key"],
-                            superseded_by=consolidated_key,
-                        )
 
             logger.debug(
                 "Consolidated %d memories into '%s' for user %s",
@@ -349,7 +356,7 @@ class _MemoryConsolidationMixin:
                 # MEM-8: Stable sort by key for deterministic clustering results.
                 group.sort(key=lambda m: (str(m.get("user_id") or ""), str(m.get("key") or "")))
                 if settings.MEMORY_SEMANTIC_CLUSTER_ENABLED:
-                    clusters = await _semantic_cluster_memories(group, user_id)
+                    clusters = await _semantic_cluster_memories(group)
                 else:
                     clusters = _text_cluster_memories(group)
                 for cluster in clusters:

@@ -72,6 +72,23 @@ class TestMemoryBatchImport:
             )
         assert resp.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_batch_delete_removes_existing_and_reports_missing(self, client, auth_headers):
+        async with client as c:
+            await c.post(
+                "/api/v1/memory",
+                headers=auth_headers,
+                json={"key": "batch_delete_me", "value": "value"},
+            )
+            resp = await c.post(
+                "/api/v1/memory/batch-delete",
+                headers=auth_headers,
+                json={"keys": ["batch_delete_me", "not_present"]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1, "missing": ["not_present"]}
+
 
 class TestMemoryExport:
     @pytest.mark.asyncio
@@ -103,13 +120,43 @@ class TestMemoryExport:
         assert "exp_k2" in keys
 
     @pytest.mark.asyncio
+    async def test_export_is_cursor_paginated_with_full_total(self, client, auth_headers):
+        async with client as c:
+            for key in ("page_export_1", "page_export_2"):
+                await c.post(
+                    "/api/v1/memory",
+                    headers=auth_headers,
+                    json={"key": key, "value": "value"},
+                )
+            first = await c.get("/api/v1/memory/export?limit=1", headers=auth_headers)
+            cursor = first.json()["next_cursor"]
+            second = await c.get(
+                "/api/v1/memory/export",
+                params={"limit": 1, "cursor": cursor},
+                headers=auth_headers,
+            )
+
+        assert first.status_code == 200
+        assert first.json()["total"] >= 2
+        assert cursor
+        assert second.status_code == 200
+        assert second.json()["memories"][0]["key"] != first.json()["memories"][0]["key"]
+
+    @pytest.mark.asyncio
     async def test_export_items_are_reimportable(self, client, auth_headers):
         """Exported memory items can be round-tripped through /batch."""
         async with client as c:
             await c.post(
                 "/api/v1/memory",
                 headers=auth_headers,
-                json={"key": "rt_key", "value": "rt_value", "user_id": "default"},
+                json={
+                    "key": "rt_key",
+                    "value": "rt_value",
+                    "user_id": "default",
+                    "fact_type": "decision",
+                    "assertion_status": "pending",
+                    "project_id": "roundtrip-project",
+                },
             )
             export_resp = await c.get(
                 "/api/v1/memory/export",
@@ -117,6 +164,10 @@ class TestMemoryExport:
             )
             assert export_resp.status_code == 200
             exported = export_resp.json()["memories"]
+            roundtrip_item = next(item for item in exported if item["key"] == "rt_key")
+            assert roundtrip_item["fact_type"] == "decision"
+            assert roundtrip_item["assertion_status"] == "pending"
+            assert roundtrip_item["project_id"] == "roundtrip-project"
 
             # Round-trip via batch
             import_resp = await c.post(

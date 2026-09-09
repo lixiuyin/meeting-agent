@@ -1,229 +1,231 @@
-# Meeting Agent Skill 系统说明文档
+# Meeting Agent Skill System Documentation
 
-## 概述
+## Overview
 
-Skill系统是一个基于Markdown配置的可插拔功能扩展模块，它允许Meeting Agent根据用户的意图自动触发特定的内容格式化逻辑。
+The Skill system is a pluggable function extension module based on Markdown configuration, which allows the Meeting Agent to automatically trigger specific content formatting logic based on the user's intention.
 
-**核心设计理念：**
-- **Prompt集成模式**：将Skill配置与RAG内容一起放入Prompt，由LLM直接生成结构化输出
-- **Markdown配置**：Skill定义存储在`.md`文件中，便于版本控制和人工编辑
-- **多层意图匹配**：结合关键词、语义相似度和LLM判断，精准识别用户意图
-
----
-
-## 系统架构
-
-```
-用户输入
-    ↓
-意图匹配服务 (IntentMatchingService)
-    ├── Layer 1: 关键词匹配 (KeywordMatcher) - 快速过滤
-    ├── Layer 2: 语义相似度 (SemanticMatcher) - 向量计算
-    └── Layer 3: LLM路由判断 (LLMRouter) - 复杂消歧
-    ↓
-匹配Skill?
-    ├── 是 → RAG检索 → 【Skill配置+内容】→ Prompt → LLM生成 → 返回结构化输出
-    └── 否 → 标准RAG → 返回普通回答
-```
-
-**Prompt集成模式优势**：
-1. LLM同时看到格式要求和会议内容，生成更连贯的文档
-2. LLM智能分配内容到对应章节，而非简单拼接
-3. LLM可以明确指出某章节信息在会议中未提及
-4. 单阶段生成，降低延迟
+**Core design concept:**
+- **Prompt integration mode**: Put the Skill configuration and RAG content into Prompt, and LLM directly generates structured output
+- **Markdown Configuration**: Skill definitions are stored in `.md` files for easy version control and manual editing
+- **Multi-layer intent matching**: Combining keywords, semantic similarity and LLM judgment to accurately identify user intentions
 
 ---
 
-## 目录结构
+## System architecture
 
-下文 **`skills/`** 目录均相对于 **`backend/`** 仓库根（与 `src/` 并列的 Python 包 `skills`，以及 `backend/skills/builtin/` 内置 Markdown 技能）。
+```
+user input
+    ↓
+IntentMatchingService
+    ├── Layer 1: KeywordMatcher - Quick filtering
+    ├── Layer 2: Semantic Similarity (SemanticMatcher) - Vector calculation
+    └── Layer 3: LLM routing judgment (LLMRouter) - complex disambiguation
+    ↓
+Match Skill?
+    ├── Yes → RAG search → [Skill configuration + content] → Prompt → LLM generation → Return structured output
+    └── No → Standard RAG → Return to normal answer
+```
+
+**Advantages of Prompt integration mode**:
+1. LLM sees the format requirements and meeting content at the same time, generating more coherent documents
+2. LLM intelligently distributes content to corresponding chapters instead of simply splicing it together
+3. LLM can clearly point out that a certain chapter information was not mentioned in the meeting
+4. Single-stage generation to reduce latency
+
+---
+
+## Directory structure
+
+The following **`skills/`** directories are relative to the **`backend/`** repository root (the Python package `skills` alongside `src/`, and the `backend/skills/builtin/` built-in Markdown skills).
 
 ```
 skills/
-├── __init__.py              # 包导出
-├── models.py                # 数据模型定义
-├── loader.py                # Markdown文件加载器
-├── matcher.py               # 意图匹配服务
-├── executor.py              # 执行引擎（协调层）
-├── builtin/                 # 内置Skill目录
-│   ├── action_items/
-│   │   └── skill.md
-│   ├── custom_notes/
-│   │   └── skill.md
-│   ├── meeting_minutes/
-│   │   └── skill.md
-│   ├── risk_register/
-│   │   └── skill.md
-│   ├── stakeholder_update/
-│   │   └── skill.md
-│   └── tech_proposal/
-│       └── skill.md
-└── 说明文档.md              # 本文档
+├── __init__.py # Package export
+├── models.py # Data model definition
+├── loader.py # Markdown file loader
+├── matcher.py # Intent matching service
+├── executor.py # Execution engine (coordination layer)
+├── builtin/ # Built-in Skill directory
+│ ├── action_items/
+│ │ └── skill.md
+│ ├── custom_notes/
+│ │ └── skill.md
+│ ├── meeting_minutes/
+│ │ └── skill.md
+│ ├── risk_register/
+│ │ └── skill.md
+│ ├── stakeholder_update/
+│ │ └── skill.md
+│ └── tech_proposal/
+│ └── skill.md
+└── Documentation.md # This document
 ```
 
 ---
 
-## 核心模块详解
+## Detailed explanation of core modules
 
-### 1. models.py - 数据模型层
+### 1. models.py - data model layer
 
-**作用**：定义Skill系统的所有数据结构，使用Pydantic进行验证。
+**Function**: Define all data structures of the Skill system and use Pydantic for verification.
 
-**核心类**：
+**Core Class**:
 
-| 类名 | 作用 |
-|------|------|
-| `SkillDefinition` | Skill的完整定义，包含名称、描述、匹配规则、执行配置等 |
-| `IntentMatchingConfig` | 意图匹配配置（方法、阈值、关键词、示例等） |
-| `ExecutionConfig` | 执行配置（模式、超时等） |
-| `OutputConfig` | 输出格式配置（章节、模板、后处理） |
-| `SkillMatchResult` | 意图匹配结果 |
-| `SkillExecutionResult` | Skill执行结果 |
+| Class name             | Function                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `SkillDefinition`      | Complete definition of Skill, including name, description, matching rules, execution configuration, etc. |
+| `IntentMatchingConfig` | Intent matching configuration (methods, thresholds, keywords, examples, etc.)                            |
+| `ExecutionConfig`      | Execution configuration (mode, timeout, etc.)                                                            |
+| `OutputConfig`         | Output format configuration (chapter, template, post-processing)                                         |
+| `SkillMatchResult`     | Intent match result                                                                                      |
+| `SkillExecutionResult` | Skill execution result                                                                                   |
 
-**关键设计**：
-- 所有配置均可从YAML Frontmatter反序列化
-- 支持额外字段（`extra = "allow"`），便于扩展
+**Key Design**:
+- All configurations can be deserialized from YAML Frontmatter
+- Support additional fields (`extra = "allow"`) for easy expansion
 
 ---
 
-### 2. loader.py - Skill加载器
+### 2. loader.py - Skill loader
 
-**作用**：从文件系统加载Skill定义，解析Markdown文件中的YAML Frontmatter。
+**Function**: Load Skill definitions from the file system and parse YAML Frontmatter in Markdown files.
 
-**核心类**：`SkillLoader`
+**Core Class**: `SkillLoader`
 
-**工作流程**：
+**Workflow**:
 
 ```python
-1. 遍历 skills/builtin/ 下的所有子目录
-2. 查找 skill.md 文件
-3. 解析文件内容：
-   - 提取 --- 之间的YAML配置
-   - 提取 --- 之后的Markdown文档
-4. 构建 SkillDefinition 对象
-5. 可选：加载同目录下的 template.j2 模板文件
+1. Traverse built-in definitions under `skills/builtin/` and persistent custom
+   definitions under `CUSTOM_SKILLS_DIR` (`data/skills/` by default)
+2. Find the skill.md file
+3. Parse the file content:
+   - Extract YAML configuration between ---
+   - Extract --- the subsequent Markdown document
+4. Construct the SkillDefinition object
+5. Optional: Load the template.j2 template file in the same directory
 ```
 
-**代码示例**：
+**Code Example**:
 ```python
 loader = SkillLoader("skills")
-skills = loader.load_all()  # 加载所有Skill
-skill = loader.get("tech_proposal_generator")  # 获取特定Skill
+skills = loader.load_all() # Load all Skills
+skill = loader.get("tech_proposal_generator") # Get a specific Skill
 ```
 
 ---
 
-### 3. matcher.py - 意图匹配服务
+### 3. matcher.py - Intent matching service
 
-**作用**：将用户输入与Skill进行匹配，返回最佳匹配的Skill。
+**Function**: Match user input with Skill and return the best matching Skill.
 
-**核心类**：
+**Core Class**:
 
-#### 3.1 KeywordMatcher（关键词匹配器）
+#### 3.1 KeywordMatcher (Keyword Matcher)
 
-**原理**：基于关键词的精确匹配
+**Principle**: Exact matching based on keywords
 
-**匹配规则**：
-- **必须关键词**（`required`）：必须全部出现，否则直接拒绝
-- **可选关键词**（`optional`）：出现越多分数越高
-- **排除关键词**（`excluded`）：出现则直接拒绝
-- **正则表达式**（`patterns`）：复杂模式匹配
+**Matching Rules**:
+- **Required keywords** (`required`): all must appear, otherwise they will be rejected directly
+- **Optional keyword** (`optional`): The more occurrences, the higher the score
+- **Excluded keywords** (`excluded`): If it appears, it will be rejected directly.
+- **regular expressions** (`patterns`): complex pattern matching
 
-**分数计算**：
+**Score Calculation**:
 ```
 score = required_score * 0.4 + optional_score * 0.4 + regex_score * 0.2
 ```
 
-#### 3.2 SemanticMatcher（语义匹配器）
+#### 3.2 SemanticMatcher (semantic matcher)
 
-**原理**：基于向量嵌入的语义相似度计算
+**Principle**: Semantic similarity calculation based on vector embedding
 
-**工作流程**：
-1. **预计算**：加载Skill时，计算所有`examples`和`description`的embedding
-2. **查询时**：计算用户输入的embedding
-3. **相似度**：使用余弦相似度计算与所有示例的相似度
-4. **聚合**：取Top-3相似度的平均值作为最终分数
+**Workflow**:
+1. **Precalculation**: When loading the Skill, calculate the embeddings of all `examples` and `description`
+2. **Query time**: Calculate the embedding entered by the user
+3. **Similarity**: Use cosine similarity to calculate similarity to all examples
+4. **Aggregation**: Take the average of the Top-3 similarities as the final score
 
-**缓存机制**：
+**Caching mechanism**:
 ```python
-self._cache: dict[str, np.ndarray]  # skill_name -> embeddings
+self._cache: dict[str, np.ndarray] # skill_name -> embeddings
 ```
 
-#### 3.3 LLMRouter（LLM路由判断器）
+#### 3.3 LLMRouter (LLM routing judge)
 
-**作用**：当多个Skill分数接近时，使用LLM做最终决策
+**Function**: When multiple Skill scores are close, use LLM to make the final decision
 
-**触发条件**：
-- Top 2 Skill的分数差距 < 0.1
-- Skill配置中启用了`llm_routing`
+**Trigger conditions**:
+- Score difference between Top 2 Skills < 0.1
+- `llm_routing` is enabled in Skill configuration
 
-**提示词设计**：
+**Prompt word design**:
 ```
-你是一个Skill路由助手。选择最适合用户查询的Skill。
+You are a Skill Routing Assistant. Select the Skill that best suits the user's query.
 
-用户查询: "xxx"
-候选Skill:
+User query: "xxx"
+Candidate Skills:
 - Skill: name / Description / Examples
 ...
 
-回复格式:
+Reply format:
 SKILL: <skill_name>
 CONFIDENCE: <0.0-1.0>
-REASONING: <简要说明>
+REASONING: <brief description>
 ```
 
-#### 3.4 IntentMatchingService（匹配服务总入口）
+#### 3.4 IntentMatchingService (main entrance of matching service)
 
-**协调流程**：
+**Coordination Process**:
 ```
-对每个Skill:
-    1. 关键词匹配 → keyword_score
-    2. 语义匹配 → semantic_score
-    3. 计算加权总分
-    4. 低于1/2阈值则直接跳过
+For each Skill:
+    1. Keyword matching → keyword_score
+    2. Semantic matching → semantic_score
+    3. Calculate the weighted total score
+    4. If it is lower than the 1/2 threshold, skip it directly.
 
-5.对所有候选Skill排序，获得best.score
-6.如果Top 2差距 < 0.1:
-    LM路由判断 → 调整best.score分数
+5. Sort all candidate Skills and obtain best.score
+6. If the difference between Top 2 is < 0.1:
+    LM routing judgment → adjust best.score score
 
-7.当best.score大于阈值时，该best.score对应的skill作为最优匹配
+7. When best.score is greater than the threshold, the skill corresponding to the best.score is used as the optimal match.
 ```
 
 ---
 
-### 4. executor.py - 执行引擎
+### 4. executor.py - Execution engine
 
-**作用**：Skill执行的协调层。
+**Role**: Coordination layer for Skill execution.
 
-**说明**：
-实际Skill执行逻辑已直接集成到RAG流程中（见`chain.py`）。当Skill匹配时，其配置通过`generate_answer(skill_definition)`传递给LLM，由LLM直接生成结构化输出。
+**Description**:
+The actual Skill execution logic is integrated directly into the RAG process (see `chain.py`). When a Skill matches, its configuration is passed to LLM via `generate_answer(skill_definition)`, which directly generates structured output.
 
-`SkillExecutor`类作为协调层保留，用于潜在的扩展场景。
+The `SkillExecutor` class is reserved as a coordination layer for potential extension scenarios.
 
 ---
 
-### 5. chain/ 集成点
+### 5. chain/ integration point
 
-**修改位置**：`src/services/chain/_api.py`中的`ask()`函数和`_steps_generate.py`中的`generate_answer()`函数
+**Modification location**: `ask()` function in `src/services/chain/_api.py` and `generate_answer()` function in `_steps_generate.py`
 
-**集成逻辑（Prompt集成模式）**：
+**Integration logic (Prompt integration mode)**:
 ```python
 # _api.py
 async def ask(question, ...):
-    # 1. Skill 匹配以 asyncio.create_task() 并发启动
+    # 1. Skill matching starts concurrently with asyncio.create_task()
     skill_task = None
     if settings.SKILL_MATCHING_ENABLED:
         skill_task = asyncio.create_task(_do_skill_match(question))
 
-    # 2. 创建Pipeline上下文
+    # 2. Create Pipeline context
     ctx = PipelineContext(...)
 
-    # 3. _run_pipeline 中消费 skill_task 结果（通常此时已完成）
+    # 3. Consume skill_task results in _run_pipeline (usually completed at this time)
     await _run_pipeline(ctx, skill_definition=None, skill_task=skill_task)
 ```
 
-Skill 匹配与 RAG 检索管线**并行执行**，匹配结果在 `generate_answer` 前消费。双查询匹配：若 `rewritten_query` 与原查询不同，会对两个查询分别做匹配，取更高置信度结果。超短输入（≤2 个词）跳过 skill 匹配。
+Skill matching runs in parallel with the RAG retrieval pipeline, and its result is consumed before `generate_answer`. If `rewritten_query` differs from the original query, both queries are matched and the higher-confidence result is used. Very short input (≤2 words) skips Skill matching.
 
+```python
         return PipelineResult(
             answer=ctx.answer,
             sources=_extract_sources(ctx.docs),
@@ -234,21 +236,21 @@ Skill 匹配与 RAG 检索管线**并行执行**，匹配结果在 `generate_ans
         )
 
     else:
-        # 4. 无匹配，走标准RAG
+        # 4. No match, use standard RAG
         await _run_pipeline(ctx, None)
         return PipelineResult(...)
 ```
 
-**关键实现细节**：
+**Key implementation details**:
 
-Skill匹配使用 `src/services/chain/_skill_matching.py` 模块中的单例：
+Skill matching uses the singleton in the `src/services/chain/_skill_matching.py` module:
 ```python
 from ._skill_matching import get_skill_loader, get_skill_matcher
 ```
-- `get_skill_loader()` 返回线程安全的 `SkillLoader` 单例
-- `get_skill_matcher()` 返回线程安全的 `IntentMatchingService` 单例
+- `get_skill_loader()` returns a thread-safe `SkillLoader` singleton
+- `get_skill_matcher()` returns a thread-safe `IntentMatchingService` singleton
 
-在 `src/services/llm/_prompts.py` 中的 `get_skill_prompt()` 函数：
+The `get_skill_prompt()` function in `src/services/llm/_prompts.py`:
 ```python
 def get_skill_prompt(skill_definition: dict[str, Any] | None = None) -> ChatPromptTemplate:
     """Build skill-aware prompt template."""
@@ -260,7 +262,7 @@ def get_skill_prompt(skill_definition: dict[str, Any] | None = None) -> ChatProm
             title = section.get("title", f"Section {i}")
             desc = section.get("description", "")
             req = " (REQUIRED)" if section.get("required", True) else " (optional)"
-            sections_desc.append(f"{i}. **{title}**{req}\n   {desc}")
+            sections_desc.append(f"{i}. **{title}**{req}\n {desc}")
 
         formatted_system = SKILL_SYSTEM_TEMPLATE.format(
             memory_context="{memory_context}",
@@ -274,10 +276,10 @@ def get_skill_prompt(skill_definition: dict[str, Any] | None = None) -> ChatProm
             ("human", SKILL_RAG_TEMPLATE),
         ])
 
-    return get_rag_prompt()  # Fallback to standard RAG prompt
+    return get_rag_prompt() # Fallback to standard RAG prompt
 ```
 
-在 `_steps_generate.py` 的 `generate_answer()` 中：
+In `generate_answer()` of `_steps_generate.py`:
 ```python
 async def generate_answer(ctx: PipelineContext, skill_definition: dict[str, Any] | None = None):
     llm = ctx.llm or get_llm()
@@ -292,7 +294,7 @@ async def generate_answer(ctx: PipelineContext, skill_definition: dict[str, Any]
     ctx.answer = await asyncio.to_thread(chain.invoke, {...})
 ```
 
-**`ask()` 完整签名**：
+**`ask()` Full signature**:
 ```python
 async def ask(
     question: str,
@@ -310,180 +312,185 @@ async def ask(
 ) -> PipelineResult:
 ```
 
-**`PipelineContext` 关键字段**：
+**`PipelineContext` key fields**:
 
-| 字段 | 类型 | 说明 |
+| Field | Type | Description |
 |------|------|------|
-| `file_ids` | `list[int] \| None` | 限定检索的文件ID |
-| `web_search_results` | `int \| None` | Web搜索结果数量 |
-| `rag_mode` | `str \| None` | RAG模式（如 `hybrid`） |
-| `settings_epoch` | `int` | 设置快照的epoch版本 |
-| `settings_snapshot` | `SettingsSnapshot \| None` | 请求时的配置快照 |
-| `past_session_refs` | `list[dict]` | 历史会话引用 |
-| `trace` | `TraceContext` | 结构化追踪上下文 |
+| `file_ids` | `list[int] \| None` | File IDs to limit the search |
+| `web_search_results` | `int \| None` | Number of web search results |
+| `rag_mode` | `str \| None` | RAG mode (such as `hybrid`) |
+| `settings_epoch` | `int` | Set the epoch version of the snapshot |
+| `settings_snapshot` | `SettingsSnapshot \| None` | Configuration snapshot at request |
+| `past_session_refs` | `list[dict]` | Historical session references |
+| `trace` | `TraceContext` | Structured tracing context |
 
-**`PipelineResult` 完整字段**：
+**`PipelineResult` complete fields**:
 
-| 字段 | 类型 | 说明 |
+> This is an internal result of the chain and is not equivalent to HTTP `ChatResponse`. `skill_used` and
+> `skill_confidence` is currently used for internal orchestration/trace and is not returned as a `/api/v1/chat` top-level response field.
+
+| Field | Type | Description |
 |------|------|------|
-| `answer` | `str` | LLM生成的回答 |
-| `sources` | `list[dict]` | 引用来源 |
-| `session_id` | `str` | 会话ID |
-| `web_results` | `list[dict] \| None` | Web搜索结果 |
-| `past_sessions` | `list[dict] \| None` | 相关历史会话 |
-| `extraction_failed` | `bool` | 后台事实提取是否失败 |
-| `trace` | `dict \| None` | 序列化的追踪数据 |
-| `skill_used` | `str \| None` | 使用的Skill名称 |
-| `skill_confidence` | `float \| None` | 匹配置信度 |
+| `answer` | `str` | Answer generated by LLM |
+| `sources` | `list[dict]` | Quote sources |
+| `session_id` | `str` | Session ID |
+| `web_results` | `list[dict] \| None` | Web search results |
+| `past_sessions` | `list[dict] \| None` | Related historical sessions |
+| `extraction_failed` | `bool` | Whether accepting/enqueueing fact extraction failed; later durable-job outcome is observed through job health/metrics |
+| `trace` | `dict \| None` | Serialized trace data |
+| `skill_used` | `str \| None` | The name of the Skill used |
+| `skill_confidence` | `float \| None` | Match confidence |
 
 ---
 
-## Skill配置文件详解
+## Detailed explanation of Skill configuration file
 
-### 文件位置
-`skills/builtin/{skill_name}/skill.md`
+### File location
+Built-in: `skills/builtin/{skill_name}/skill.md`
 
-### 文件格式
+Custom/API-created: `data/skills/{skill_name}/skill.md`
+
+### File format
 ```markdown
 ---
-# YAML Frontmatter - Skill配置
-name: skill_identifier          # 唯一标识符（英文）
-display_name: "显示名称"         # 中文显示名
-description: "详细描述"
+# YAML Frontmatter - Skill configuration
+name: skill_identifier # Unique identifier (English)
+display_name: "Display name" # Chinese display name
+description: "Detailed description"
 
 intent_matching:
-  method: hybrid               # 匹配方法
-  threshold: 0.7               # 触发阈值
+  method: hybrid # matching method
+  threshold: 0.7 #Trigger threshold
   keywords:
-    required: ["必须关键词"]
-    optional: ["可选关键词"]
+    required: ["Required keywords"]
+    optional: ["Optional keywords"]
   examples:
-    - "示例查询1"
-    - "示例查询2"
+    - "Example Query 1"
+    - "Example Query 2"
   llm_routing:
     enabled: true
 
 execution:
-  mode: post_rag               # 执行模式
+  mode: post_rag #Execution mode
   timeout: 120
 
 output:
   format: markdown
   sections:
-    - title: "章节标题"
+    - title: "Chapter Title"
       required: true
   post_process:
     - add_header_footer
     - generate_toc
 ---
 
-# Markdown内容 - Skill文档说明
+# Markdown content - Skill documentation description
 
-## 功能说明
+## Function description
 ...
 ```
 
 ---
 
-## API接口
+## API interface
 
-### HTTP端点
+### HTTP endpoint
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |------|------|------|
-| GET | `/api/v1/skills` | 列出所有Skill |
-| POST | `/api/v1/skills` | 创建新Skill |
-| POST | `/api/v1/skills/invoke` | 手动调用指定Skill |
-| POST | `/api/v1/skills/match` | 测试意图匹配（调试用，JSON body）|
+| GET | `/api/v1/skills` | List all Skills |
+| POST | `/api/v1/skills` | Create new Skill |
+| POST | `/api/v1/skills/invoke` | Manually call the specified Skill |
+| POST | `/api/v1/skills/match?query=...` | Test intent matching (for debugging, query parameter) |
 
-### MCP工具
+### MCP Tools
 
-| 工具名 | 说明 |
+| Tool name | Description |
 |--------|------|
-| `list_skills` | 列出可用Skill |
-| `invoke_skill` | 调用指定Skill |
+| `list_skills` | List available Skills |
+| `invoke_skill` | Invoke the specified Skill |
 
 ---
 
-## 使用示例
+## Usage example
 
-### 示例1：触发Tech Proposal Skill
+### Example 1: Trigger Tech Proposal Skill
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/chat \
+curl -X POST http://localhost:7008/api/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
   -d '{
-    "question": "请帮我生成科技部的技术方案"
+    "question": "Please help me generate a technical plan from the Ministry of Science and Technology"
   }'
 ```
 
-**预期返回**：
+**Expected return**:
 ```json
 {
-  "answer": "# 一、项目背景与意义\n...",
+  "answer": "# 1. Project background and significance\n...",
   "sources": [...],
-  "skill_used": "tech_proposal_generator",
-  "skill_confidence": 0.85
+  "session_id": "...",
+  "extraction_failed": false
 }
 ```
 
-### 示例2：手动调用Skill
+### Example 2: Manually calling Skill
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/skills/invoke \
+curl -X POST http://localhost:7008/api/v1/skills/invoke \
   -H "Content-Type: application/json" \
   -d '{
     "skill_name": "tech_proposal_generator",
-    "query": "AI项目技术方案"
+    "query": "AI project technical solution"
   }'
 ```
 
-### 示例3：测试意图匹配
+### Example 3: Test intent matching
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/skills/match \
-  -H "Content-Type: application/json" \
-  -d '{"query": "生成技术方案"}'
+curl -X POST 'http://localhost:7008/api/v1/skills/match?query=%E7%94%9F%E6%88%90%E6%8A%80%E6%9C%AF%E6%96%B9%E6%A1%88' \
+  -H "X-API-Key: your-key"
 ```
 
 ---
 
-## 扩展开发指南
+## Extension Development Guide
 
-### 创建新Skill的步骤
+### Steps to create a new Skill
 
-1. **创建目录**：`skills/builtin/my_skill/`
+1. **Create directory**: `data/skills/my_skill/` for runtime-created Skills, or
+   `skills/builtin/my_skill/` only when shipping a new immutable built-in Skill.
 
-2. **编写skill.md**：
+2. **Write skill.md**:
 ```markdown
 ---
 name: my_skill
-display_name: "我的Skill"
-description: "描述"
+display_name: "My Skill"
+description: "Description"
 intent_matching:
   method: hybrid
   keywords:
-    required: ["关键词"]
+    required: ["keyword"]
   examples:
-    - "示例查询"
+    - "Example query"
 ---
 
-## 功能说明
+## Function description
 ...
 ```
 
-3. **（可选）添加额外的配置**：
-   - 在当前Prompt集成模式下，`output.template_file` 和 `output.post_process` 字段不被使用
-   - 这些字段保留用于未来可能的扩展
+3. **(Optional) Add additional configuration**:
+   - In the current Prompt integration mode, the `output.template_file` and `output.post_process` fields are not used
+   - These fields are reserved for possible future extensions
 
-4. **重启服务**，新Skill会自动加载
+4. **Restart the service**, the new Skill will be automatically loaded
 
 ---
 
-## 调试技巧
+## Debugging Tips
 
-### 查看Skill加载情况
+### Check Skill loading status
 ```python
 from skills.loader import SkillLoader
 loader = SkillLoader()
@@ -493,7 +500,7 @@ for s in skills:
     print(f"- {s.name}: {s.display_name}")
 ```
 
-### 测试意图匹配
+### Test intent matching
 ```python
 from skills.loader import SkillLoader
 from skills.matcher import IntentMatchingService
@@ -502,64 +509,64 @@ loader = SkillLoader()
 skills = loader.load_all()
 matcher = IntentMatchingService()
 
-result = await matcher.match("生成技术方案", skills)
+result = await matcher.match("Generate technical solution", skills)
 if result:
     print(f"Matched: {result.skill.name} (score: {result.score})")
     print(f"Details: {result.details}")
 ```
 
-### 查看匹配细节
+### View match details
 ```bash
-# 在日志中查看匹配过程
+# View the matching process in the log
 LOG_LEVEL=DEBUG python -m uvicorn src.main:app
 ```
 
 ---
 
-## 注意事项
+## Notes
 
-1. **性能考虑**：
-   - SemanticMatcher会缓存embedding，首次加载稍慢
-   - LLMRouter只在必要时调用，控制API成本
+1. **Performance Considerations**:
+   - SemanticMatcher will cache embedding, and the first loading will be slightly slower.
+   - LLMRouter is only called when necessary to control API costs
 
-2. **阈值调优**：
-   - `threshold`设置过高可能导致匹配失败
-   - 建议从0.7开始，根据实际效果调整
+2. **Threshold Tuning**:
+   - Setting `threshold` too high may cause matching to fail
+   - It is recommended to start from 0.7 and adjust according to the actual effect.
 
-3. **关键词设计**：
-   - `required`应精确且必要
-   - `optional`应覆盖多种表达方式
-   - 避免过于宽泛的关键词
-
----
-
-## 未来扩展方向
-
-1. **动态Skill加载**：运行时热更新Skill配置
-2. **Skill组合**：多个Skill串联执行
-3. **用户自定义Skill**：通过UI界面创建Skill
-4. **A/B测试**：对比不同Skill配置的效果
+3. **Keyword Design**:
+   - `required` should be precise and necessary
+   - `optional` should cover multiple expressions
+   - Avoid keywords that are too broad
 
 ---
 
-## 相关文件索引
+## Future expansion directions
 
-| 文件 | 说明 |
+1. **Dynamic Skill Loading**: Hot update of Skill configuration during runtime
+2. **Skill Combination**: Multiple Skills are executed in series
+3. **User-defined Skill**: Create Skill through UI interface
+4. **A/B Test**: Compare the effects of different Skill configurations
+
+---
+
+## Related file index
+
+| Documentation | Description |
 |------|------|
-| `skills/models.py` | 数据模型定义 |
-| `skills/loader.py` | Markdown加载器 |
-| `skills/matcher.py` | 意图匹配服务 |
-| `skills/executor.py` | 执行引擎（协调层） |
-| `src/services/chain/_api.py` | RAG集成点（`ask()`、`ask_stream()`、`_run_pipeline()`） |
-| `src/services/chain/_skill_matching.py` | Skill加载器/匹配器单例 |
-| `src/services/chain/_steps_generate.py` | `generate_answer()` — Skill-aware LLM调用 |
-| `src/services/chain/_context.py` | `PipelineContext`、`PipelineResult` 数据结构 |
-| `src/services/llm/_prompts.py` | Prompt模板，包含 `get_skill_prompt()` |
+| `skills/models.py` | Data model definition |
+| `skills/loader.py` | Markdown loader |
+| `skills/matcher.py` | Intent matching service |
+| `skills/executor.py` | Execution engine (coordination layer) |
+| `src/services/chain/_api.py` | RAG integration points (`ask()`, `ask_stream()`, `_run_pipeline()`) |
+| `src/services/chain/_skill_matching.py` | Skill loader/matcher singleton |
+| `src/services/chain/_steps_generate.py` | `generate_answer()` — Skill-aware LLM call |
+| `src/services/chain/_context.py` | `PipelineContext`, `PipelineResult` data structure |
+| `src/services/llm/_prompts.py` | Prompt template, including `get_skill_prompt()` |
 | `src/api/routers/skills.py` | HTTP API |
-| `src/mcp.py` | MCP工具 |
-| `skills/builtin/tech_proposal/skill.md` | 示例Skill配置（技术方案） |
-| `skills/builtin/action_items/skill.md` | 行动项提取 Skill |
-| `skills/builtin/custom_notes/skill.md` | 自定义笔记 Skill |
-| `skills/builtin/meeting_minutes/skill.md` | 会议纪要 Skill |
-| `skills/builtin/risk_register/skill.md` | 风险登记 Skill |
-| `skills/builtin/stakeholder_update/skill.md` | 干系人更新 Skill |
+| `src/mcp.py` | MCP tool |
+| `skills/builtin/tech_proposal/skill.md` | Sample Skill configuration (technical solution) |
+| `skills/builtin/action_items/skill.md` | Action item extraction Skill |
+| `skills/builtin/custom_notes/skill.md` | Custom notes Skill |
+| `skills/builtin/meeting_minutes/skill.md` | Meeting minutes Skill |
+| `skills/builtin/risk_register/skill.md` | Risk Registration Skill |
+| `skills/builtin/stakeholder_update/skill.md` | Stakeholder update Skill |

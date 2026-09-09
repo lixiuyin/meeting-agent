@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from ...core.config import settings
+from ...core.database import get_write_connection
 from ...utils.supervised_task import get_background_tasks
 from ._critical import run_alembic_upgrade, run_critical_startup
 from ._loops import (
@@ -34,10 +35,91 @@ from ._shutdown import graceful_shutdown
 logger = logging.getLogger(__name__)
 
 _bg = get_background_tasks()
+_critical_startup_error: str | None = None
+
+
+def get_critical_startup_error() -> str | None:
+    """Return the current process' critical startup failure, if any."""
+    return _critical_startup_error
 
 
 def _startup_summary_backfill_enabled() -> bool:
     return settings.SESSION_SUMMARY_ENABLED and settings.SESSION_SUMMARY_STARTUP_BACKFILL
+
+
+async def _recover_incomplete_file_summaries() -> tuple[int, int]:
+    """Recover file-summary lifecycle state after a process restart.
+
+    When automatic summaries are enabled, interrupted or never-started
+    summaries are requeued.  When they are disabled, parsed files must not be
+    left in the transient ``summarizing`` state: restore their ingest status to
+    ``ready`` while retaining ``summary_status='pending'`` so a later manual
+    summary remains possible.
+
+    Returns ``(requeued, normalized)`` for startup diagnostics and tests.
+    """
+    from ...core.database import get_connection
+    from ...services.processor._pipeline_common import _update_meeting_status_from_files
+
+    def _find_incomplete() -> list[dict]:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, meeting_id FROM meeting_files "
+                "WHERE (status='summarizing' OR "
+                "(status='ready' AND summary_status NOT IN ('ready','failed')))"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    incomplete = await asyncio.to_thread(_find_incomplete)
+    if settings.MEETING_AUTO_SUMMARIZE_FILES:
+        from ...services.processor._pipeline_common import schedule_post_ready_summary
+
+        for file_row in incomplete:
+            await schedule_post_ready_summary(file_row["id"], file_row["meeting_id"])
+        return len(incomplete), 0
+
+    def _normalize_disabled() -> int:
+        meeting_ids = {int(row["meeting_id"]) for row in incomplete}
+        with get_write_connection() as conn:
+            stale_meetings = conn.execute(
+                "SELECT id FROM meetings WHERE status='summarizing'"
+            ).fetchall()
+            meeting_ids.update(int(row["id"]) for row in stale_meetings)
+            cursor = conn.execute(
+                "UPDATE meeting_files SET status='ready', updated_at=CURRENT_TIMESTAMP "
+                "WHERE status='summarizing'"
+            )
+            for meeting_id in meeting_ids:
+                _update_meeting_status_from_files(conn, meeting_id)
+            return max(cursor.rowcount, 0)
+
+    normalized = await asyncio.to_thread(_normalize_disabled)
+    return 0, normalized
+
+
+async def _prewarm_skill_matcher_once(loader, matcher) -> tuple[int, int]:
+    """Warm the semantic skill corpus in one provider batch.
+
+    Corpus embeddings hold a matcher-wide lock while the remote provider is
+    running.  Warming one skill at a time therefore makes an early chat wait
+    behind several serial network calls.  The matcher already supports a
+    single ordered batch, so use that path before the lower-priority query
+    endpoint warm-up.
+    """
+    summaries = loader.load_summaries() if hasattr(loader, "load_summaries") else []
+    semantic_summaries = [
+        summary
+        for summary in summaries
+        if getattr(summary, "intent_matching", None)
+        and summary.intent_matching.method in ("semantic", "hybrid")
+        and getattr(summary.intent_matching, "examples", None)
+    ]
+    cached = await asyncio.to_thread(
+        matcher.semantic_matcher.precompute_skills_embeddings,
+        semantic_summaries,
+    )
+    await asyncio.to_thread(matcher.semantic_matcher.embed_query, "warmup")
+    return len(summaries), len(cached)
 
 
 def _check_workers() -> None:
@@ -76,23 +158,76 @@ def _check_workers() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle: initialize on startup, cleanup on shutdown."""
+    global _critical_startup_error
     _check_workers()
     try:
+        from ...core import constants
+        from ...core.file_permissions import harden_runtime_permissions
+
+        private_roots = tuple(
+            dict.fromkeys(
+                (
+                    constants.DATA_DIR,
+                    settings.DB_PATH.parent,
+                    settings.UPLOAD_DIR,
+                    settings.VECTOR_DB_DIR,
+                    settings.CUSTOM_SKILLS_DIR,
+                )
+            )
+        )
+        await asyncio.to_thread(harden_runtime_permissions, *private_roots)
         await asyncio.to_thread(run_alembic_upgrade)
         logger.info("Database initialized at %s", settings.DB_PATH)
+        from ...services.rag._publication import recover_persistent_publication
+
+        await asyncio.to_thread(recover_persistent_publication)
         await run_critical_startup()
-    except Exception:
+        _critical_startup_error = None
+    except Exception as exc:
+        _critical_startup_error = f"{type(exc).__name__}: {exc}"[:200]
+        if settings.ENVIRONMENT != "dev":
+            # A production process that cannot migrate or initialize required
+            # dependencies must never be advertised as a usable instance.
+            logger.critical("Critical startup failed; refusing to start", exc_info=True)
+            raise
         logger.critical("Critical startup failed; entering degraded mode", exc_info=True)
 
     suppress_generator_exit_errors(asyncio.get_running_loop())
 
     # ── Best-effort path: failures are logged but non-fatal ──
 
-    from ...services.processor import recover_stale_meetings
+    try:
+
+        def _retire_orphans() -> int:
+            with get_write_connection() as conn:
+                from ...core import database as db
+
+                return db.retire_orphaned_file_jobs(conn)
+
+        retired_jobs = await asyncio.to_thread(_retire_orphans)
+        if retired_jobs:
+            logger.info("Retired %d dead-letter jobs whose source files were deleted", retired_jobs)
+    except Exception:
+        record_best_effort_failure("retire_orphaned_file_jobs")
+        logger.warning("Orphaned durable-job retirement failed", exc_info=True)
+
+    if settings.DURABLE_JOB_EXECUTION_MODE == "embedded":
+        from ...services.jobs import durable_job_worker_loop
+
+        _bg.create("durable_job_worker_loop", durable_job_worker_loop, max_restarts=10)
+    else:
+        logger.warning("Durable job execution is disabled; queued work will not run")
+
+    from ...services.processor import recover_stale_meetings, resume_interrupted_processing
+    from ...services.processor._scheduler import active_processing_file_ids
 
     try:
-        await asyncio.to_thread(recover_stale_meetings)
-        logger.info("Recovered stale meetings")
+        resumed = await resume_interrupted_processing()
+        await asyncio.to_thread(
+            recover_stale_meetings,
+            active_file_ids=active_processing_file_ids(),
+        )
+        logger.info("Recovered stale meetings; resumed=%d", resumed)
     except Exception:
         record_best_effort_failure("recover_stale_meetings")
         logger.warning("Recover stale meetings failed", exc_info=True)
@@ -113,23 +248,14 @@ async def lifespan(app: FastAPI):
         logger.warning("Stale generating summary recovery failed", exc_info=True)
 
     try:
-        from ...core.database import get_connection
-        from ...services.processor._pipeline_common import schedule_post_ready_summary
-
-        def _recover_file_summaries():
-            with get_connection() as conn:
-                rows = conn.execute(
-                    "SELECT id, meeting_id FROM meeting_files "
-                    "WHERE (status='summarizing' OR "
-                    "(status='ready' AND summary_status NOT IN ('ready','failed')))"
-                ).fetchall()
-            return [dict(r) for r in rows]
-
-        stale_files = await asyncio.to_thread(_recover_file_summaries)
-        if stale_files:
-            logger.info("Requeueing %d files with incomplete summary_status", len(stale_files))
-            for f in stale_files:
-                await schedule_post_ready_summary(f["id"], f["meeting_id"])
+        requeued, normalized = await _recover_incomplete_file_summaries()
+        if requeued:
+            logger.info("Requeueing %d files with incomplete summary_status", requeued)
+        if normalized:
+            logger.info(
+                "Auto-summary is disabled; restored %d parsed files to ready status",
+                normalized,
+            )
     except Exception:
         record_best_effort_failure("recover_file_summaries")
         logger.warning("File summary recovery failed", exc_info=True)
@@ -144,30 +270,6 @@ async def lifespan(app: FastAPI):
         record_best_effort_failure("meeting_summary_reconcile")
         logger.warning("Meeting summary reconcile failed", exc_info=True)
 
-    try:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=str(settings.VECTOR_DB_DIR))
-        collections = [c.name for c in client.list_collections()]
-
-        retired = "meetings_retired"
-        if retired in collections and "meetings" not in collections:
-            logger.warning(
-                "Detected aborted rebuild swap — rolling back 'meetings_retired' to 'meetings'"
-            )
-            client.rename_collection(retired, "meetings")  # type: ignore[attr-defined]
-        elif retired in collections and "meetings" in collections:
-            logger.info("Dropping stale retired collection from previous rebuild")
-            client.delete_collection(retired)
-
-        for name in collections:
-            if name.startswith("meetings_shadow_"):
-                logger.info("Dropping orphaned shadow collection '%s'", name)
-                client.delete_collection(name)
-    except Exception:
-        record_best_effort_failure("rebuild_swap_reconcile")
-        logger.warning("Rebuild swap reconciliation failed", exc_info=True)
-
     from ...services.memory import (
         _get_active_user_ids,
         _load_session_cache,
@@ -181,34 +283,12 @@ async def lifespan(app: FastAPI):
         record_best_effort_failure("load_session_cache")
         logger.warning("Session cache warm load failed", exc_info=True)
 
-    from ...core.database import (
-        delete_expired_memories,
-        get_expired_memory_ids,
-        get_write_connection,
-    )
-
     try:
-        with get_write_connection() as conn:
-            expired = get_expired_memory_ids(conn)
-            if expired:
-                try:
-                    from ...services.memory import get_memory_vectorstore
+        from ...services.memory._service._crud import purge_expired_memories_durable
 
-                    vs = get_memory_vectorstore()
-                    for m in expired:
-                        eid = m.get("embedding_id")
-                        if eid:
-                            try:
-                                vs.delete(eid)
-                            except Exception:
-                                record_best_effort_failure("startup_expired_vector_delete")
-                                logger.warning("Failed to delete vector %s", eid, exc_info=True)
-                except Exception:
-                    record_best_effort_failure("startup_expired_vector_cleanup")
-                    logger.warning("Failed to clean up expired memory vectors", exc_info=True)
-            deleted = delete_expired_memories(conn)
-            if deleted:
-                logger.info("Cleaned up %d expired memories (SQLite + Chroma)", deleted)
+        deleted = await asyncio.to_thread(purge_expired_memories_durable)
+        if deleted:
+            logger.info("Cleaned up %d expired memories (durable outbox)", deleted)
     except Exception:
         record_best_effort_failure("startup_expired_memory_cleanup")
         logger.warning("Expired memory cleanup skipped", exc_info=True)
@@ -231,15 +311,8 @@ async def lifespan(app: FastAPI):
         record_best_effort_failure("pending_vector_deletion_cleanup")
         logger.warning("Pending vector deletion cleanup failed", exc_info=True)
 
-    try:
-        from ...services.memory._service._crud import requeue_pending_memory_vectors
-
-        requeued = await asyncio.to_thread(requeue_pending_memory_vectors)
-        if requeued:
-            logger.info("Re-queued %d zombie pending memory vectors", requeued)
-    except Exception:
-        record_best_effort_failure("pending_memory_vector_requeue")
-        logger.warning("Pending memory vector requeue failed", exc_info=True)
+    # Pending fact vectors are durable SQL work. The single background
+    # reconciler below drains them without making startup wait for a provider.
 
     try:
         import time
@@ -275,6 +348,10 @@ async def lifespan(app: FastAPI):
 
     _bg.create("expired_memory_purge_loop", expired_purge_loop, max_restarts=3)
 
+    from ...services.memory._service._index_sync import memory_index_reconcile_loop
+
+    _bg.create("memory_index_reconcile_loop", memory_index_reconcile_loop, max_restarts=3)
+
     try:
         from ...core.database import backfill_chat_messages_fts
 
@@ -288,15 +365,20 @@ async def lifespan(app: FastAPI):
 
     try:
         from ...services.knowledge_graph import kg_service
+        from ...services.memory._summary_vectorstore import sync_missing_summary_vectors
 
         # Both helpers call sync vector-store .upsert, which embeds via the
         # sync embedder; that path refuses to run inside a coroutine. Offload
         # to a worker thread per CLAUDE.md's "blocking calls must be
         # offloaded" rule (matches the file-summary sync just below).
-        synced_mem = await asyncio.to_thread(memory_service.sync_missing_vectors)
         synced_ent = await asyncio.to_thread(kg_service.sync_missing_entity_vectors)
-        if synced_mem or synced_ent:
-            logger.info("Vector sync: %d memories, %d entities re-indexed", synced_mem, synced_ent)
+        synced_sessions = await asyncio.to_thread(sync_missing_summary_vectors)
+        if synced_ent or synced_sessions:
+            logger.info(
+                "Vector sync: %d entities, %d session summaries re-indexed",
+                synced_ent,
+                synced_sessions,
+            )
     except Exception:
         record_best_effort_failure("startup_vector_sync")
         logger.warning("Startup vector sync failed", exc_info=True)
@@ -373,7 +455,7 @@ async def lifespan(app: FastAPI):
 
         backfilled = await asyncio.to_thread(_backfill_legacy_bm25_metadata)
         if backfilled:
-            logger.info("Backfilled chunk_id in %d legacy BM25 metadata rows", backfilled)
+            logger.info("Backfilled file_id/chunk_id in %d legacy BM25 metadata rows", backfilled)
     except Exception:
         logger.debug("BM25 metadata backfill skipped or failed (non-fatal)", exc_info=True)
 
@@ -388,10 +470,26 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(3600)
             try:
-                with get_write_connection() as conn:
-                    deleted = cleanup_expired_idempotency_keys(conn)
+
+                def _cleanup() -> int:
+                    from ...services.chat_runs import cleanup_runs
+
+                    cleanup_runs()
+                    with get_write_connection() as conn:
+                        return cleanup_expired_idempotency_keys(conn)
+
+                deleted = await asyncio.to_thread(_cleanup)
                 if deleted:
                     logger.info("Idempotency cleanup: purged %d expired keys", deleted)
+                from ...core import database as db
+
+                def _cleanup_jobs() -> int:
+                    with db.get_write_connection() as conn:
+                        return db.cleanup_finished_jobs(conn, retention_days=7)
+
+                deleted_jobs = await asyncio.to_thread(_cleanup_jobs)
+                if deleted_jobs:
+                    logger.info("Durable jobs cleanup: purged %d terminal rows", deleted_jobs)
             except Exception:
                 logger.warning("Idempotency cleanup failed", exc_info=True)
 
@@ -403,33 +501,11 @@ async def lifespan(app: FastAPI):
 
             loader = _get_skill_loader()
             matcher = _get_skill_matcher()
-            summaries = loader.load_summaries() if hasattr(loader, "load_summaries") else []
-
-            await asyncio.to_thread(matcher.semantic_matcher.embed_query, "warmup")
-
-            precomputed = 0
-            for summary in summaries:
-                config = getattr(summary, "intent_matching", None)
-                if not config or config.method not in ("semantic", "hybrid"):
-                    continue
-                if not getattr(config, "examples", None):
-                    continue
-                try:
-                    ok = await asyncio.to_thread(
-                        matcher.semantic_matcher.precompute_skill_embeddings, summary
-                    )
-                    if ok:
-                        precomputed += 1
-                except Exception:
-                    logger.warning(
-                        "Skill embedding pre-compute failed for %s",
-                        summary.name,
-                        exc_info=True,
-                    )
+            summary_count, precomputed = await _prewarm_skill_matcher_once(loader, matcher)
 
             logger.info(
                 "Skill matcher pre-warmed (summaries=%d, examples_cached=%d)",
-                len(summaries),
+                summary_count,
                 precomputed,
             )
         except Exception:
@@ -440,4 +516,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    from ...services.chat_runs import shutdown_runs
+
+    await shutdown_runs()
     await graceful_shutdown()

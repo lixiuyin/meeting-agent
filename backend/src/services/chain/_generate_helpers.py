@@ -37,6 +37,33 @@ _HISTORY_BUDGET_TOKENS_DEFAULT = 4096
 _EXTRACTION_CIRCUIT_BREAKER_THRESHOLD = 10
 _CHARS_PER_TOKEN = 3.5
 
+_BROAD_SUMMARY_RE = re.compile(
+    r"(?:这些|所有|全部|分别|每(?:个|场)|逐(?:个|场)|all\s+(?:the\s+)?meetings|"
+    r"each\s+meeting|every\s+meeting|these\s+meetings)",
+    re.IGNORECASE,
+)
+
+
+def _is_broad_summary_request(ctx: PipelineContext) -> bool:
+    return bool(_BROAD_SUMMARY_RE.search(ctx.question or ""))
+
+
+def _tenant_sql(
+    ctx: PipelineContext,
+    *,
+    alias: str = "m",
+    conn: sqlite3.Connection | None = None,
+) -> tuple[str, list[object]]:
+    # ``default`` is the bootstrap principal, not a signal to disable tenant
+    # isolation.  Only legacy single-tenant schemas that genuinely predate the
+    # user_id column may omit the predicate.
+    if conn is not None:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(meetings)")}
+        if "user_id" not in columns:
+            return "", []
+    return f" AND {alias}.user_id=?", [ctx.user_id]
+
+
 _INTERNAL_TOKEN_RE_1 = re.compile(
     r"\[(?:"
     r"user[_ ]memory"
@@ -132,7 +159,9 @@ def _score_summaries_batch(query_embedding: list[float], summary_texts: list[str
 # ---------------------------------------------------------------------------
 
 # M-5: Cache key includes updated_at so speaker rename / re-index invalidates stale summaries.
-_file_summary_cache: TTLCache[tuple[int, str], str] = TTLCache(maxsize=512, ttl=300)
+_file_summary_cache: TTLCache[tuple[str, int, str], str] = TTLCache[tuple[str, int, str], str](
+    maxsize=512, ttl=300
+)
 _file_summary_cache_lock = threading.Lock()
 
 
@@ -141,7 +170,7 @@ def invalidate_file_summaries(file_ids: int | list[int]) -> None:
     if isinstance(file_ids, int):
         file_ids = [file_ids]
     with _file_summary_cache_lock:
-        keys_to_remove = [k for k in _file_summary_cache if k[0] in set(file_ids)]
+        keys_to_remove = [k for k in _file_summary_cache if k[1] in set(file_ids)]
         for k in keys_to_remove:
             del _file_summary_cache[k]
 
@@ -153,7 +182,7 @@ def invalidate_file_summaries(file_ids: int | list[int]) -> None:
 # Per-session extraction failure counter with 30-minute TTL.
 # After TTL expires, failure count resets — providing automatic half-open
 # recovery for sessions that were blocked due to transient LLM failures.
-_extraction_breaker_cache: TTLCache[str, int] = TTLCache(maxsize=1024, ttl=1800)
+_extraction_breaker_cache: TTLCache[str, int] = TTLCache[str, int](maxsize=1024, ttl=1800)
 _extraction_breaker_lock = threading.Lock()
 
 # H-11: Per-session last-failure timestamp for forced half-open recovery.
@@ -161,7 +190,7 @@ _extraction_breaker_lock = threading.Lock()
 # 30 minutes have elapsed since the *first* failure that opened the breaker,
 # we allow one probing attempt.
 _EXTRACTION_RECOVERY_TIMEOUT_S = 1800  # 30 minutes
-_extraction_failure_times: TTLCache[str, float] = TTLCache(
+_extraction_failure_times: TTLCache[str, float] = TTLCache[str, float](
     maxsize=1024, ttl=_EXTRACTION_RECOVERY_TIMEOUT_S
 )
 
@@ -390,10 +419,12 @@ def _load_file_summaries(
             # Meeting-scoped: load ALL ready files in those meetings
             with get_connection() as conn:
                 m_placeholders = ",".join("?" for _ in ctx.meeting_ids)
+                tenant_clause, tenant_params = _tenant_sql(ctx, conn=conn)
                 rows = conn.execute(
-                    f"SELECT id FROM meeting_files "
-                    f"WHERE meeting_id IN ({m_placeholders}) AND status = 'ready'",
-                    list(ctx.meeting_ids),
+                    f"SELECT mf.id FROM meeting_files mf JOIN meetings m ON m.id=mf.meeting_id "
+                    f"WHERE mf.meeting_id IN ({m_placeholders}) AND mf.status = 'ready'"
+                    f"{tenant_clause}",
+                    [*ctx.meeting_ids, *tenant_params],
                 ).fetchall()
                 for row in rows:
                     fid = row["id"]
@@ -403,33 +434,50 @@ def _load_file_summaries(
         else:
             # Unscoped: all ready files with summaries
             with get_connection() as conn:
+                tenant_clause, tenant_params = _tenant_sql(ctx, conn=conn)
                 rows = conn.execute(
-                    "SELECT id FROM meeting_files WHERE status='ready' AND summary IS NOT NULL"
+                    "SELECT mf.id FROM meeting_files mf JOIN meetings m ON m.id=mf.meeting_id "
+                    "WHERE mf.status='ready' AND mf.summary IS NOT NULL" + tenant_clause,
+                    tenant_params,
                 ).fetchall()
             all_ids = [row["id"] for row in rows]
-            if len(all_ids) <= settings.FILE_SUMMARY_BROAD_INJECT_CAP:
+            if (
+                _is_broad_summary_request(ctx)
+                and len(all_ids) <= settings.FILE_SUMMARY_BROAD_INJECT_CAP
+            ):
                 file_ids = all_ids
             else:
-                # Large corpus → route by summary similarity
+                # Relevance questions route even in a small corpus; only an
+                # explicit broad-summary intent expands to every file.
                 from ...services.rag._summary_router import route_files_by_summary
 
                 routed = route_files_by_summary(
                     ctx.rewritten_query or ctx.question,
                     top_k=settings.FILE_SUMMARY_BROAD_INJECT_CAP,
+                    user_id=ctx.user_id,
                 )
-                file_ids = routed or all_ids
+                allowed = set(all_ids)
+                file_ids = [fid for fid in (routed or []) if fid in allowed]
+                if not file_ids:
+                    file_ids = all_ids[: settings.RAG_SUMMARY_ROUTER_TOP_FILES]
 
         if not file_ids:
             return "", []
 
-        # M-5: Fetch updated_at for cache key versioning before checking cache.
+        # Fetch timestamps and validate ownership before consulting the cache.
+        # This also protects explicitly supplied file IDs from crossing tenants.
         with get_connection() as conn:
             id_placeholders = ",".join("?" for _ in file_ids)
             updated_rows = conn.execute(
-                f"SELECT id, updated_at FROM meeting_files WHERE id IN ({id_placeholders})",
-                file_ids,
+                f"SELECT mf.id, mf.updated_at FROM meeting_files mf "
+                f"JOIN meetings m ON m.id=mf.meeting_id "
+                f"WHERE mf.id IN ({id_placeholders}) AND m.user_id=?",
+                [*file_ids, ctx.user_id],
             ).fetchall()
             updated_at_map = {r["id"]: r["updated_at"] or "" for r in updated_rows}
+        file_ids = [fid for fid in file_ids if fid in updated_at_map]
+        if not file_ids:
+            return "", []
 
         # Check cache with (file_id, updated_at) key — stale entries auto-miss.
         with _file_summary_cache_lock:
@@ -437,7 +485,7 @@ def _load_file_summaries(
             uncached_ids: list[int] = []
             for fid in file_ids:
                 ts = updated_at_map.get(fid, "")
-                cached = _file_summary_cache.get((fid, ts))
+                cached = _file_summary_cache.get((ctx.user_id, fid, ts))
                 if cached is not None:
                     summaries[fid] = cached
                 else:
@@ -445,11 +493,11 @@ def _load_file_summaries(
 
         if uncached_ids:
             with get_connection() as conn:
-                db_summaries = get_meeting_files_summaries(conn, uncached_ids)
+                db_summaries = get_meeting_files_summaries(conn, uncached_ids, user_id=ctx.user_id)
             with _file_summary_cache_lock:
                 for fid, text in db_summaries.items():
                     ts = updated_at_map.get(fid, "")
-                    _file_summary_cache[(fid, ts)] = text
+                    _file_summary_cache[(ctx.user_id, fid, ts)] = text
             summaries.update(db_summaries)
 
         name_map: dict[int, str] = {}
@@ -505,7 +553,9 @@ def _load_file_summaries(
             fname = name_map.get(fid, f"File#{fid}")
             meeting_title = meeting_title_map.get(fid)
             summary_text = summaries[fid]
-            summary_text = _INTERNAL_TOKEN_RE_2.sub("", summary_text)
+            from ..llm._parsing import strip_thinking_blocks
+
+            summary_text = strip_thinking_blocks(_INTERNAL_TOKEN_RE_2.sub("", summary_text))
             if truncation is not None and len(summary_text) > truncation:
                 summary_text = summary_text[:truncation]
             # ``[N]`` prefix mirrors the index this synthetic doc receives
@@ -600,22 +650,30 @@ def _load_meeting_summaries_for_context(
         else:
             # Unscoped → all meetings with summaries
             with get_connection() as conn:
+                tenant_clause, tenant_params = _tenant_sql(ctx, conn=conn)
                 try:
                     rows = conn.execute(
-                        "SELECT id FROM meetings WHERE summary_status='ready'"
+                        "SELECT m.id FROM meetings m WHERE m.summary_status='ready'"
+                        + tenant_clause,
+                        tenant_params,
                     ).fetchall()
                 except sqlite3.OperationalError:
                     # Fallback for minimal schemas without summary_status column
                     rows = conn.execute(
                         "SELECT m.id FROM meetings m "
                         "JOIN meeting_summaries ms ON ms.meeting_id = m.id "
-                        "WHERE ms.summary IS NOT NULL"
+                        "WHERE ms.summary IS NOT NULL" + tenant_clause,
+                        tenant_params,
                     ).fetchall()
             all_ids = [row["id"] for row in rows]
-            if len(all_ids) <= settings.MEETING_SUMMARY_BROAD_INJECT_CAP:
+            if (
+                _is_broad_summary_request(ctx)
+                and len(all_ids) <= settings.MEETING_SUMMARY_BROAD_INJECT_CAP
+            ):
                 meeting_ids = all_ids
             else:
-                # Large corpus → route by summary similarity
+                # Relevance questions route even in a small corpus; broad
+                # enumeration is the only path that injects every meeting.
                 from ...services.rag._meeting_summary_vectorstore import (
                     route_meetings_by_summary,
                 )
@@ -623,20 +681,25 @@ def _load_meeting_summaries_for_context(
                 routed = route_meetings_by_summary(
                     ctx.rewritten_query or ctx.question,
                     top_k=settings.MEETING_SUMMARY_BROAD_INJECT_CAP,
+                    user_id=ctx.user_id,
                 )
-                meeting_ids = [mid for mid, _score in routed] if routed else all_ids
+                allowed = set(all_ids)
+                meeting_ids = [mid for mid, _score in (routed or []) if mid in allowed]
+                if not meeting_ids:
+                    meeting_ids = all_ids[: settings.RAG_MEETING_SUMMARY_ROUTER_TOP_MEETINGS]
 
         if not meeting_ids:
             return "", []
 
         with get_connection() as conn:
             placeholders = ",".join("?" for _ in meeting_ids)
+            tenant_clause, tenant_params = _tenant_sql(ctx, conn=conn)
             rows = conn.execute(
                 f"SELECT m.id, m.title, m.created_at, ms.summary "
                 f"FROM meetings m "
                 f"LEFT JOIN meeting_summaries ms ON ms.meeting_id = m.id "
-                f"WHERE m.id IN ({placeholders}) AND ms.summary IS NOT NULL",
-                meeting_ids,
+                f"WHERE m.id IN ({placeholders}) AND ms.summary IS NOT NULL{tenant_clause}",
+                [*meeting_ids, *tenant_params],
             ).fetchall()
 
         if not rows:
@@ -653,7 +716,9 @@ def _load_meeting_summaries_for_context(
             summary_text = (row["summary"] or "").strip()
             if not summary_text:
                 continue
-            summary_text = _INTERNAL_TOKEN_RE_2.sub("", summary_text)
+            from ..llm._parsing import strip_thinking_blocks
+
+            summary_text = strip_thinking_blocks(_INTERNAL_TOKEN_RE_2.sub("", summary_text))
             if truncation is not None and len(summary_text) > truncation:
                 summary_text = summary_text[:truncation] + "..."
 

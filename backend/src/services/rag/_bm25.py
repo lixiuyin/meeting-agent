@@ -16,6 +16,7 @@ def _bm25_retrieve(
     *,
     trace: TraceContext | None = None,
     speaker_names: list[str] | None = None,
+    user_id: str | None = None,
 ) -> list[dict]:
     """FTS5 full-text retrieval using SQLite built-in BM25 ranking."""
     from ._bm25_maintenance import is_bm25_rebuilding
@@ -25,6 +26,7 @@ def _bm25_retrieve(
         return []
 
     from ...core.database import fts5_search, get_connection
+    from ...core.index_manifest import index_config_fingerprint
 
     if trace:
         trace.start_span("bm25_search", "retrieve", parent_label="retrieve")
@@ -37,6 +39,8 @@ def _bm25_retrieve(
                 file_ids=file_ids,
                 limit=k,
                 speaker_names=speaker_names,
+                user_id=user_id,
+                config_fingerprint=index_config_fingerprint(),
             )
     except Exception as e:
         if trace:
@@ -71,11 +75,14 @@ def _bm25_retrieve(
         # Flat mode or direct parent hit: keep as-is, inject chunk_id if missing
         if "chunk_id" not in meta:
             meta = {**meta, "chunk_id": r["chunk_id"]}
+        from ._contextual import restore_display_content
+
         out.append(
             {
-                "content": r["content"],
+                "content": restore_display_content(r["content"], meta),
                 "metadata": meta,
                 "score": score,
+                "score_kind": "relevance",
             }
         )
 
@@ -87,7 +94,7 @@ def _bm25_retrieve(
             list(parent_id_to_best_score.keys()),
             parent_id_to_best_score,
         )
-        out.extend(parents)
+        out.extend({**parent, "score_kind": "relevance"} for parent in parents)
 
     if trace:
         trace.finish_span("bm25_search")

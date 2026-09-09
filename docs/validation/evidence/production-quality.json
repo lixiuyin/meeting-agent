@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "gate": "production_quality_passed",
+  "passed": false,
+  "reviewer": "automated-local-audit",
+  "generated_at": "2026-09-09T00:00:00Z",
+  "expires_at": "2026-09-16T00:00:00Z",
+  "implementation_fingerprints": {
+    "dataset_fingerprint_sha256": "77836c65be280b0cf781b0c40b4c691d9ed386f67a06273a74d4634762349007",
+    "harness_fingerprint_sha256": "d4a40672fa771ee55dc1e23c70f66a78a2bf6b992d06faf08c9dc211b2ad5751",
+    "implementation_fingerprint_sha256": "d68c74c77885144e6a39539996e6828353403b8564aae333a1b3c00d319c32e1"
+  },
+  "details": {
+    "benchmark_valid": false,
+    "benchmark_release_ready": false,
+    "human_reviewed": false,
+    "observed_cases": 0,
+    "judge_repeats": 0,
+    "independent_judge": false,
+    "reranker_evaluated_queries": 0,
+    "quality_thresholds_passed": false,
+    "benchmark_sha256": null,
+    "holdout_sha256": null,
+    "note": "No reviewed principal-scoped production holdout has been accepted for this implementation."
+  }
+}

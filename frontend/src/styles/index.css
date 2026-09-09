@@ -61,6 +61,13 @@
   --color-error-light: #f87171;
   --color-info: #3b82f6;
 
+  /* Status text colors are theme-specific so badges remain readable. */
+  --color-status-uploading: #4b5563;
+  --color-status-processing: #1d4ed8;
+  --color-status-summarizing: #6d28d9;
+  --color-status-ready: #047857;
+  --color-status-failed: #b91c1c;
+
   /* Primary Shortcuts */
   --color-primary: var(--color-primary-600);
   --color-primary-light: var(--color-primary-500);
@@ -84,8 +91,8 @@
   /* Text Colors */
   --color-text-primary: #0f1419;
   --color-text-secondary: #536471;
-  --color-text-tertiary: #8899a6;
-  --color-text-muted: #b0bec5;
+  --color-text-tertiary: #5f6f7c;
+  --color-text-muted: #596875;
   --color-text-inverse: #ffffff;
 
   /* Border Colors */
@@ -146,9 +153,15 @@
   /* Text Colors */
   --color-text-primary: #e6edf3;
   --color-text-secondary: #8b949e;
-  --color-text-tertiary: #6e7681;
-  --color-text-muted: #484f58;
+  --color-text-tertiary: #9ba7b4;
+  --color-text-muted: #a8b3bf;
   --color-text-inverse: #0d1117;
+
+  --color-status-uploading: #d1d5db;
+  --color-status-processing: #93c5fd;
+  --color-status-summarizing: #c4b5fd;
+  --color-status-ready: #6ee7b7;
+  --color-status-failed: #fca5a5;
 
   /* Border Colors */
   --color-border: #30363d;
@@ -221,6 +234,77 @@ body.main-content-scroll-locked {
 
 body.main-content-scroll-locked #main-content {
   overflow: hidden !important;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* A semantic sibling button can cover a card without nesting interactive
+   controls. Toolbars and checkboxes sit above this primary action. */
+.card-primary-action {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 0;
+  border-radius: inherit;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.card-primary-action:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: -3px;
+}
+
+.card-interactive-control {
+  position: relative;
+  z-index: 2;
+}
+
+.settings-narrow-tabs > .ant-tabs > .ant-tabs-nav {
+  display: none;
+}
+
+/* Ant Design's default placeholder and secondary colors are intentionally
+   subtle, but below WCAG AA against this application's surfaces. */
+.ant-select-placeholder,
+.ant-select-selection-placeholder,
+.ant-input::placeholder,
+.ant-input-textarea textarea::placeholder,
+.ant-typography-secondary,
+.ant-typography-expand {
+  color: var(--color-text-muted) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .ant-tag-cyan {
+  color: #0e7490 !important;
+}
+
+[data-theme="light"] .ant-tag-geekblue {
+  color: #3730a3 !important;
+}
+
+[data-theme="dark"] .ant-tag-cyan {
+  color: #67e8f9 !important;
+}
+
+[data-theme="dark"] .ant-tag-geekblue {
+  color: #a5b4fc !important;
+}
+
+[data-theme="dark"] .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #a5b4fc !important;
 }
 
 #root {
@@ -377,6 +461,12 @@ body.main-content-scroll-locked #main-content {
 .ant-layout-header .ant-tabs-tab-active .ant-tabs-tab-btn {
   color: var(--color-primary) !important;
   font-weight: 600;
+}
+
+html[data-theme="dark"] .app-navigation-tabs .ant-tabs-tab-active,
+html[data-theme="dark"] .app-navigation-tabs .ant-tabs-tab-active .ant-tabs-tab-btn,
+html[data-theme="dark"] .app-navigation-tabs .ant-tabs-tab-active .ant-tabs-tab-btn * {
+  color: #a5b4fc !important;
 }
 
 .ant-layout-header .ant-tabs-ink-bar {
@@ -1166,5 +1256,285 @@ body.main-content-scroll-locked #main-content {
     -webkit-background-clip: unset !important;
     background-clip: unset !important;
     -webkit-text-fill-color: currentColor !important;
+  }
+}
+/* Keep the chat context selectors usable without horizontal overflow. */
+.home-context-selectors {
+  display: flex;
+  flex: 1 1 620px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.home-context-meeting-select {
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 400px;
+}
+
+.home-context-file-select {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 460px;
+}
+
+@media (max-width: 640px) {
+  .home-context-selectors {
+    flex-basis: 100%;
+    gap: 8px;
+  }
+
+  .home-context-meeting-select,
+  .home-context-file-select {
+    flex-basis: 100%;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+.entity-list-item + .entity-list-item,
+.session-summary-list-item + .session-summary-list-item,
+.memory-list-item + .memory-list-item {
+  border-top: 1px solid var(--color-border);
+}
+
+.memory-readable-title {
+  overflow-wrap: anywhere;
+}
+.memory-actions-trigger {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+}
+.memory-actions-menu button {
+  min-width: 44px;
+  min-height: 44px;
+}
+@media (max-width: 768px) {
+  .memory-list-item {
+    position: relative;
+  }
+  .memory-list-item .ant-space {
+    max-width: 100%;
+  }
+  .memory-list-item .ant-typography {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Let memory management use the full application viewport. The list keeps its
+   own scroll surface so filters and bulk actions remain available while the
+   user reviews a large memory store. */
+.memory-page-shell {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  max-width: 1600px;
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 12px 16px 24px;
+}
+
+.memory-page-card.ant-card {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.memory-page-card > .ant-card-body,
+.memory-page-tabs,
+.memory-page-tabs > .ant-tabs-content-holder,
+.memory-page-tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.memory-page-tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane-active {
+  height: 100%;
+  min-height: 0;
+}
+
+.memory-page-card > .ant-card-body,
+.memory-page-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.memory-page-tabs > .ant-tabs-content-holder {
+  flex: 1;
+}
+
+.memory-list-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.memory-memories-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.memory-library-select {
+  flex: 0 0 auto;
+}
+
+.memory-memories-panel > .memory-list-layout {
+  flex: 1;
+  height: auto;
+}
+
+.memory-list-scroll-region {
+  flex: 1;
+  min-height: 0;
+}
+
+.meeting-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.meeting-review-toolbar {
+  min-height: 32px;
+}
+
+.meeting-review-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.meeting-review-scroll-region {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.meeting-review-scroll-region > .ant-spin-container {
+  min-height: 100%;
+}
+
+.meeting-review-card.ant-card {
+  border-color: var(--color-border);
+  box-shadow: none;
+}
+
+.meeting-review-card-header {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.meeting-review-key {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-value {
+  margin: 4px 0 8px !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-markdown > :first-child,
+.meeting-review-markdown > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.meeting-review-markdown > :last-child,
+.meeting-review-markdown > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.meeting-review-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.meeting-review-metadata {
+  margin-bottom: 8px !important;
+}
+
+.meeting-review-evidence,
+.meeting-review-conflict {
+  margin: 12px 0;
+  padding: 12px;
+  border-left: 3px solid var(--color-border);
+  background: var(--color-bg-layout);
+}
+
+.meeting-review-evidence blockquote,
+.meeting-review-conflict blockquote {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-conflict > .ant-typography {
+  margin-bottom: 6px;
+}
+
+.meeting-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  margin-top: 12px;
+}
+
+.memory-list-scroll-region > .ant-spin,
+.memory-list-scroll-region > .ant-spin > .ant-spin-container,
+.memory-list-scroll-region > .ant-spin-nested-loading,
+.memory-list-scroll-region > .ant-spin-nested-loading > .ant-spin-container {
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 768px) {
+  .memory-page-shell {
+    display: block;
+    height: auto;
+    min-height: 100%;
+    padding: 8px 8px 16px;
+  }
+
+  .memory-page-card.ant-card,
+  .memory-page-card > .ant-card-body {
+    height: auto;
+  }
+
+  .memory-list-layout {
+    height: auto;
+  }
+
+  .memory-memories-panel {
+    height: auto;
+  }
+
+  .memory-list-scroll-region {
+    flex: none;
+    height: min(62dvh, 640px);
+    min-height: 320px;
+  }
+
+  .meeting-review-actions {
+    justify-content: flex-start;
+  }
+
+  .meeting-review-panel {
+    height: min(72dvh, 720px);
+    min-height: 420px;
   }
 }

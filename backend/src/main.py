@@ -39,16 +39,25 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     from .models.schemas import ErrorResponse
 
     request_id = getattr(request.state, "request_id", "unknown")
-    detail_str = str(exc.detail) if exc.detail is not None else ""
+    structured = exc.detail if isinstance(exc.detail, dict) else None
+    detail_str = (
+        str(structured.get("message", ""))
+        if structured is not None
+        else (str(exc.detail) if exc.detail is not None else "")
+    )
     body = ErrorResponse(
-        code=f"HTTP_{exc.status_code}",
+        code=(
+            str(structured.get("code", f"HTTP_{exc.status_code}"))
+            if structured is not None
+            else f"HTTP_{exc.status_code}"
+        ),
         message=detail_str,
         request_id=request_id,
-        details=None,
+        details=(structured.get("details") if structured is not None else None),
     ).model_dump()
     # Backward-compatible field for clients/tests that still read `detail`.
     body["detail"] = detail_str
-    return JSONResponse(status_code=exc.status_code, content=body)
+    return JSONResponse(status_code=exc.status_code, content=body, headers=exc.headers)
 
 
 @app.exception_handler(RuntimeError)

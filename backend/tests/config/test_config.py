@@ -18,6 +18,13 @@ class TestSettings:
         assert settings_new.LLM_TEMPERATURE == 0.5
         assert settings_new.API_KEY.get_secret_value() == "test-api-key"
 
+    def test_blank_optional_principal_id_is_unset(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("PRINCIPAL_ID", "")
+
+        assert Settings().PRINCIPAL_ID is None
+
     def test_settings_basic_values(self):
         """Test that settings can be accessed and have expected structure"""
         from src.core.config import settings
@@ -54,6 +61,77 @@ class TestSettings:
         # Directories should exist
         assert upload_dir.exists()
         assert vectordb_dir.exists()
+
+    @pytest.mark.parametrize(
+        ("configured", "canonical"),
+        [("DEV", "dev"), ("staging", "staging"), ("prod", "production")],
+    )
+    def test_environment_is_normalized(self, configured, canonical, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("ENVIRONMENT", configured)
+        if canonical != "dev":
+            monkeypatch.setenv("API_KEY", "test-api-key")
+            monkeypatch.setenv("PRINCIPAL_PEPPER", "test-principal-pepper")
+            monkeypatch.setenv("CORS_ORIGINS", "https://example.test")
+            monkeypatch.setenv("TRUSTED_HOSTS", "example.test")
+
+        assert canonical == Settings().ENVIRONMENT
+
+    def test_invalid_environment_fails_closed(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("ENVIRONMENT", "prd")
+        with pytest.raises(ValueError, match="Invalid ENVIRONMENT"):
+            Settings()
+
+    def test_non_dev_rejects_current_raganything_dependency_chain(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("RAGANYTHING_ENABLED", "true")
+        with pytest.raises(ValueError, match="temporarily blocked"):
+            Settings()
+
+    def test_hybrid_provider_requires_enabled_gate(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("RAG_RETRIEVER_PROVIDER", "hybrid")
+        monkeypatch.setenv("HYBRID_SEARCH_ENABLED", "false")
+        with pytest.raises(ValueError, match="requires HYBRID_SEARCH_ENABLED=true"):
+            Settings()
+
+    def test_legacy_native_provider_is_normalized(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("RAG_RETRIEVER_PROVIDER", "native")
+        monkeypatch.setenv("HYBRID_SEARCH_ENABLED", "false")
+        assert Settings().RAG_RETRIEVER_PROVIDER == "vector"
+
+    def test_memory_scoring_weights_are_normalized_at_runtime(self, monkeypatch):
+        from src.core.config import Settings
+
+        monkeypatch.setenv("MEMORY_SCORING_SEMANTIC_WEIGHT", "0.8")
+        monkeypatch.setenv("MEMORY_SCORING_DECAY_WEIGHT", "0.4")
+        monkeypatch.setenv("MEMORY_SCORING_IMPORTANCE_WEIGHT", "0.3")
+        configured = Settings()
+        assert configured.MEMORY_SCORING_SEMANTIC_WEIGHT == 0.8
+        assert configured.MEMORY_SCORING_DECAY_WEIGHT == 0.4
+        assert configured.MEMORY_SCORING_IMPORTANCE_WEIGHT == 0.3
+
+    def test_memory_scoring_weights_cannot_all_be_zero(self, monkeypatch):
+        from src.core.config import Settings
+
+        for name in (
+            "MEMORY_SCORING_SEMANTIC_WEIGHT",
+            "MEMORY_SCORING_DECAY_WEIGHT",
+            "MEMORY_SCORING_IMPORTANCE_WEIGHT",
+            "MEMORY_SCORING_CONFIDENCE_WEIGHT",
+            "MEMORY_SCORING_USEFULNESS_WEIGHT",
+        ):
+            monkeypatch.setenv(name, "0")
+        with pytest.raises(ValueError, match=r"(?i)at least one"):
+            Settings()
 
 
 class TestConstants:

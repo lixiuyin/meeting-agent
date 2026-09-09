@@ -213,6 +213,7 @@ def list_entities(
     user_id: str,
     entity_type: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> list[dict]:
     """List entities for a user, ordered by mention_count desc."""
     if entity_type:
@@ -220,16 +221,16 @@ def list_entities(
             f"""SELECT {_ENTITY_BASE_COLS_E}, {_ENTITY_SCOPE_COLS_E}
                 FROM memory_entities e
                 WHERE e.user_id=? AND e.entity_type=?
-                ORDER BY e.mention_count DESC, e.updated_at DESC LIMIT ?""",
-            (user_id, entity_type, limit),
+                ORDER BY e.mention_count DESC, e.updated_at DESC LIMIT ? OFFSET ?""",
+            (user_id, entity_type, limit, offset),
         ).fetchall()
     else:
         rows = conn.execute(
             f"""SELECT {_ENTITY_BASE_COLS_E}, {_ENTITY_SCOPE_COLS_E}
                 FROM memory_entities e
                 WHERE e.user_id=?
-                ORDER BY e.mention_count DESC, e.updated_at DESC LIMIT ?""",
-            (user_id, limit),
+                ORDER BY e.mention_count DESC, e.updated_at DESC LIMIT ? OFFSET ?""",
+            (user_id, limit, offset),
         ).fetchall()
     records: list[dict] = []
     for r in rows:
@@ -237,6 +238,26 @@ def list_entities(
         record["aliases"] = _decode_aliases(record.get("aliases"))
         records.append(record)
     return records
+
+
+def count_entities(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    entity_type: str | None = None,
+) -> int:
+    """Count entities for a user using the same optional filter as ``list_entities``."""
+    if entity_type:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM memory_entities WHERE user_id=? AND entity_type=?",
+            (user_id, entity_type),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM memory_entities WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+    return int(row[0])
 
 
 def delete_entity(conn: sqlite3.Connection, *, entity_id: int) -> None:
@@ -258,15 +279,36 @@ def upsert_relation(
     object_id: int,
     confidence: float = 1.0,
     source_session: str | None = None,
+    evidence_message_ids: list[int] | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
 ) -> None:
     """Insert or ignore a knowledge-graph relation. Self-loops are silently skipped."""
     if subject_id == object_id:
         return
     conn.execute(
-        """INSERT OR IGNORE INTO memory_relations
-               (user_id, subject_id, predicate, object_id, confidence, source_session)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (user_id, subject_id, predicate, object_id, confidence, source_session),
+        """INSERT INTO memory_relations
+               (user_id, subject_id, predicate, object_id, confidence, source_session,
+                evidence_message_ids, valid_from, valid_to, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(user_id, subject_id, predicate, object_id) DO UPDATE SET
+               confidence=excluded.confidence,
+               source_session=COALESCE(excluded.source_session, source_session),
+               evidence_message_ids=COALESCE(excluded.evidence_message_ids, evidence_message_ids),
+               valid_from=COALESCE(excluded.valid_from, valid_from),
+               valid_to=excluded.valid_to,
+               updated_at=CURRENT_TIMESTAMP""",
+        (
+            user_id,
+            subject_id,
+            predicate,
+            object_id,
+            max(0.0, min(1.0, confidence)),
+            source_session,
+            json.dumps(evidence_message_ids) if evidence_message_ids else None,
+            valid_from,
+            valid_to,
+        ),
     )
 
 
@@ -283,6 +325,7 @@ def list_entity_relations(
     rows = conn.execute(
         """SELECT r.predicate, r.object_id AS other_id,
                   e.name AS other_name, e.entity_type AS other_type,
+                  r.confidence, r.evidence_message_ids, r.valid_from, r.valid_to,
                   'outgoing' AS direction
            FROM memory_relations r
            JOIN memory_entities e ON e.id = r.object_id
@@ -290,6 +333,7 @@ def list_entity_relations(
            UNION ALL
            SELECT r.predicate, r.subject_id AS other_id,
                   e.name AS other_name, e.entity_type AS other_type,
+                  r.confidence, r.evidence_message_ids, r.valid_from, r.valid_to,
                   'incoming' AS direction
            FROM memory_relations r
            JOIN memory_entities e ON e.id = r.subject_id

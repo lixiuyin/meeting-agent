@@ -94,19 +94,34 @@ backend/plans.txt
 # Archon
 .archon/
 
-# Benchmarks
-.benchmarks/
+# Private production benchmark artifacts
+backend/.private-benchmarks/
+
+# Local validation screenshots and reports may contain user source material.
+/artifacts/
+/backups/
 frontend/.benchmarks
 backend/tests/fixtures/Dataset
 
 # Test results
 frontend/test-results
+frontend/coverage/
 
 # Deliverables
 deliverables/
 
 # .env
 .env
+.env.compose
+
+# Runtime RAGAnything/LightRAG cache (may contain prompts and model output)
+/backend/rag_storage/
 
 # node_modules
 node_modules/
+
+# obsidian
+.obsidian/
+
+# schemathesis
+backend/.schemathesis/default/cache/

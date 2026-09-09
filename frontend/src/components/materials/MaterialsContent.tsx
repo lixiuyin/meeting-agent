@@ -44,6 +44,7 @@ export function SearchToolbar({
   onNewMeeting,
   onAddToExisting,
 }: SearchToolbarProps) {
+  const { formatMessage } = useIntl();
   return (
     <div
       style={{
@@ -55,7 +56,7 @@ export function SearchToolbar({
     >
       <Input
         prefix={<SearchOutlined />}
-        placeholder="Search materials..."
+        placeholder={formatMessage({ id: "materials.search" })}
         value={searchQuery}
         onChange={onSearchQueryChange}
         style={{ width: 240 }}
@@ -76,18 +77,22 @@ export function SearchToolbar({
         icon={sortOrder === "asc" ? <SortAscendingOutlined /> : <SortDescendingOutlined />}
         onClick={onToggleSortOrder}
       >
-        {sortField === "date" ? "Date" : sortField === "name" ? "Name" : sortField}
+        {sortField === "date"
+          ? formatMessage({ id: "materials.date" })
+          : sortField === "name"
+            ? formatMessage({ id: "materials.name" })
+            : sortField}
       </Button>
 
       <Button icon={<ReloadOutlined />} onClick={onRefresh} loading={loading}>
-        Refresh
+        {formatMessage({ id: "materials.refresh" })}
       </Button>
 
       <Button type="primary" icon={<PlusOutlined />} onClick={onNewMeeting}>
-        New Meeting
+        {formatMessage({ id: "materials.newMeeting" })}
       </Button>
       <Button icon={<UploadOutlined />} onClick={onAddToExisting}>
-        Add Files
+        {formatMessage({ id: "materials.addFiles" })}
       </Button>
     </div>
   );
@@ -148,7 +153,7 @@ export function MaterialsContent({
             ? formatMessage({ id: "materials.empty.title.searching" })
             : formatMessage({ id: "materials.empty.title.empty" })}
         </div>
-        <div style={{ fontSize: 14, opacity: 0.7 }}>
+        <div style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
           {isSearching
             ? formatMessage({ id: "materials.empty.hint.searching" }, { query: searchQuery })
             : formatMessage({ id: "materials.empty.hint.empty" })}

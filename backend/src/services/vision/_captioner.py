@@ -13,6 +13,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -83,13 +84,51 @@ class ImageCaption:
 
 def _vision_endpoint() -> tuple[str, str | None, str]:
     base_url = settings.VISION_BASE_URL or settings.LLM_BASE_URL or ""
-    api_key = (
-        settings.VISION_API_KEY.get_secret_value()
-        if settings.VISION_API_KEY is not None
-        else (settings.LLM_API_KEY.get_secret_value() if settings.LLM_API_KEY is not None else None)
+    vision_api_key = (
+        settings.VISION_API_KEY.get_secret_value() if settings.VISION_API_KEY is not None else ""
     )
+    llm_api_key = (
+        settings.LLM_API_KEY.get_secret_value() if settings.LLM_API_KEY is not None else ""
+    )
+    api_key = vision_api_key or llm_api_key or None
     model = settings.VISION_MODEL or settings.LLM_MODEL
     return base_url.rstrip("/"), api_key, model
+
+
+def _vision_payload(
+    image_path: str | Path,
+    *,
+    base_url: str,
+    prompt: str,
+    max_tokens: int,
+) -> dict:
+    """Build one OpenAI-compatible request with OpenRouter reasoning bounded.
+
+    Reasoning-capable VLMs can otherwise spend the complete output budget on
+    hidden reasoning and return ``content=null``. Other compatible providers
+    are left untouched because they may reject OpenRouter-specific fields.
+    """
+    payload = {
+        "model": settings.VISION_MODEL or settings.LLM_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
+                ],
+            }
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+    host = (urlparse(base_url).hostname or "").lower()
+    if host == "openrouter.ai" or host.endswith(".openrouter.ai"):
+        payload["reasoning"] = {
+            "effort": settings.VISION_REASONING_EFFORT,
+            "exclude": True,
+        }
+    return payload
 
 
 def _image_to_data_url(image_path: str | Path) -> str:
@@ -163,20 +202,16 @@ async def _call_vision(
 
     client = get_vision_client()
     url = f"{base_url}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
-                ],
-            }
-        ],
-        "temperature": 0,
-        "max_tokens": max_tokens,
-    }
+    try:
+        payload = _vision_payload(
+            image_path,
+            base_url=base_url,
+            prompt=prompt,
+            max_tokens=max_tokens,
+        )
+    except OSError:
+        logger.warning("Vision source is missing or unreadable: %s", image_path)
+        return None
     headers = {"Authorization": f"Bearer {api_key}"}
     max_attempts = max(1, settings.VISION_RETRY_MAX_ATTEMPTS)
     base_delay = max(0.0, settings.VISION_RETRY_BASE_DELAY_SECONDS)
@@ -345,20 +380,16 @@ async def extract_image_content(image_path: str | Path) -> CombinedImageContent 
 
     client = get_vision_client()
     url = f"{base_url}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _COMBINED_EXTRACTION_PROMPT},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
-                ],
-            }
-        ],
-        "temperature": 0,
-        "max_tokens": 600,
-    }
+    try:
+        payload = _vision_payload(
+            image_path,
+            base_url=base_url,
+            prompt=_COMBINED_EXTRACTION_PROMPT,
+            max_tokens=settings.VISION_COMBINED_MAX_TOKENS,
+        )
+    except OSError:
+        logger.warning("Vision source is missing or unreadable: %s", image_path)
+        return None
     headers = {"Authorization": f"Bearer {api_key}"}
     max_attempts = max(1, settings.VISION_RETRY_MAX_ATTEMPTS)
     base_delay = max(0.0, settings.VISION_RETRY_BASE_DELAY_SECONDS)

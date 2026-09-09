@@ -111,3 +111,33 @@ class TestIndexerDeletePartialFailure:
 
         pending_calls = [s for s in execute_calls if "pending_vector_deletions" in s]
         assert len(pending_calls) == 0
+
+    @pytest.mark.parametrize(
+        ("scope", "expected"),
+        [
+            ("meeting_7", (7, None)),
+            ("meeting_7_file_9", (7, 9)),
+        ],
+    )
+    def test_pending_scope_parser(self, scope, expected):
+        from src.services.rag._indexer_store import _parse_deletion_scope
+
+        assert _parse_deletion_scope(scope) == expected
+
+    def test_retry_chroma_file_scope_uses_typed_filter(self):
+        from src.services.rag._indexer_store import retry_pending_index_deletion
+
+        store = MagicMock()
+        with patch("src.services.rag._indexer_store.get_vectorstore", return_value=store):
+            retry_pending_index_deletion("chroma", "meeting_7_file_9")
+        store.delete.assert_called_once_with(where={"$and": [{"meeting_id": 7}, {"file_id": 9}]})
+
+    def test_retry_bm25_scope_propagates_failure(self):
+        from src.services.rag._indexer_store import retry_pending_index_deletion
+
+        with patch(
+            "src.services.rag._indexer_store._remove_from_bm25",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            with pytest.raises(RuntimeError, match="database unavailable"):
+                retry_pending_index_deletion("bm25", "meeting_7")

@@ -33,6 +33,7 @@ async def get_available_bindings() -> dict[str, Any]:
         "reranker": [
             "",
             "cohere",
+            "http",
             "bge",
         ],
         "tts": [

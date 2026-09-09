@@ -1,232 +1,327 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const SYNC_GUARD_MS = 350;
-const INTERSECTION_THRESHOLD = 0.5;
-const MAX_SCROLL_RETRIES = 6;
+import { findPdfExcerptRange } from "../../../utils/evidenceHighlight";
 
 type SyncSource = "pdf" | "parsed";
+type Anchor = {
+  page: number;
+  progress: number;
+  citation?: boolean;
+  blockText?: string;
+  blockProgress?: number;
+};
+const SOURCES: SyncSource[] = ["pdf", "parsed"];
+const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "]);
 
-interface UsePdfPageSyncOptions {
-  totalPages: number;
+function readingBlocks(page: HTMLElement) {
+  return [
+    ...page.querySelectorAll<HTMLElement>(
+      ".markdown-body p, .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body li",
+    ),
+  ].filter((node) => !node.querySelector("p,li") && (node.textContent?.trim().length ?? 0) >= 16);
 }
 
-interface UsePdfPageSyncReturn {
-  currentPage: number;
-  setCurrentPage: (page: number) => void;
-  syncSource: SyncSource | null;
-  scrollToPage: (source: SyncSource, pageNum: number) => void;
-  scrollBothToPage: (pageNum: number) => void;
-  registerPageRef: (pageNum: number, el: HTMLDivElement | null) => void;
-  pdfContainerRef: React.RefObject<HTMLDivElement | null>;
-  parsedContainerRef: React.RefObject<HTMLDivElement | null>;
+function textOf(node: HTMLElement) {
+  return node.textContent?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+type MatchedBlock = { text: string; node: HTMLElement; range: Range };
+const blockCache = new WeakMap<
+  HTMLElement,
+  { pdf: HTMLElement; signature: string; blocks: MatchedBlock[] }
+>();
+
+function matchedBlocks(parsed: HTMLElement, pdf: HTMLElement): MatchedBlock[] {
+  const signature = `${parsed.textContent}\0${pdf.textContent}`;
+  const cached = blockCache.get(parsed);
+  if (
+    cached?.pdf === pdf &&
+    cached.signature === signature &&
+    cached.blocks.every((b) => b.node.isConnected && b.range.startContainer.isConnected)
+  )
+    return cached.blocks;
+  const nodes = readingBlocks(parsed);
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const text = textOf(node);
+    counts.set(text, (counts.get(text) ?? 0) + 1);
+  }
+  const blocks = nodes.flatMap((node) => {
+    const text = textOf(node);
+    if (text.length > 1200 || counts.get(text) !== 1) return [];
+    const range = findPdfExcerptRange(pdf, text);
+    return range ? [{ text, node, range }] : [];
+  });
+  blockCache.set(parsed, { pdf, signature, blocks });
+  return blocks;
+}
+
+/** Match actual rendered text, not a percentage of two differently sized pages. */
+function semanticAnchor(
+  position: Anchor,
+  source: SyncSource,
+  panes: Partial<Record<SyncSource, HTMLDivElement>>,
+): Anchor {
+  const parsed = panes.parsed?.querySelector<HTMLElement>(`[data-page-num="${position.page}"]`);
+  const pdf = panes.pdf?.querySelector<HTMLElement>(`[data-page-num="${position.page}"]`);
+  const container = panes[source];
+  if (!parsed || !pdf || !container) return position;
+  const edge = container.getBoundingClientRect().top + container.clientTop;
+  const candidates = matchedBlocks(parsed, pdf)
+    .flatMap(({ node, text, range }) => {
+      const rect = source === "pdf" ? range.getBoundingClientRect() : node.getBoundingClientRect();
+      return rect.height > 0 ? [{ text, rect }] : [];
+    })
+    .sort((a, b) => a.rect.top - b.rect.top);
+  const preceding = candidates.filter((item) => item.rect.top <= edge + 12);
+  const at = preceding[preceding.length - 1];
+  if (!at || edge > at.rect.bottom + 24) return position;
+  return {
+    ...position,
+    blockText: at.text,
+    blockProgress: Math.max(0, Math.min(1, (edge - at.rect.top) / at.rect.height)),
+  };
+}
+
+function pageNodes(container: HTMLElement) {
+  return [...container.querySelectorAll<HTMLElement>("[data-page-num]")];
+}
+
+function layoutSignature(container: HTMLElement) {
+  return [
+    container.clientWidth,
+    container.clientHeight,
+    ...pageNodes(container).map(
+      (node) => `${node.dataset.pageNum}:${node.getBoundingClientRect().height}`,
+    ),
+  ].join("|");
+}
+
+// A top-edge reading anchor works even when a parsed page is taller than the viewport.
+function readAnchor(container: HTMLElement): Anchor | null {
+  const nodes = pageNodes(container);
+  if (!nodes.length) return null;
+  const edge = container.getBoundingClientRect().top + container.clientTop;
+  let index = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (nodes[i].getBoundingClientRect().top <= edge + 1) index = i;
+    else break;
+  }
+  const rect = nodes[index].getBoundingClientRect();
+  const next = nodes[index + 1]?.getBoundingClientRect();
+  const height = next ? next.top - rect.top : rect.height;
+  return {
+    page: Number(nodes[index].dataset.pageNum),
+    progress: Math.max(0, Math.min(0.999, (edge - rect.top) / Math.max(1, height))),
+  };
 }
 
 export default function usePdfPageSync({
   totalPages,
-}: UsePdfPageSyncOptions): UsePdfPageSyncReturn {
+  evidenceExcerpt,
+  enabled = true,
+}: {
+  totalPages: number;
+  evidenceExcerpt?: string;
+  enabled?: boolean;
+}) {
   const [currentPage, setCurrentPage] = useState(1);
-  const [syncSourceValue, setSyncSourceValue] = useState<SyncSource | null>(null);
-  const syncSource = useRef<SyncSource | null>(null);
-  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const pdfContainerRef = useRef<HTMLDivElement | null>(null);
-  const parsedContainerRef = useRef<HTMLDivElement | null>(null);
-  const guardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRetries = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const [syncSource, setSyncSource] = useState<SyncSource | null>(null);
+  const containers = useRef<Partial<Record<SyncSource, HTMLDivElement>>>({});
+  const cleanups = useRef<Partial<Record<SyncSource, () => void>>>({});
+  const anchor = useRef<Anchor>({ page: 1, progress: 0 });
+  const owner = useRef<SyncSource | null>(null);
+  const expectedScroll = useRef<Partial<Record<SyncSource, number>>>({});
+  const expectedLayout = useRef<Partial<Record<SyncSource, string>>>({});
+  const frame = useRef<number | null>(null);
+  const pendingUserScroll = useRef<SyncSource | null>(null);
 
-  const clearGuard = useCallback(() => {
-    if (guardTimer.current) {
-      clearTimeout(guardTimer.current);
-      guardTimer.current = null;
-    }
-  }, []);
+  const writeAnchor = useCallback(
+    (source: SyncSource) => {
+      const container = containers.current[source];
+      if (!container || !container.clientHeight) return;
+      const tail = container.clientHeight + "px";
+      if (container.style.getPropertyValue("--viewer-tail-space") !== tail) {
+        container.style.setProperty("--viewer-tail-space", tail);
+      }
+      const nodes = pageNodes(container);
+      const index = nodes.findIndex((node) => Number(node.dataset.pageNum) === anchor.current.page);
+      if (index < 0) return; // Never substitute a missing page with its array index.
+      const rect = nodes[index].getBoundingClientRect();
+      const next = nodes[index + 1]?.getBoundingClientRect();
+      const height = next ? next.top - rect.top : rect.height;
+      let top =
+        container.scrollTop +
+        rect.top -
+        container.getBoundingClientRect().top -
+        container.clientTop +
+        anchor.current.progress * height;
+      if (anchor.current.citation && evidenceExcerpt) {
+        const quote =
+          source === "parsed"
+            ? nodes[index].querySelector<HTMLElement>("[data-evidence-highlight]")
+            : findPdfExcerptRange(nodes[index], evidenceExcerpt);
+        if (quote) {
+          // Citation landing uses each representation's actual quotation position.
+          // Plain scrolling switches back to the shared page + progress anchor.
+          top += Math.max(0, quote.getBoundingClientRect().top - rect.top - 48);
+        }
+      } else if (anchor.current.blockText) {
+        const text = anchor.current.blockText;
+        const block =
+          source === "pdf"
+            ? findPdfExcerptRange(nodes[index], text)
+            : readingBlocks(nodes[index]).find((node) => textOf(node) === text);
+        if (block) {
+          const blockRect = block.getBoundingClientRect();
+          top =
+            container.scrollTop +
+            blockRect.top -
+            container.getBoundingClientRect().top -
+            container.clientTop +
+            (anchor.current.blockProgress ?? 0) * blockRect.height;
+        }
+      }
+      container.scrollTop = Math.max(0, top);
+      expectedScroll.current[source] = container.scrollTop;
+      expectedLayout.current[source] = layoutSignature(container);
+    },
+    [evidenceExcerpt],
+  );
 
-  const startGuardTimer = useCallback(() => {
-    clearGuard();
-    guardTimer.current = setTimeout(() => {
-      syncSource.current = null;
-      setSyncSourceValue(null);
-    }, SYNC_GUARD_MS);
-  }, [clearGuard]);
-
-  const scrollToPage = useCallback(
-    function scrollToPageImpl(source: SyncSource, pageNum: number, _attempt = 0) {
-      if (pageNum < 1 || pageNum > totalPages) return;
-
-      clearGuard();
-      syncSource.current = source;
-      setSyncSourceValue(source);
-      setCurrentPage(pageNum);
-
-      const scrollAndGuard = (target: HTMLElement) => {
-        target.scrollIntoView({ block: "start", behavior: "smooth" });
-        startGuardTimer();
-      };
-
-      if (source === "pdf") {
-        const el = pageRefs.current.get(pageNum);
-        if (el) scrollAndGuard(el);
-        else startGuardTimer();
+  const schedule = useCallback(() => {
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      const source = pendingUserScroll.current;
+      pendingUserScroll.current = null;
+      if (source && source === owner.current) {
+        const container = containers.current[source];
+        const position = container ? readAnchor(container) : null;
+        if (position) {
+          anchor.current = semanticAnchor(position, source, containers.current);
+          setCurrentPage(position.page);
+          // The user's pane is never moved by its follower.
+          if (enabled) writeAnchor(source === "pdf" ? "parsed" : "pdf");
+        }
       } else {
-        const container = pdfContainerRef.current;
-        if (!container) {
-          startGuardTimer();
+        // Zoom, late images and remounts preserve the logical reading position.
+        if (enabled) SOURCES.forEach(writeAnchor);
+      }
+    });
+  }, [writeAnchor, enabled]);
+
+  const connect = useCallback(
+    (source: SyncSource, container: HTMLDivElement | null) => {
+      cleanups.current[source]?.();
+      delete cleanups.current[source];
+      delete containers.current[source];
+      delete expectedScroll.current[source];
+      delete expectedLayout.current[source];
+      if (!container) return;
+      containers.current[source] = container;
+      container.dataset.pdfPane = source;
+      container.tabIndex = 0;
+      container.style.overflowAnchor = "none";
+      container.style.overscrollBehavior = "contain";
+      container.style.scrollBehavior = "auto";
+      const takeControl = (event: Event) => {
+        if (event instanceof KeyboardEvent && !SCROLL_KEYS.has(event.key)) return;
+        owner.current = source;
+        expectedLayout.current[source] = layoutSignature(container);
+        setSyncSource(source);
+      };
+      const onScroll = () => {
+        const expected = expectedScroll.current[source];
+        if (expected !== undefined && Math.abs(container.scrollTop - expected) < 1) return;
+        if (owner.current !== source) return;
+        if (expectedLayout.current[source] !== layoutSignature(container)) {
+          // Shrinking the document can clamp scrollTop before ResizeObserver
+          // runs. That is a layout correction, not a new user reading anchor.
+          schedule();
           return;
         }
-
-        const immediateTarget = container.querySelector(
-          `[data-page-num="${pageNum}"]`,
-        ) as HTMLElement | null;
-        if (immediateTarget) {
-          scrollAndGuard(immediateTarget);
-        } else if (_attempt < MAX_SCROLL_RETRIES) {
-          const nextAttempt = _attempt + 1;
-          const delay = _attempt === 0 ? 16 : 80 * nextAttempt;
-          const tid = setTimeout(() => {
-            pendingRetries.current.delete(tid);
-            scrollToPageImpl(source, pageNum, nextAttempt);
-          }, delay);
-          pendingRetries.current.add(tid);
-        } else {
-          startGuardTimer();
-        }
-      }
-    },
-    [totalPages, clearGuard, startGuardTimer],
-  );
-
-  const registerPageRef = useCallback((pageNum: number, el: HTMLDivElement | null) => {
-    if (el) {
-      pageRefs.current.set(pageNum, el);
-    } else {
-      pageRefs.current.delete(pageNum);
-    }
-  }, []);
-
-  // Scroll BOTH panes to the same page.  Used for initial citation jumps
-  // where the user expects PDF and parsed views to land on the target page
-  // simultaneously.  Retries while the PDF pages stream in via AutoSizer.
-  const scrollBothToPage = useCallback(
-    function scrollBothToPageImpl(pageNum: number, _attempt = 0) {
-      if (pageNum < 1 || pageNum > totalPages) return;
-      clearGuard();
-      // Mark as a programmatic scroll so the IntersectionObservers don't fire
-      // back-and-forth while smooth-scrolling settles.
-      syncSource.current = "pdf";
-      setSyncSourceValue("pdf");
-      setCurrentPage(pageNum);
-
-      const parsedEl = pageRefs.current.get(pageNum);
-      const pdfContainer = pdfContainerRef.current;
-      const pdfEl = pdfContainer?.querySelector(
-        `[data-page-num="${pageNum}"]`,
-      ) as HTMLElement | null;
-
-      let didScroll = false;
-      if (parsedEl) {
-        parsedEl.scrollIntoView({ block: "start", behavior: "smooth" });
-        didScroll = true;
-      }
-      if (pdfEl) {
-        pdfEl.scrollIntoView({ block: "start", behavior: "smooth" });
-        didScroll = true;
-      }
-
-      if (!didScroll && _attempt < MAX_SCROLL_RETRIES) {
-        const nextAttempt = _attempt + 1;
-        const delay = _attempt === 0 ? 32 : 100 * nextAttempt;
-        const tid = setTimeout(() => {
-          pendingRetries.current.delete(tid);
-          scrollBothToPageImpl(pageNum, nextAttempt);
-        }, delay);
-        pendingRetries.current.add(tid);
-        return;
-      }
-      startGuardTimer();
-    },
-    [totalPages, clearGuard, startGuardTimer],
-  );
-
-  // Helper: create an IntersectionObserver for a container
-  const createPaneObserver = useCallback(
-    (container: HTMLDivElement, source: SyncSource, oppositeSource: SyncSource) => {
-      const observer = new IntersectionObserver(
-        (entries) => {
-          if (syncSource.current === oppositeSource) return;
-
-          let bestPage = 0;
-          let bestRatio = 0;
-          for (const entry of entries) {
-            if (entry.intersectionRatio > bestRatio) {
-              bestRatio = entry.intersectionRatio;
-              const pageNum = Number((entry.target as HTMLElement).dataset.pageNum);
-              if (pageNum > 0) bestPage = pageNum;
-            }
-          }
-          if (bestPage > 0 && bestRatio >= INTERSECTION_THRESHOLD) {
-            scrollToPage(source, bestPage);
-          }
-        },
-        { root: container, threshold: INTERSECTION_THRESHOLD },
-      );
-
-      const observeAll = () => {
-        const pages = container.querySelectorAll("[data-page-num]");
-        for (const page of pages) observer.observe(page);
+        pendingUserScroll.current = source;
+        schedule();
       };
-
-      return { observer, observeAll };
+      const resize = new ResizeObserver(schedule);
+      const observed = new Set<Element>();
+      const observePages = () => {
+        const next = new Set<Element>([container, ...pageNodes(container)]);
+        for (const node of observed)
+          if (!next.has(node)) {
+            resize.unobserve(node);
+            observed.delete(node);
+          }
+        for (const node of next)
+          if (!observed.has(node)) {
+            resize.observe(node);
+            observed.add(node);
+          }
+        schedule();
+      };
+      const mutation = new MutationObserver(observePages);
+      mutation.observe(container, { childList: true, subtree: true });
+      observePages();
+      for (const type of ["wheel", "pointerdown", "touchstart", "keydown"])
+        container.addEventListener(type, takeControl, { passive: true });
+      container.addEventListener("scroll", onScroll, { passive: true });
+      cleanups.current[source] = () => {
+        mutation.disconnect();
+        resize.disconnect();
+        for (const type of ["wheel", "pointerdown", "touchstart", "keydown"])
+          container.removeEventListener(type, takeControl);
+        container.removeEventListener("scroll", onScroll);
+      };
     },
-    [scrollToPage],
+    [schedule],
   );
 
-  // Cleanup all pending retry timers on unmount
-  useEffect(() => {
-    const pending = pendingRetries.current;
-    return () => {
-      pending.forEach((tid) => clearTimeout(tid));
-      pending.clear();
-    };
-  }, []);
+  const pdfContainerRef = useCallback(
+    (node: HTMLDivElement | null) => connect("pdf", node),
+    [connect],
+  );
+  const parsedContainerRef = useCallback(
+    (node: HTMLDivElement | null) => connect("parsed", node),
+    [connect],
+  );
 
-  // IntersectionObserver for PDF pages (left pane)
-  useEffect(() => {
-    const container = pdfContainerRef.current;
-    if (!container) return;
+  const scrollBothToPage = useCallback(
+    (page: number, citation = false) => {
+      if (!Number.isInteger(page) || page < 1 || page > totalPages) return;
+      owner.current = null;
+      pendingUserScroll.current = null;
+      anchor.current = { page, progress: 0, citation };
+      setCurrentPage(page);
+      setSyncSource(null);
+      SOURCES.forEach(writeAnchor);
+      schedule();
+    },
+    [totalPages, schedule, writeAnchor],
+  );
 
-    const { observer, observeAll } = createPaneObserver(container, "pdf", "parsed");
-    observeAll();
+  const scrollToPage = useCallback(
+    (_source: SyncSource, page: number) => {
+      scrollBothToPage(page);
+    },
+    [scrollBothToPage],
+  );
 
-    // Re-observe after a frame to catch late-rendered PDF pages (AutoSizer)
-    const rafId = requestAnimationFrame(observeAll);
-
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(rafId);
-    };
-  }, [createPaneObserver, totalPages]);
-
-  // IntersectionObserver for parsed pages (right pane)
-  useEffect(() => {
-    const container = parsedContainerRef.current;
-    if (!container) return;
-
-    const { observer, observeAll } = createPaneObserver(container, "parsed", "pdf");
-    observeAll();
-
-    return () => observer.disconnect();
-  }, [createPaneObserver, totalPages]);
+  useEffect(
+    () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+    },
+    [],
+  );
 
   return {
     currentPage,
-    setCurrentPage,
-    syncSource: syncSourceValue,
+    syncSource,
     scrollToPage,
     scrollBothToPage,
-    registerPageRef,
     pdfContainerRef,
     parsedContainerRef,
   };
 }
 
-export { SYNC_GUARD_MS, INTERSECTION_THRESHOLD };
 export type { SyncSource };

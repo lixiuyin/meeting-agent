@@ -13,10 +13,15 @@
     "url": "https://github.com/lixiuyin/meeting-agent/issues"
   },
   "type": "module",
+  "engines": {
+    "node": ">=22 <26"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "build": "tsc -b && vite build && npm run bundle:check",
+    "bundle:check": "node scripts/check-bundle-size.mjs",
+    "preview": "vite preview --host 0.0.0.0 --port 8307 --strictPort",
+    "preview:e2e": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
@@ -24,7 +29,8 @@
     "test": "vitest",
     "test:run": "vitest --run",
     "e2e": "playwright test",
-    "e2e:ci": "playwright test --project=chromium",
+    "e2e:ci": "playwright test",
+    "e2e:full-stack": "E2E_ENVIRONMENT=production E2E_API_KEY=e2e-test-key-primary ../scripts/run-isolated-e2e-smoke.sh e2e/full-stack",
     "e2e:headed": "PLAYWRIGHT_HEADED=1 playwright test --project=chromium",
     "type-check": "tsc --noEmit",
     "mutation": "stryker run"
@@ -62,15 +68,18 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "axe-core": "^4.13.0",
     "eslint": "^10.2.1",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "jsdom": "^29.0.2",
+    "openapi-typescript": "7.13.0",
     "prettier": "^3.4.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.0.0",
     "vite": "^6.0.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.11"
   }
 }

@@ -180,18 +180,18 @@ def _sync_file_summary_vector(file_id: int, summary: str, *, meeting_id: int | N
             delete_file_summary(file_id)
             return
 
-        if meeting_id is None:
-            with get_connection() as conn:
-                row = get_meeting_file(conn, file_id)
-            if not row:
-                return
-            meeting_id = int(row["meeting_id"])
-            file_name = row.get("file_name")
-            file_type = row.get("file_type")
-        else:
-            # meeting_id was provided by the caller — avoid the extra DB round-trip
-            file_name = None
-            file_type = None
+        # Ownership metadata is part of the routing isolation contract, so
+        # resolve the authoritative row even when the caller already knows the
+        # meeting id.  This also keeps older call sites from silently creating
+        # unscoped summary vectors.
+        with get_connection() as conn:
+            row = get_meeting_file(conn, file_id)
+        if not row:
+            return
+        meeting_id = int(row["meeting_id"])
+        file_name = row.get("file_name")
+        file_type = row.get("file_type")
+        user_id = row.get("user_id") or "default"
 
         upsert_file_summary(
             file_id,
@@ -199,6 +199,7 @@ def _sync_file_summary_vector(file_id: int, summary: str, *, meeting_id: int | N
             meeting_id=meeting_id,
             file_name=file_name,
             file_type=file_type,
+            extra_metadata={"user_id": user_id},
         )
     except Exception:
         logger.warning("Summary vector sync failed for file %d", file_id, exc_info=True)
@@ -293,6 +294,13 @@ async def _ws_notify_summary_status(
 
 
 async def schedule_post_ready_summary(file_id: int, meeting_id: int) -> None:
+    """Persist a summary job so it survives API restarts."""
+    from ..summaries import enqueue_file_summary
+
+    await enqueue_file_summary(file_id, meeting_id)
+
+
+async def run_post_ready_summary(file_id: int, meeting_id: int) -> None:
     """Auto-generate per-file summary after the file reaches ``status='summarizing'``.
 
     Idempotent: skips when ``summary_status`` is already ``'ready'``.
@@ -302,12 +310,12 @@ async def schedule_post_ready_summary(file_id: int, meeting_id: int) -> None:
     from ...core.database import get_connection, get_write_connection, update_file_summary_status
     from ..chain._per_file_summary import generate_per_file_summary
 
-    # Idempotency guard
+    # Idempotency guard and crash-recovery state reconciliation.
     with get_connection() as conn:
         from ...core.database import get_meeting_file
 
         row = get_meeting_file(conn, file_id)
-    if not row or row.get("summary_status") == "ready":
+    if not row:
         return
 
     file_type = row.get("file_type", "unknown")
@@ -324,6 +332,15 @@ async def schedule_post_ready_summary(file_id: int, meeting_id: int) -> None:
 
             update_meeting_file_status(wconn, file_id, "ready")
             _update_meeting_status_from_files(wconn, meeting_id)
+
+    if row.get("summary_status") == "ready":
+        # A process can stop after persisting the summary but before advancing
+        # the file lifecycle.  Replayed durable jobs must finish that state
+        # transition instead of treating the half-committed state as a no-op.
+        if is_summarizing:
+            await asyncio.to_thread(_finalize_file_status)
+            await _maybe_finalize_meeting_summary(meeting_id)
+        return
 
     if not transcript:
         # Nothing to summarize — advance file to ready immediately
@@ -416,23 +433,11 @@ async def _maybe_finalize_meeting_summary(meeting_id: int) -> None:
         return
 
     # All files done — trigger meeting-level summary
-    _maybe_trigger_meeting_summary(meeting_id)
+    await _maybe_trigger_meeting_summary(meeting_id)
 
 
-def _maybe_trigger_meeting_summary(meeting_id: int) -> None:
-    """Fire-and-forget meeting summary generation.
+async def _maybe_trigger_meeting_summary(meeting_id: int) -> None:
+    """Persist one idempotent meeting-summary job."""
+    from ..summaries import enqueue_meeting_summary
 
-    Reuses the existing ``_auto_summarize_meeting`` if the event loop is
-    running; otherwise silently skips (will be caught on next startup).
-    """
-    import asyncio
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
-    from ._pipeline_summary import _auto_summarize_meeting
-
-    _task = loop.create_task(_auto_summarize_meeting(meeting_id))
-    _task.add_done_callback(lambda _t: None)  # prevent "task not awaited" warning
+    await enqueue_meeting_summary(meeting_id)

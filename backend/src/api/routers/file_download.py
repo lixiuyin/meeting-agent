@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from ...api.middleware import limiter
 from ...core import database as db
 from ...core.config import settings
-from ...core.security import is_dev_user, verify_api_key
+from ...core.security import _derive_user_id_from_api_key, is_dev_user, verify_api_key
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 logger = logging.getLogger(__name__)
@@ -192,7 +192,7 @@ class FileTokenResponse(BaseModel):
 
 
 @router.post("/file-token", dependencies=[Depends(verify_api_key)])
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def create_file_token(
     request: Request,
     principal: dict[str, str] = Depends(verify_api_key),
@@ -201,7 +201,8 @@ async def create_file_token(
 
     Requires X-API-Key header. The returned token is bound to the requesting
     user, valid for 5 minutes, and can be used as a ``?token=`` query
-    parameter for file download URLs.
+    parameter for extracted asset URLs. Per-file downloads must use the
+    file-bound ``signed-url`` endpoint instead.
 
     This avoids exposing the API key in URLs (browser history, server logs,
     referrer headers) while still allowing media elements to access files.
@@ -256,12 +257,11 @@ async def get_meeting_file(
 
     Authentication: Either ``X-API-Key`` header or ``?token=`` query parameter.
     """
-    from ...core.security import _derive_user_id_from_api_key
-
     configured_key = settings.API_KEY.get_secret_value()
-    user_id = "default"
-    if configured_key and x_api_key:
-        user_id = _derive_user_id_from_api_key(x_api_key)
+    # A token-only browser request has no API-key header, but the deployment
+    # currently has one configured proxy principal. Validate and authorize the
+    # token against that same principal rather than the legacy dev principal.
+    user_id = _derive_user_id_from_api_key(configured_key) if configured_key else "default"
 
     _verify_file_access(x_api_key, token, meeting_id=meeting_id, file_id=file_id, user_id=user_id)
 
@@ -307,11 +307,9 @@ async def get_meeting_asset(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
     """Stream an extracted image asset (or thumbnail) by relative path."""
-    from ...core.security import _derive_user_id_from_api_key
-
     configured_key = settings.API_KEY.get_secret_value()
     if configured_key:
-        user_id = _derive_user_id_from_api_key(x_api_key) if x_api_key else "default"
+        user_id = _derive_user_id_from_api_key(configured_key)
         valid_token = token and _validate_global_file_token(token, user_id=user_id)
         valid_api_key = x_api_key and hmac_mod.compare_digest(x_api_key, configured_key)
         if not (valid_token or valid_api_key):

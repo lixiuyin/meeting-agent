@@ -9,6 +9,14 @@ from ...core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def source_metadata(metadata: dict | None, document_id: object = None) -> dict:
+    """Carry the actual vector record identity, including legacy index entries."""
+    result = dict(metadata or {})
+    if isinstance(document_id, str) and document_id:
+        result["chunk_id"] = document_id
+    return result
+
+
 def resolve_parent_chunks_by_ids(
     parent_ids: list[str],
     child_scores: dict[str, float],
@@ -32,14 +40,16 @@ def resolve_parent_chunks_by_ids(
         logger.warning("Failed to fetch parent chunks", exc_info=True)
         return []
 
+    from ._contextual import restore_display_content
+
     out = []
     for idx, content in enumerate(parent_data["documents"]):
-        meta = parent_data["metadatas"][idx]
         pid = parent_data["ids"][idx]
+        meta = source_metadata(parent_data["metadatas"][idx], pid)
         if pid in child_scores:
             out.append(
                 {
-                    "content": content,
+                    "content": restore_display_content(content, meta),
                     "metadata": meta,
                     "score": float(child_scores[pid]),
                 }
@@ -115,14 +125,18 @@ def _resolve_parents_by_offset(
         return
 
     offset_set = set(offset_map.keys())
+    from ._contextual import restore_display_content
+
     for idx, meta in enumerate(all_parents.get("metadatas", [])):
+        ids = all_parents.get("ids", [])
+        meta = source_metadata(meta, ids[idx] if idx < len(ids) else None)
         p_start = meta.get("parent_start_offset")
         p_end = meta.get("parent_end_offset")
         if isinstance(p_start, int) and isinstance(p_end, int) and (p_start, p_end) in offset_set:
             score = offset_map[(p_start, p_end)]
             results.append(
                 {
-                    "content": all_parents["documents"][idx],
+                    "content": restore_display_content(all_parents["documents"][idx], meta),
                     "metadata": meta,
                     "score": float(score),
                 }
@@ -158,3 +172,33 @@ def normalize_score(raw: float, lower_is_better: bool) -> float:
             return 0.0
         return 1.0 / denominator
     return raw
+
+
+def normalize_document_scores(
+    docs: list[dict],
+    *,
+    legacy_lower_is_better: bool = False,
+) -> list[dict]:
+    """Return documents under the public higher-is-better score contract.
+
+    Retrieval adapters mark raw vector distances with ``score_kind=distance``.
+    BM25, RRF, multimodal, funnel, and reranker outputs use
+    ``score_kind=relevance``.  The legacy fallback is only for old callers that
+    have not yet attached provenance; public retrieval results should always be
+    returned with explicit relevance provenance.
+    """
+    normalized: list[dict] = []
+    for doc in docs:
+        raw = float(doc.get("score", 0.0))
+        score_kind = doc.get("score_kind")
+        lower_is_better = score_kind == "distance" or (
+            score_kind not in {"distance", "relevance"} and legacy_lower_is_better
+        )
+        normalized.append(
+            {
+                **doc,
+                "score": normalize_score(raw, lower_is_better),
+                "score_kind": "relevance",
+            }
+        )
+    return normalized

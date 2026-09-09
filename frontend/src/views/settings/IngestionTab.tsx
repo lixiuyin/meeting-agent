@@ -45,7 +45,10 @@ export function IngestionTab() {
             </span>
           }
         >
-          <Input.Password placeholder="Set via environment variable" disabled />
+          <Input.Password
+            placeholder={formatMessage({ id: "settings.placeholder.environmentOnly" })}
+            disabled
+          />
         </Form.Item>
         <div style={twoColGrid}>
           <Form.Item
@@ -152,7 +155,9 @@ export function IngestionTab() {
           name={["ocr", "marker_api_key"]}
           label={formatMessage({ id: "settings.ingestion.markerApiKey" })}
         >
-          <Input.Password placeholder="Leave blank to keep existing" />
+          <Input.Password
+            placeholder={formatMessage({ id: "settings.placeholder.keepExisting" })}
+          />
         </Form.Item>
 
         <div style={twoColGrid}>
@@ -173,7 +178,9 @@ export function IngestionTab() {
           name={["ocr", "mineru_api_key"]}
           label={formatMessage({ id: "settings.ingestion.mineruApiKey" })}
         >
-          <Input.Password placeholder="Leave blank to keep existing" />
+          <Input.Password
+            placeholder={formatMessage({ id: "settings.placeholder.keepExisting" })}
+          />
         </Form.Item>
 
         <div style={twoColGrid}>
@@ -187,7 +194,9 @@ export function IngestionTab() {
             name={["ocr", "paddleocr_api_key"]}
             label={formatMessage({ id: "settings.ingestion.paddleApiKey" })}
           >
-            <Input.Password placeholder="Leave blank to keep existing" />
+            <Input.Password
+              placeholder={formatMessage({ id: "settings.placeholder.keepExisting" })}
+            />
           </Form.Item>
         </div>
       </Card>

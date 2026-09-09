@@ -1,5 +1,6 @@
 """Tests for meeting summary and reprocess endpoints."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -242,6 +243,12 @@ class TestReprocess:
         data = resp.json()
         assert data["message"] == "File reprocessing started"
         assert data["meeting_id"] == mid
+        with get_write_connection() as conn:
+            job = conn.execute(
+                "SELECT payload_json FROM durable_jobs WHERE dedupe_key=?",
+                (f"file:{fid}",),
+            ).fetchone()
+        assert json.loads(job["payload_json"])["force_native_reindex"] is True
 
     @pytest.mark.asyncio
     async def test_reprocess_single_file_not_found(self, client, auth_headers):

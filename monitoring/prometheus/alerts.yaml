@@ -2,13 +2,28 @@ groups:
   - name: meeting-agent-slo
     rules:
       - alert: ChatLatencyP95High
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{path="/api/v1/chat"}[5m])) > 5
-        for: 10m
+        expr: max(histogram_quantile(0.95, sum by (le, endpoint) (rate(chat_completion_duration_seconds_bucket{endpoint=~"/api/v1/chat(/stream)?"}[5m])))) > 3
+        for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "Chat endpoint latency P95 above 5s"
-          description: "The 95th percentile latency for the chat endpoint has been above 5 seconds for 10 minutes."
+          summary: "Chat endpoint latency P95 above 3s"
+          description: "The full chat response latency has been above the 3-second P95 objective for 15 minutes."
+
+      - alert: ChatAvailabilityLow
+        expr: sum(rate(chat_completion_total{outcome!="success"}[30m])) / sum(rate(chat_completion_total[30m])) > 0.005
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Chat availability below 99.5%"
+          description: "Includes HTTP failures, terminal SSE errors, and incomplete responses."
+
+      - record: meeting_agent:chat_availability:30d
+        expr: 1 - ((sum(increase(chat_completion_total{outcome!="success"}[30d])) or (0 * sum(increase(chat_completion_total[30d])))) / sum(increase(chat_completion_total[30d])))
+
+      - record: meeting_agent:chat_p95_seconds:30d
+        expr: max(histogram_quantile(0.95, sum by (le, endpoint) (increase(chat_completion_duration_seconds_bucket{endpoint=~"/api/v1/chat(/stream)?"}[30d]))))
 
       - alert: ErrorRateHigh
         expr: rate(http_request_duration_seconds_count{status=~"5.."}[5m]) / rate(http_request_duration_seconds_count[5m]) > 0.05
@@ -47,10 +62,7 @@ groups:
           description: "The backend process is using more than 3.5 GB of resident memory."
 
       - alert: DiskUsageHigh
-        expr: |
-          (node_filesystem_size_bytes{mountpoint="/data"} -
-           node_filesystem_free_bytes{mountpoint="/data"}) /
-           node_filesystem_size_bytes{mountpoint="/data"} > 0.8
+        expr: app_data_disk_usage_ratio > 0.8
         for: 10m
         labels:
           severity: warning
@@ -86,17 +98,17 @@ groups:
           description: "A background task has been running for over 300 seconds. It may be hung or leaking."
 
       - alert: VectorStoreOrphansGrowing
-        expr: rate(vectorstore_orphan_total[1h]) > 10
+        expr: pending_vector_deletion_jobs{status="pending"} > 10
         for: 1h
         labels:
           severity: warning
         annotations:
-          summary: "Vector store orphans accumulating"
-          description: "Vector store is accumulating orphaned vectors faster than cleanup can process. Check Chroma connectivity."
+          summary: "Vector deletion backlog is growing"
+          description: "More than 10 vector deletion jobs remain pending. Check Chroma and index-store connectivity."
 
       - alert: SupervisedTaskExhausted
-        expr: rate(background_task_failures_total[10m]) > 0.1
-        for: 10m
+        expr: increase(background_task_exhausted_total[10m]) > 0
+        for: 1m
         labels:
           severity: critical
         annotations:
@@ -122,10 +134,28 @@ groups:
           description: "The streaming event bus is experiencing heartbeat stalls. Clients may perceive the stream as frozen."
 
       - alert: VectorDeletionDeadLetters
-        expr: increase(pending_vector_deletions_dead_letter_total[30m]) > 0
-        for: 30m
+        expr: pending_vector_deletion_jobs{status="dead_letter"} > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Vector deletion dead letters detected"
           description: "Some vector deletions have exceeded the max retry attempts and been moved to dead letter. Check Chroma/vector store connectivity and manual cleanup may be needed."
+
+      - alert: DurableJobLeaseExpired
+        expr: durable_job_expired_running > 0 and durable_job_oldest_expired_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable job worker lease expired"
+          description: "At least one durable job has remained running with an expired lease for over 60 seconds. Check the embedded worker and dead-letter queue."
+
+      - alert: NativeIndexRepairBacklog
+        expr: index_repair_pending > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Native index repairs remain pending"
+          description: "One or more ready files have a Chroma/BM25 generation or configuration mismatch. Check the durable file-processing queue."

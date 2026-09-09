@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HEALTH_URL="${HEALTH_URL:-http://localhost:7008/api/v1/health}"
+HEALTH_URL="${HEALTH_URL:-http://localhost:7008/api/v1/health/ready}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-120}"
 SLEEP_SECONDS=2
 

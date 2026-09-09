@@ -1,0 +1,185 @@
+{
+  "schema_version": 2,
+  "cases": [
+    {
+      "id": "followup_coreference",
+      "fixture_files": ["sample.pdf"],
+      "turns": [
+        {
+          "question": "What were the three blockers?",
+          "turn_type": "standalone",
+          "answerability": "answerable",
+          "expected_answer": "The mobile app was waiting for final UI designs, the database migration needed cloud-storage budget approval, and the analytics pipeline needed third-party API production access.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": [
+                "mobile app is waiting on final UI designs",
+                "cloud storage budget",
+                "third-party API"
+              ]
+            }
+          ]
+        },
+        {
+          "question": "Who owns the follow-up for the second one?",
+          "turn_type": "coreference_followup",
+          "answerability": "answerable",
+          "expected_answer": "Bob owns the cloud-storage budget follow-up.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Bob to submit a budget request", "January 18"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unanswerable_then_repair",
+      "fixture_files": ["sample.pdf", "sample.pptx"],
+      "turns": [
+        {
+          "question": "What budget amount was approved for cloud storage?",
+          "turn_type": "unanswerable",
+          "answerability": "unanswerable",
+          "expected_behavior": "abstain_without_inventing_amount"
+        },
+        {
+          "question": "Then tell me only who must submit the request and by when.",
+          "turn_type": "clarification",
+          "answerability": "answerable",
+          "expected_answer": "Bob must submit the budget request by January 18.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Bob to submit a budget request", "January 18"]
+            },
+            {
+              "file_name": "sample.pptx",
+              "content_contains": ["Bob: submit budget request"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "speaker_and_temporal_followup",
+      "fixture_files": ["sample.pdf", "sample.pptx"],
+      "turns": [
+        {
+          "question": "Who was responsible for the three blocker follow-ups?",
+          "turn_type": "standalone",
+          "answerability": "answerable",
+          "expected_answer": "Alice was responsible for design follow-up, Bob for the storage budget request, and Carol for production API credentials.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Alice to follow up", "Bob to submit", "Carol to contact"]
+            }
+          ]
+        },
+        {
+          "question": "What deadline was given for Bob's one?",
+          "turn_type": "coreference_temporal_followup",
+          "answerability": "answerable",
+          "expected_answer": "Bob had to submit the cloud-storage budget request by January 18.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Bob to submit a budget request", "January 18"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cjk_coreference_and_deadline",
+      "fixture_files": ["sample.pdf", "sample.pptx"],
+      "turns": [
+        {
+          "question": "这次规划会议提出了哪三项工程优先级？",
+          "turn_type": "cross_lingual_standalone",
+          "answerability": "answerable",
+          "expected_answer": "三项优先级是2月15日前发布移动应用、3月1日前将旧数据库迁移到PostgreSQL，以及建设新的分析管线。",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Launch the new mobile app", "Migrate the legacy database", "Implement the new analytics pipeline"]
+            }
+          ]
+        },
+        {
+          "question": "其中第二项的截止日期是什么时候？",
+          "turn_type": "cross_lingual_coreference_followup",
+          "answerability": "answerable",
+          "expected_answer": "数据库迁移到PostgreSQL的截止日期是3月1日。",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pptx",
+              "content_contains": ["Migrate to PostgreSQL", "Mar 1"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cross_document_corroboration",
+      "fixture_files": ["sample.pdf", "sample.pptx"],
+      "turns": [
+        {
+          "question": "Which revenue and retention figures are corroborated by both artifacts?",
+          "turn_type": "multi_file_corroboration",
+          "answerability": "answerable",
+          "expected_answer": "Both artifacts report 12% quarter-over-quarter revenue growth and 94% customer retention.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["Revenue was up 12%", "retention reached an all-time high of 94%"]
+            },
+            {
+              "file_name": "sample.pptx",
+              "content_contains": ["Revenue up 12%", "retention at 94%"]
+            }
+          ]
+        },
+        {
+          "question": "Does the presentation also identify who owns the budget follow-up?",
+          "turn_type": "multi_file_followup",
+          "answerability": "answerable",
+          "expected_answer": "Yes. The presentation assigns the budget request to Bob.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pptx",
+              "content_contains": ["Bob: submit budget request"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unknown_vendor_then_grounded_repair",
+      "fixture_files": ["sample.pdf", "sample.pptx"],
+      "turns": [
+        {
+          "question": "Which third-party analytics API vendor was selected?",
+          "turn_type": "unanswerable_entity",
+          "answerability": "unanswerable",
+          "expected_behavior": "state that no vendor name is provided and do not invent one"
+        },
+        {
+          "question": "What dependency is actually stated about that API?",
+          "turn_type": "grounded_repair_followup",
+          "answerability": "answerable",
+          "expected_answer": "The analytics pipeline depends on a third-party API that has not provided production access.",
+          "expected_evidence": [
+            {
+              "file_name": "sample.pdf",
+              "content_contains": ["third-party API", "not yet provided", "production access"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

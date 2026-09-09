@@ -3,16 +3,15 @@
 from src.core import database as db
 from src.services.memory import memory_service
 from src.services.memory._service._search import (
-    _normalize_access_score,
     _normalize_importance,
+    _weighted_average,
 )
 
 
 def test_memory_score_components_are_normalized_to_same_range():
     assert _normalize_importance(1) == 0.0
     assert _normalize_importance(5) == 1.0
-    assert _normalize_access_score(0, 1.0) == 0.0
-    assert _normalize_access_score(1000, 1.0) == 1.0
+    assert _weighted_average((1.0, -1.0), (1.0, 2.0)) == 0.5
 
 
 def test_important_memory_search_is_not_dominated_by_access_count():

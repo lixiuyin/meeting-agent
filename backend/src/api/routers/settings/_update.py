@@ -1,14 +1,13 @@
 """Settings PUT / reload endpoints and helpers."""
 
-from typing import Any
-
 from fastapi import HTTPException, Request
 from pydantic import SecretStr, ValidationError
 
 from ....api.middleware import limiter
 from ....core.audit import audit_log
-from ....core.config import settings
+from ....core.config import Settings, settings
 from ....core.settings_epoch import bump_settings_epoch
+from ....core.settings_policy import classify_settings_changes
 from ....models.schemas import SettingsResponse, SettingsUpdateRequest
 from ....models.schemas._common import MessageResponse
 from ._common import (
@@ -35,52 +34,14 @@ def _is_masked_value(value: str) -> bool:
 
 
 def _rebuild_required(req: SettingsUpdateRequest) -> tuple[bool, str]:
-    """Return (needs_rebuild, reason) when setting changes invalidate vectors."""
-    reasons: list[str] = []
-
-    if req.embedding:
-        if req.embedding.binding != settings.EMBEDDING_BINDING:
-            reasons.append("embedding binding")
-        if req.embedding.model != settings.EMBEDDING_MODEL:
-            reasons.append("embedding model")
-        if req.embedding.dimension != settings.EMBEDDING_DIMENSION:
-            reasons.append("embedding dimension")
-
-    if req.rag:
-        checks: dict[str, tuple[Any, Any]] = {
-            "chunk_size": (req.rag.chunk_size, settings.CHUNK_SIZE),
-            "chunk_overlap": (req.rag.chunk_overlap, settings.CHUNK_OVERLAP),
-            "speaker_in_content": (req.rag.speaker_in_content, settings.AUDIO_SPEAKER_IN_CONTENT),
-            "audio_semantic_boundary_enabled": (
-                req.rag.audio_semantic_boundary_enabled,
-                settings.AUDIO_SEMANTIC_BOUNDARY_ENABLED,
-            ),
-            "audio_semantic_boundary_threshold": (
-                req.rag.audio_semantic_boundary_threshold,
-                settings.AUDIO_SEMANTIC_BOUNDARY_THRESHOLD,
-            ),
-            "audio_semantic_min_segments": (
-                req.rag.audio_semantic_min_segments,
-                settings.AUDIO_SEMANTIC_MIN_SEGMENTS,
-            ),
-            "audio_semantic_max_segments": (
-                req.rag.audio_semantic_max_segments,
-                settings.AUDIO_SEMANTIC_MAX_SEGMENTS,
-            ),
-            "split_on_speaker_change": (
-                req.rag.split_on_speaker_change,
-                settings.AUDIO_SPLIT_ON_SPEAKER_CHANGE,
-            ),
-            "non_text_chunking_strategy": (
-                req.rag.non_text_chunking_strategy,
-                settings.NON_TEXT_CHUNKING_STRATEGY,
-            ),
-        }
-        for name, (new_val, old_val) in checks.items():
-            if new_val is not None and new_val != old_val:
-                reasons.append(name)
-
-    return (bool(reasons), "; ".join(reasons))
+    """Compatibility helper backed by the centralized activation policy."""
+    candidate = _validated_settings_candidate(req)
+    fields = classify_settings_changes(settings, candidate)["reindex_required"]
+    reasons = [
+        field.lower().replace("_", " ") if field.startswith("EMBEDDING_") else field.lower()
+        for field in fields
+    ]
+    return bool(reasons), "; ".join(reasons)
 
 
 def _update_settings_in_memory(req: SettingsUpdateRequest) -> None:
@@ -111,6 +72,8 @@ def _update_settings_in_memory(req: SettingsUpdateRequest) -> None:
     if req.rag:
         settings.CHUNK_SIZE = req.rag.chunk_size
         settings.CHUNK_OVERLAP = req.rag.chunk_overlap
+        settings.CHUNK_SIZE_TOKENS = req.rag.chunk_size_tokens
+        settings.CHUNK_OVERLAP_TOKENS = req.rag.chunk_overlap_tokens
         settings.TOP_K = req.rag.top_k
         settings.QUERY_REWRITE_ENABLED = req.rag.query_rewrite_enabled
         if req.rag.query_rewrite_model is not None:
@@ -136,6 +99,8 @@ def _update_settings_in_memory(req: SettingsUpdateRequest) -> None:
         settings.PARENT_CHILD_ENABLED = req.rag.parent_child_enabled
         settings.CHILD_CHUNK_SIZE = req.rag.child_chunk_size
         settings.CHILD_CHUNK_OVERLAP = req.rag.child_chunk_overlap
+        settings.CHILD_CHUNK_SIZE_TOKENS = req.rag.child_chunk_size_tokens
+        settings.CHILD_CHUNK_OVERLAP_TOKENS = req.rag.child_chunk_overlap_tokens
         settings.HYBRID_SEARCH_ENABLED = req.rag.hybrid_search_enabled
         settings.HYBRID_ALPHA = req.rag.hybrid_alpha
         settings.RAG_RETRIEVER_PROVIDER = _normalize_retriever_provider(req.rag.retriever_provider)
@@ -361,30 +326,17 @@ def _update_settings_in_memory(req: SettingsUpdateRequest) -> None:
         if req.retention.decay_state_retention_days is not None:
             settings.DECAY_STATE_RETENTION_DAYS = req.retention.decay_state_retention_days
 
-    # Singleton reset contract (C-H1): when provider-critical settings change,
-    # the corresponding singleton MUST be reset so the next call picks up the
-    # new binding / model / API key.
-    if req.llm:
-        from ....services.llm import reset_llm
 
-        reset_llm()
-    if req.embedding:
-        from ....services.embedder import reset_embeddings
-
-        reset_embeddings()
-    if req.rag and (
-        req.rag.reranker_binding
-        or req.rag.reranker_model
-        or req.rag.reranker_base_url
-        or req.rag.reranker_api_key
-    ):
-        from ....services.rag._reranker import reset_reranker_state
-
-        reset_reranker_state()
-    if req.rag and req.rag.query_rewrite_model is not None:
-        from ....services.rag._query import reset_rewrite_llm
-
-        reset_rewrite_llm()
+def _validated_settings_candidate(req: SettingsUpdateRequest) -> Settings:
+    """Apply a request to an isolated copy and run every Settings validator."""
+    candidate = settings.copy_live()
+    with settings.stage_updates(candidate):
+        _update_settings_in_memory(req)
+    # Pydantic assignment validation is intentionally not enabled on the live
+    # object because settings are staged through many legacy assignments.  A
+    # full reconstruction here guarantees Literal and model-level invariants
+    # before any candidate can be published.
+    return Settings.model_validate(candidate.model_dump())
 
 
 @router.put("", response_model=SettingsResponse)
@@ -401,16 +353,6 @@ async def update_settings(
                     status_code=409,
                     detail="Cannot update settings while rebuild jobs are running",
                 )
-            needs_rebuild, reason = _rebuild_required(settings_request)
-            if needs_rebuild and not settings_request.confirm_vector_rebuild:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Settings changed require vector rebuild: {reason}. "
-                        "Confirm with confirm_vector_rebuild=true and run "
-                        "/settings/rebuild-vectors."
-                    ),
-                )
             validate_settings_invariants(
                 top_k=settings_request.rag.top_k if settings_request.rag else None,
                 reranker_top_n=(
@@ -420,15 +362,43 @@ async def update_settings(
                 rag_retriever_provider=(
                     settings_request.rag.retriever_provider if settings_request.rag else None
                 ),
+                hybrid_search_enabled=(
+                    settings_request.rag.hybrid_search_enabled if settings_request.rag else None
+                ),
             )
-            _update_settings_in_memory(settings_request)
+            candidate = _validated_settings_candidate(settings_request)
+            previous = settings.copy_live()
+            changes = classify_settings_changes(previous, candidate)
+            if changes["reindex_required"] or changes["restart_required"]:
+                code = (
+                    "SETTINGS_RESTART_REQUIRED"
+                    if changes["restart_required"]
+                    else "SETTINGS_REINDEX_REQUIRED"
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": code,
+                        "message": (
+                            "Settings were not applied because a controlled restart/reindex "
+                            "workflow is required"
+                        ),
+                        "details": changes,
+                    },
+                )
             from ....services.registry import (
                 initialize_default_resettable_services,
                 reset_all_services,
             )
 
-            initialize_default_resettable_services()
-            reset_all_services()
+            replaced = settings.replace_live(candidate)
+            try:
+                initialize_default_resettable_services()
+                reset_all_services()
+            except Exception:
+                settings.replace_live(replaced)
+                reset_all_services()
+                raise
             # Bump epoch LAST so readers never see a new epoch with stale config.
             epoch = bump_settings_epoch()
         audit_log("update", "settings", f"runtime@epoch={epoch}")
@@ -446,7 +416,7 @@ async def update_settings(
 @router.post("/reload-config", response_model=MessageResponse)
 async def reload_config() -> dict[str, str]:
     """Reload non-secret settings from config/main.yaml (auth required)."""
-    from ....core.config import reload_settings
+    from ....core.config import load_reloaded_settings
 
     try:
         with _settings_lock:
@@ -455,18 +425,36 @@ async def reload_config() -> dict[str, str]:
                     status_code=409,
                     detail="Cannot reload settings while rebuild jobs are running",
                 )
-            reload_settings()
+            previous = settings.copy_live()
+            candidate = load_reloaded_settings()
+            changes = classify_settings_changes(previous, candidate)
+            if changes["reindex_required"] or changes["restart_required"]:
+                blocked = changes["reindex_required"] + changes["restart_required"]
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "SETTINGS_RESTART_REQUIRED",
+                        "message": "Config reload requires a controlled restart/reindex workflow",
+                        "details": {**changes, "blocked": blocked},
+                    },
+                )
+            settings.replace_live(candidate)
             from ....services.registry import (
                 initialize_default_resettable_services,
                 reset_all_services,
             )
 
-            initialize_default_resettable_services()
-            reset_all_services()
+            try:
+                initialize_default_resettable_services()
+                reset_all_services()
+            except Exception:
+                settings.replace_live(previous)
+                reset_all_services()
+                raise
             # Bump epoch LAST so readers never see a new epoch with stale config.
             epoch = bump_settings_epoch()
         audit_log("reload", "settings", f"runtime@epoch={epoch}")
-        logger.info("Settings reloaded from %s", reload_settings.__module__)
+        logger.info("Settings reloaded from %s", load_reloaded_settings.__module__)
         return {"message": "Settings reloaded successfully"}
     except HTTPException:
         raise

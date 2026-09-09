@@ -1,5 +1,6 @@
 import { Modal, Spin, Alert, Tag, Button, Input } from "antd";
 import { SoundOutlined, UserOutlined } from "@ant-design/icons";
+import { useIntl } from "react-intl";
 import type { SpeakersResponse } from "../../api/client";
 
 interface SpeakerModalProps {
@@ -31,6 +32,7 @@ export default function SpeakerModal({
   onClose,
   onStopAll,
 }: SpeakerModalProps) {
+  const { formatMessage } = useIntl();
   const handleCancel = () => {
     onStopAll();
     onClose();
@@ -38,7 +40,7 @@ export default function SpeakerModal({
 
   return (
     <Modal
-      title="Identify Speakers"
+      title={formatMessage({ id: "materials.speakers.title" })}
       open={open}
       onCancel={handleCancel}
       centered
@@ -49,7 +51,7 @@ export default function SpeakerModal({
         data
           ? [
               <Button key="cancel" onClick={handleCancel}>
-                Cancel
+                {formatMessage({ id: "common.cancel" })}
               </Button>,
               <Button
                 key="save"
@@ -59,7 +61,7 @@ export default function SpeakerModal({
                   onSave();
                 }}
               >
-                Save Names
+                {formatMessage({ id: "materials.speakers.save" })}
               </Button>,
             ]
           : null
@@ -68,12 +70,14 @@ export default function SpeakerModal({
       {loading ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <Spin />
-          <div style={{ marginTop: 12, color: "var(--color-text-muted)" }}>Loading speakers...</div>
+          <div style={{ marginTop: 12, color: "var(--color-text-muted)" }}>
+            {formatMessage({ id: "materials.speakers.loading" })}
+          </div>
         </div>
       ) : data && data.speakers.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <Alert
-            message="Listen to each speaker's sample and enter their real name."
+            message={formatMessage({ id: "materials.speakers.help" })}
             type="info"
             showIcon
             style={{ marginBottom: 4 }}
@@ -110,8 +114,10 @@ export default function SpeakerModal({
                     {speaker.speaker_code}
                   </Tag>
                   <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                    {speaker.utterance_count} utterance
-                    {speaker.utterance_count !== 1 ? "s" : ""}
+                    {formatMessage(
+                      { id: "materials.speakers.utterances" },
+                      { count: speaker.utterance_count },
+                    )}
                   </span>
                 </div>
                 {speaker.sample && (
@@ -136,7 +142,9 @@ export default function SpeakerModal({
                         }
                       }}
                     >
-                      {isPlaying ? "Stop" : "Play Sample"}
+                      {isPlaying
+                        ? formatMessage({ id: "materials.speakers.stop" })
+                        : formatMessage({ id: "materials.speakers.play" })}
                     </Button>
                     <div
                       style={{
@@ -154,7 +162,10 @@ export default function SpeakerModal({
                 )}
                 <Input
                   prefix={<UserOutlined style={{ color: "var(--color-text-muted)" }} />}
-                  placeholder={`Enter name for Speaker ${speaker.speaker_code}`}
+                  placeholder={formatMessage(
+                    { id: "materials.speakers.namePlaceholder" },
+                    { code: speaker.speaker_code },
+                  )}
                   value={names[speaker.speaker_code] ?? ""}
                   onChange={(e) =>
                     onNamesChange((prev) => ({
@@ -169,7 +180,7 @@ export default function SpeakerModal({
         </div>
       ) : (
         <div style={{ textAlign: "center", padding: 24, color: "var(--color-text-muted)" }}>
-          No speakers detected. This file may not have speaker diarization enabled.
+          {formatMessage({ id: "materials.speakers.empty" })}
         </div>
       )}
     </Modal>

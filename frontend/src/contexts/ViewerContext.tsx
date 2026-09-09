@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import { message, Modal } from "antd";
-import { getFileTimeline, getMeeting, formatApiErrorMessage } from "../api/client";
+import { useIntl } from "react-intl";
+import {
+  getFileTimeline,
+  getMeeting,
+  formatApiErrorMessage,
+  isRequestCanceled,
+} from "../api/client";
 import MaterialViewer from "../components/MaterialViewer";
 import TranscriptViewer from "../components/materials/TranscriptViewer";
 import { getKindCapabilities } from "../types/fileKinds";
@@ -20,8 +26,14 @@ export interface ViewerRequest {
   fileName: string;
   fileType: string;
   seekTo?: number;
+  seekEnd?: number;
   page?: number;
+  chunkIndex?: number;
+  windowStart?: number;
+  windowEnd?: number;
+  evidenceExcerpt?: string;
   meetingTitle?: string;
+  sourceRevision?: string;
 }
 
 interface ViewerContextValue {
@@ -53,6 +65,7 @@ export function useViewer(): ViewerContextValue {
 }
 
 export function ViewerProvider({ children }: { children: ReactNode }) {
+  const { formatMessage } = useIntl();
   const [materialRequest, setMaterialRequest] = useState<ViewerRequest | null>(null);
   const [transcriptRequest, setTranscriptRequest] = useState<ViewerRequest | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -60,6 +73,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     Array<{ start: number; end: number; text: string; speaker?: string | null }>
   >([]);
   const [transcriptSeekTo, setTranscriptSeekTo] = useState<number | undefined>(undefined);
+  const [transcriptSeekEnd, setTranscriptSeekEnd] = useState<number | undefined>(undefined);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
   const [transcriptPlayback, setTranscriptPlayback] = useState<{
     meetingId: number;
@@ -69,7 +83,9 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
-  const openViewer = useCallback((req: ViewerRequest) => {
+  const pendingOpen = useRef<AbortController | null>(null);
+  useEffect(() => () => pendingOpen.current?.abort(), []);
+  const displayViewer = useCallback((req: ViewerRequest) => {
     if (req.seekTo != null) {
       setMaterialRequest(null);
       setTranscriptRequest(req);
@@ -77,6 +93,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
       setTranscriptSegments([]);
       setTranscriptPlayback(null);
       setTranscriptSeekTo(req.seekTo);
+      setTranscriptSeekEnd(req.seekEnd);
       setActiveSegmentIndex(null);
       return;
     }
@@ -84,13 +101,39 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     setMaterialRequest(req);
   }, []);
 
+  const openViewer = useCallback(
+    (req: ViewerRequest) => {
+      pendingOpen.current?.abort();
+      const controller = new AbortController();
+      pendingOpen.current = controller;
+      void import("../utils/sourceLocation")
+        .then(({ resolveViewerRequest }) => resolveViewerRequest(req, controller.signal))
+        .then(({ request, warning }) => {
+          if (controller.signal.aborted) return;
+          if (warning) message.warning(formatMessage({ id: warning }));
+          displayViewer(request);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted || isRequestCanceled(error)) return;
+          const key =
+            error instanceof Error && error.message.startsWith("viewer.")
+              ? error.message
+              : "viewer.sourceUnavailable";
+          message.warning(formatMessage({ id: key }));
+        });
+    },
+    [displayViewer, formatMessage],
+  );
+
   const closeViewer = useCallback(() => {
+    pendingOpen.current?.abort();
     setMaterialRequest(null);
     setTranscriptRequest(null);
     setTranscriptLoading(false);
     setTranscriptSegments([]);
     setTranscriptPlayback(null);
     setTranscriptSeekTo(undefined);
+    setTranscriptSeekEnd(undefined);
     setActiveSegmentIndex(null);
   }, []);
 
@@ -100,6 +143,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     setTranscriptSegments([]);
     setTranscriptPlayback(null);
     setTranscriptSeekTo(undefined);
+    setTranscriptSeekEnd(undefined);
     setActiveSegmentIndex(null);
   }, []);
 
@@ -158,15 +202,15 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
         setTranscriptSegments(tsRes.data.kind === "segments" ? tsRes.data.segments : []);
       } catch (err: unknown) {
         if (cancelled) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (isRequestCanceled(err)) return;
         const status = (err as { response?: { status?: number } })?.response?.status;
         if (status === 404 || status === 410) {
-          message.warning("Source file no longer available");
+          message.warning(formatMessage({ id: "viewer.sourceUnavailable" }));
           setTranscriptSegments([]);
           setTranscriptPlayback(null);
           return;
         }
-        message.error(formatApiErrorMessage(err, "Failed to load timestamps"));
+        message.error(formatApiErrorMessage(err, formatMessage({ id: "viewer.timestampsFailed" })));
         setTranscriptSegments([]);
         setTranscriptPlayback(null);
       } finally {
@@ -179,7 +223,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       controller.abort();
     };
-  }, [transcriptRequest]);
+  }, [formatMessage, transcriptRequest]);
 
   useEffect(() => {
     if (activeSegmentIndex == null || !transcriptListRef.current) return;
@@ -194,6 +238,19 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     [openViewer, closeViewer],
   );
 
+  const evidenceCoordinateLabel = useMemo(() => {
+    if (!materialRequest) return "";
+    const coordinates: string[] = [];
+    if (materialRequest.page != null) coordinates.push(`page ${materialRequest.page}`);
+    if (materialRequest.chunkIndex != null) coordinates.push(`chunk ${materialRequest.chunkIndex}`);
+    if (materialRequest.windowStart != null || materialRequest.windowEnd != null) {
+      coordinates.push(
+        `chars ${materialRequest.windowStart ?? "?"}–${materialRequest.windowEnd ?? "?"}`,
+      );
+    }
+    return coordinates.length ? ` · ${coordinates.join(" · ")}` : "";
+  }, [materialRequest]);
+
   return (
     <ViewerContext.Provider value={contextValue}>
       {children}
@@ -206,7 +263,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
         zIndex={1100}
         title={
           materialRequest
-            ? `${materialRequest.meetingTitle ? `${materialRequest.meetingTitle} · ` : ""}${materialRequest.fileName || "File"}`
+            ? `${materialRequest.meetingTitle ? `${materialRequest.meetingTitle} · ` : ""}${materialRequest.fileName || "File"}${evidenceCoordinateLabel}`
             : null
         }
         destroyOnHidden
@@ -226,10 +283,14 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
         segments={transcriptSegments}
         playback={transcriptPlayback}
         seekTo={transcriptSeekTo}
+        seekEnd={transcriptSeekEnd}
         activeSegmentIndex={activeSegmentIndex}
         listRef={transcriptListRef}
         isUnnamedSpeaker={isUnnamedSpeaker}
-        onSeek={setTranscriptSeekTo}
+        onSeek={(time) => {
+          setTranscriptSeekEnd(undefined);
+          setTranscriptSeekTo(time);
+        }}
         onActiveSegmentChange={setActiveSegmentIndex}
         onClose={closeTranscriptViewer}
       />

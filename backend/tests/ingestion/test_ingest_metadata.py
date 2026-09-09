@@ -150,14 +150,21 @@ class TestIndexMeetingPages:
 class TestIndexMeetingSegments:
     """Verify index_meeting_segments stamps timestamp/speaker metadata."""
 
+    @patch("src.services.rag._indexer_store.get_embeddings")
     @patch("src.services.rag._indexer.get_vectorstore")
     @patch("src.services.rag._indexer.embed_documents_batched")
-    def test_timestamps_and_speaker_stamped(self, mock_embed_batched, mock_get_vs):
+    def test_timestamps_and_speaker_stamped(
+        self, mock_embed_batched, mock_get_vs, mock_context_embeddings
+    ):
         mock_vs = _make_vectorstore_mock()
         mock_get_vs.return_value = mock_vs
         # Two segments — with AUDIO_SPLIT_ON_SPEAKER_CHANGE=True (default), each speaker
         # gets its own chunk, so we need 2 embeddings.
         mock_embed_batched.return_value = [[0.1] * 384, [0.2] * 384]
+        mock_context_embeddings.return_value.embed_documents.return_value = [
+            [0.3] * 384,
+            [0.4] * 384,
+        ]
 
         segments = [
             {"start": 0.0, "end": 5.0, "text": "Hello from speaker A.", "speaker": "A"},
@@ -183,13 +190,21 @@ class TestIndexMeetingSegments:
         assert len(metadatas) >= 2
         assert metadatas[1]["speaker"] == "B"
         assert metadatas[1]["timestamp_start"] == 5.5
+        assert all(metadata["retrieval_context_prefix_len"] > 0 for metadata in metadatas)
 
+    @patch("src.services.rag._indexer_store.get_embeddings")
     @patch("src.services.rag._indexer.get_vectorstore")
     @patch("src.services.rag._indexer.embed_documents_batched")
-    def test_large_segments_grouped_by_size(self, mock_embed_batched, mock_get_vs):
+    def test_large_segments_grouped_by_size(
+        self, mock_embed_batched, mock_get_vs, mock_context_embeddings
+    ):
         mock_vs = _make_vectorstore_mock()
         mock_get_vs.return_value = mock_vs
         mock_embed_batched.return_value = [[0.1] * 384, [0.2] * 384]
+        mock_context_embeddings.return_value.embed_documents.return_value = [
+            [0.3] * 384,
+            [0.4] * 384,
+        ]
 
         # Create enough text to force chunking
         long_text = "Word " * 400  # ~2000 chars

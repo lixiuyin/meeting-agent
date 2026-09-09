@@ -14,7 +14,7 @@ from src.core.config import settings
 def _run_cli_scripted_input(
     scripted_input: str, timeout: int = 60
 ) -> subprocess.CompletedProcess[str]:
-    backend_dir = Path(__file__).resolve().parents[1]
+    backend_dir = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     env["DB_PATH"] = str(settings.DB_PATH)
     env["UPLOAD_DIR"] = str(settings.UPLOAD_DIR)
@@ -68,11 +68,8 @@ def test_cli_e2e_pagination_commands() -> None:
     assert ("Sessions (" in completed.stdout) or ("No chat sessions found" in completed.stdout)
 
 
-def test_cli_e2e_export_command_handles_missing_meeting() -> None:
-    backend_dir = Path(__file__).resolve().parents[1]
-    output_file = backend_dir / "exports" / "e2e-export.json"
-    if output_file.exists():
-        output_file.unlink()
+def test_cli_e2e_export_command_handles_missing_meeting(tmp_path: Path) -> None:
+    output_file = tmp_path / "e2e-export.json"
 
     completed = _run_cli_scripted_input(
         f"/export 999999 --format json --output {output_file}\n/quit\n"
@@ -83,16 +80,13 @@ def test_cli_e2e_export_command_handles_missing_meeting() -> None:
     assert not output_file.exists()
 
 
-def test_cli_e2e_export_command_writes_file_for_ready_meeting() -> None:
+def test_cli_e2e_export_command_writes_file_for_ready_meeting(tmp_path: Path) -> None:
     with db.get_write_connection() as conn:
         meeting_id = db.create_meeting(conn, title="CLI E2E Export", user_id="test")
         db.update_meeting_status(conn, meeting_id, "processing")
         db.update_meeting_status(conn, meeting_id, "ready", transcript="export transcript from e2e")
 
-    backend_dir = Path(__file__).resolve().parents[1]
-    output_file = backend_dir / "exports" / "e2e-export-success.json"
-    if output_file.exists():
-        output_file.unlink()
+    output_file = tmp_path / "e2e-export-success.json"
 
     completed = _run_cli_scripted_input(
         f"/export {meeting_id} --format json --output {output_file}\n/quit\n"

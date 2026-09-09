@@ -1,0 +1,19 @@
+{
+  "query_id": "q007",
+  "answer": "The presentation outlines three Q1 engineering priorities[2]:\n\n- Launch the new mobile app by February 15\n- Migrate the legacy database to PostgreSQL by March 1\n- Implement the new analytics pipeline\n\nThese match the roadmap Bob presented in the meeting notes[1].",
+  "source_ids": [
+    "sample.pdf:chunk_0",
+    "sample.pptx:chunk_0",
+    "sample.pptx:chunk_1",
+    "sample.pptx:chunk_2"
+  ],
+  "review": {
+    "reviewer_kind": "coding_agent",
+    "reviewer": "Codex",
+    "date": "2026-09-07",
+    "scope": "factual answer and stable source identity against existing handwritten fixture gold",
+    "production_human_review": false,
+    "source_report": "rag-snapshot_2026-09-07T09-57-59.286089_00-00.json",
+    "gold_sha256": "094ebd1a7d2c87f3a683333acce0923ee9b0602ff48ee017eaba5512bf7c0236"
+  }
+}

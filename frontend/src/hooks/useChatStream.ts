@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useReducer } from "react";
 import { flushSync } from "react-dom";
 import {
   sendChatStream,
@@ -17,7 +17,11 @@ export interface ChatMessage {
   sources?: SourceItem[];
   webResults?: StreamWebResultsEvent["items"];
   trace?: ChatResponse["trace"];
+  degraded?: boolean;
+  degradationReason?: string | null;
   id?: string;
+  serverId?: number;
+  collapsedCount?: number;
 }
 
 const TOKEN_FLUSH_INTERVAL_MS = 50;
@@ -40,6 +44,75 @@ export interface StartStreamParams {
   sessionId?: string;
   options?: ChatOptions;
   onDone?: () => void;
+  onCompleted?: () => void;
+  onRunIdentified?: (runId: string) => void;
+  onEventCursor?: (cursor: number) => void;
+  clientTurnId?: string;
+}
+
+type StreamPhase = "idle" | "streaming" | "completed" | "error" | "cancelled";
+
+interface StreamState {
+  phase: StreamPhase;
+  error: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  requestId: string | null;
+  notice: string | null;
+}
+
+type StreamAction =
+  | { type: "start" }
+  | { type: "complete" }
+  | { type: "finish" }
+  | {
+      type: "fail";
+      error: string;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+      requestId?: string | null;
+      notice?: string | null;
+    }
+  | { type: "cancel"; notice?: string | null }
+  | { type: "setError"; error: string | null }
+  | { type: "setNotice"; notice: string | null }
+  | { type: "clear" };
+
+const initialStreamState: StreamState = {
+  phase: "idle",
+  error: null,
+  errorCode: null,
+  errorDetail: null,
+  requestId: null,
+  notice: null,
+};
+
+function streamReducer(state: StreamState, action: StreamAction): StreamState {
+  switch (action.type) {
+    case "start":
+      return { ...initialStreamState, phase: "streaming" };
+    case "complete":
+      return { ...state, phase: "completed" };
+    case "finish":
+      return state.phase === "streaming" ? { ...state, phase: "completed" } : state;
+    case "fail":
+      return {
+        phase: "error",
+        error: action.error,
+        errorCode: action.errorCode ?? null,
+        errorDetail: action.errorDetail ?? null,
+        requestId: action.requestId ?? null,
+        notice: action.notice ?? state.notice,
+      };
+    case "cancel":
+      return { ...state, phase: "cancelled", notice: action.notice ?? null };
+    case "setError":
+      return { ...state, error: action.error };
+    case "setNotice":
+      return { ...state, notice: action.notice };
+    case "clear":
+      return initialStreamState;
+  }
 }
 
 // M-21: Cap in-memory message history to prevent unbounded growth during
@@ -73,27 +146,42 @@ function updateLastAgentMsg(
   return next;
 }
 
-function collapseOldMessages(msgs: ChatMessage[]): ChatMessage[] {
+export function collapseOldMessages(msgs: ChatMessage[]): ChatMessage[] {
   if (msgs.length <= MAX_MESSAGES) return msgs;
-  const excess = msgs.length - MAX_MESSAGES;
+  const previousCollapsed = msgs.reduce(
+    (total, message) => total + (message.collapsedCount ?? 0),
+    0,
+  );
+  const originals = msgs.filter((message) => message.collapsedCount === undefined);
+  const recentCount = MAX_MESSAGES - 3;
+  const head = originals.slice(0, 2);
+  const tail = originals.slice(-recentCount);
+  const newlyCollapsed = Math.max(0, originals.length - head.length - tail.length);
+  const collapsedCount = previousCollapsed + newlyCollapsed;
   const placeholder: ChatMessage = {
     role: "agent",
-    content: `[Earlier messages (${excess + 2}) have been collapsed to save memory. Scroll up in session history to review.]`,
+    content: `[Earlier messages (${collapsedCount}) have been collapsed to save memory. Scroll up in session history to review.]`,
     id: makeMessageId("reply"),
+    collapsedCount,
   };
-  // Keep the first 2 messages (opening context) + placeholder + most recent tail
-  return [msgs[0], msgs[1], placeholder, ...msgs.slice(-(MAX_MESSAGES - 3))];
+  // Keep the first two original messages, one cumulative placeholder, and
+  // the recent tail.  Existing placeholders never reset the count.
+  return [...head, placeholder, ...tail];
 }
 
 export function useChatStream() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState<string | undefined>();
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [streamErrorCode, setStreamErrorCode] = useState<string | null>(null);
-  const [streamErrorDetail, setStreamErrorDetail] = useState<string | null>(null);
-  const [streamRequestId, setStreamRequestId] = useState<string | null>(null);
-  const [streamNotice, setStreamNotice] = useState<string | null>(null);
+  const [streamState, dispatchStream] = useReducer(streamReducer, initialStreamState);
+  const isStreaming = streamState.phase === "streaming";
+  const setStreamError = useCallback(
+    (error: string | null) => dispatchStream({ type: "setError", error }),
+    [],
+  );
+  const setStreamNotice = useCallback(
+    (notice: string | null) => dispatchStream({ type: "setNotice", notice }),
+    [],
+  );
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const runIdRef = useRef(0);
@@ -113,7 +201,6 @@ export function useChatStream() {
   const pendingTokensRef = useRef("");
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentMsgIdRef = useRef<string | null>(null);
-  const flushRunIdRef = useRef(0);
 
   const flushPendingTokens = useCallback(() => {
     if (!mountedRef.current) return;
@@ -124,7 +211,6 @@ export function useChatStream() {
       flushTimerRef.current = null;
     }
     if (!batch || !agentMsgIdRef.current) return;
-    if (flushRunIdRef.current !== runIdRef.current) return;
     const msgId = agentMsgIdRef.current;
     setMessages((prev) =>
       updateLastAgentMsg(prev, msgId, (last) => {
@@ -154,9 +240,15 @@ export function useChatStream() {
   // M-21: collapse logic is inlined into setMessages calls that append new messages.
 
   const abortStream = useCallback(
-    (opts?: { silent?: boolean; notice?: string }) => {
+    (opts?: { silent?: boolean; notice?: string; cancelRemotely?: boolean }) => {
       const hasActive = abortRef.current !== null;
-      abortRef.current?.abort();
+      abortRef.current?.abort(
+        opts?.silent
+          ? new DOMException("Stream detached", "AbortError")
+          : opts?.cancelRemotely === false
+            ? new DOMException("Cancellation delegated", "AbortError")
+            : undefined,
+      );
       abortRef.current = null;
       runIdRef.current += 1;
       pendingTokensRef.current = "";
@@ -165,14 +257,17 @@ export function useChatStream() {
         flushTimerRef.current = null;
       }
       agentMsgIdRef.current = null;
+      dispatchStream({
+        type: "cancel",
+        notice: !opts?.silent && hasActive ? (opts?.notice ?? "Previous response canceled.") : null,
+      });
       clearTimers();
       clearNoticeTimer();
       if (!opts?.silent && hasActive) {
-        setStreamNotice(opts?.notice ?? "Previous response canceled.");
         scheduleNoticeClear(() => setStreamNotice(null));
       }
     },
-    [clearTimers, clearNoticeTimer, scheduleNoticeClear],
+    [clearTimers, clearNoticeTimer, scheduleNoticeClear, setStreamNotice],
   );
 
   const startStream = useCallback(
@@ -184,15 +279,20 @@ export function useChatStream() {
         sessionId: initialSessionId,
         options,
         onDone,
+        onCompleted,
+        onRunIdentified,
+        onEventCursor,
+        clientTurnId,
       } = params;
 
       // Abort any in-flight stream first so the previous empty agent placeholder
       // is cleaned up before we insert the new user message.
       abortStream({ notice: "Previous response canceled." });
 
-      // Capture the new run ID immediately after abort so the previous stream's
-      // finally block can flush its pending tokens before we overwrite this ref.
-      flushRunIdRef.current = runIdRef.current;
+      // Immutable identity for this invocation. A stale request must never
+      // clear state owned by a newer stream.
+      const runId = runIdRef.current;
+      let receivedVisibleContent = "";
 
       const userMsgId = makeMessageId("msg");
       const agentMsgId = makeMessageId("reply");
@@ -208,13 +308,8 @@ export function useChatStream() {
         });
       });
 
-      setIsStreaming(true);
-      setStreamError(null);
-      setStreamErrorCode(null);
-      setStreamErrorDetail(null);
-      setStreamRequestId(null);
+      dispatchStream({ type: "start" });
       clearNoticeTimer();
-      setStreamNotice(null);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -235,8 +330,11 @@ export function useChatStream() {
           },
         );
         controller.abort();
-        setStreamError("Response timed out — the server took too long. Please try again.");
-        setStreamNotice("Stream timed out. Click Retry to resend your last question.");
+        dispatchStream({
+          type: "fail",
+          error: "Response timed out — the server took too long. Please try again.",
+          notice: "Stream timed out. Click Retry to resend your last question.",
+        });
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
@@ -253,8 +351,11 @@ export function useChatStream() {
           questionLength: question.length,
         });
         controller.abort();
-        setStreamError("Stream stalled — no response from the server. Please try again.");
-        setStreamNotice("Stream stalled. Click Retry to resend your last question.");
+        dispatchStream({
+          type: "fail",
+          error: "Stream stalled — no response from the server. Please try again.",
+          notice: "Stream stalled. Click Retry to resend your last question.",
+        });
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
@@ -270,8 +371,11 @@ export function useChatStream() {
           sessionId: initialSessionId,
         });
         controller.abort();
-        setStreamError("Connection lost — no keep-alive from the server. Please try again.");
-        setStreamNotice("Connection lost. Click Retry to resend your last question.");
+        dispatchStream({
+          type: "fail",
+          error: "Connection lost — no keep-alive from the server. Please try again.",
+          notice: "Connection lost. Click Retry to resend your last question.",
+        });
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
@@ -289,8 +393,12 @@ export function useChatStream() {
       try {
         for await (const event of sendChatStream(question, meetingIds, fileIds, initialSessionId, {
           ...options,
+          idempotencyKey: clientTurnId,
+          onRunIdentified,
+          onEventCursor,
           signal: controller.signal,
         })) {
+          if (runId !== runIdRef.current) return;
           touchActivity();
 
           // Heartbeats prove the server is alive AND actively working on the
@@ -306,10 +414,12 @@ export function useChatStream() {
           if (!mountedRef.current) return;
 
           if (event.type === "heartbeat") {
+            if (event.session_id) setSessionId(event.session_id);
             continue;
           }
 
           if (event.type === "token") {
+            receivedVisibleContent += event.content;
             pendingTokensRef.current += event.content;
             if (flushTimerRef.current === null) {
               flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
@@ -329,48 +439,91 @@ export function useChatStream() {
             setMessages((prev) =>
               updateLastAgentMsg(prev, agentMsgId, (last) => ({ ...last, trace })),
             );
+          } else if (event.type === "status" && event.status === "degraded") {
+            setMessages((prev) =>
+              updateLastAgentMsg(prev, agentMsgId, (last) => ({
+                ...last,
+                degraded: true,
+                degradationReason: event.reason ?? "fast_path_timeout",
+              })),
+            );
           } else if (event.type === "done") {
             flushPendingTokens();
-            setIsStreaming(false);
+            if (event.message_ids?.length === 2) {
+              const [humanId, aiId] = event.message_ids;
+              setMessages((previous) =>
+                previous.map((message) => {
+                  if (message.id === userMsgId) return { ...message, serverId: humanId };
+                  if (message.id === agentMsgId) return { ...message, serverId: aiId };
+                  return message;
+                }),
+              );
+            }
+            dispatchStream({ type: "complete" });
             onDone?.();
-            setSessionId(event.session_id);
+            if (!receivedVisibleContent.trim()) {
+              const emptyMessage = "The model returned no usable answer. Please retry.";
+              dispatchStream({
+                type: "fail",
+                error: emptyMessage,
+                errorCode: "EMPTY_LLM_RESPONSE",
+              });
+              setMessages((prev) =>
+                updateLastAgentMsg(prev, agentMsgId, (last) => ({
+                  ...last,
+                  content: emptyMessage,
+                  sources: undefined,
+                  webResults: undefined,
+                })),
+              );
+            } else {
+              setSessionId(event.session_id);
+              onCompleted?.();
+            }
           } else if (event.type === "error") {
             flushPendingTokens();
-            setIsStreaming(false);
             onDone?.();
-            setStreamError(event.message);
-            setStreamErrorCode(event.code ?? null);
-            setStreamErrorDetail(event.detail ?? null);
+            dispatchStream({
+              type: "fail",
+              error: event.message,
+              errorCode: event.code ?? null,
+              errorDetail: event.detail ?? null,
+            });
             const errMsg = event.message;
             setMessages((prev) =>
-              updateLastAgentMsg(prev, agentMsgId, (last) => ({ ...last, content: errMsg })),
+              updateLastAgentMsg(prev, agentMsgId, (last) => ({
+                ...last,
+                content: last.content.trim() ? `${last.content}\n\n${errMsg}` : errMsg,
+                sources: undefined,
+                webResults: undefined,
+              })),
             );
           }
         }
       } catch (err: unknown) {
+        if (runId !== runIdRef.current) return;
         if (isAbortError(err)) {
           setMessages((prev) => prev.filter((m) => m.id !== agentMsgId || m.content !== ""));
         } else {
           const msg = err instanceof ApiError ? err.message : "Connection lost. Please try again.";
-          setStreamError(msg);
-          setStreamErrorCode(err instanceof ApiError ? (err.code ?? null) : null);
-          setStreamErrorDetail(null);
-          setStreamRequestId(err instanceof ApiError ? (err.requestId ?? null) : null);
+          dispatchStream({
+            type: "fail",
+            error: msg,
+            errorCode: err instanceof ApiError ? (err.code ?? null) : null,
+            requestId: err instanceof ApiError ? (err.requestId ?? null) : null,
+          });
           setMessages((prev) =>
             updateLastAgentMsg(prev, agentMsgId, (last) => ({ ...last, content: msg })),
           );
         }
       } finally {
-        // Only flush pending tokens if this stream run is still active.
-        // abortStream() increments runIdRef and clears pending tokens/buffers,
-        // so a stale finally from an aborted run must not re-flush.
-        if (flushRunIdRef.current === runIdRef.current) {
+        if (runId === runIdRef.current) {
           flushPendingTokens();
+          dispatchStream({ type: "finish" });
+          abortRef.current = null;
+          agentMsgIdRef.current = null;
+          clearTimers();
         }
-        setIsStreaming(false);
-        abortRef.current = null;
-        agentMsgIdRef.current = null;
-        clearTimers();
       }
     },
     [
@@ -388,25 +541,22 @@ export function useChatStream() {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setSessionId(undefined);
-    setStreamError(null);
-    setStreamErrorCode(null);
-    setStreamErrorDetail(null);
-    setStreamRequestId(null);
+    dispatchStream({ type: "clear" });
     clearNoticeTimer();
-    setStreamNotice(null);
   }, [clearNoticeTimer]);
 
   return {
     messages,
     isStreaming,
     sessionId,
-    streamError,
-    streamErrorCode,
-    streamErrorDetail,
-    streamRequestId,
-    streamNotice,
+    streamError: streamState.error,
+    streamErrorCode: streamState.errorCode,
+    streamErrorDetail: streamState.errorDetail,
+    streamRequestId: streamState.requestId,
+    streamNotice: streamState.notice,
     setStreamError,
     setStreamNotice,
+    setSessionId,
     startStream,
     abortStream,
     setMessages,

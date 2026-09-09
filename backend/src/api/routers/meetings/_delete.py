@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
 
@@ -30,6 +29,18 @@ async def delete_meeting(
 
     m, files = await asyncio.to_thread(_fetch)
 
+    from ....services.jobs import cancel_durable_jobs
+
+    for file_row in files:
+        file_id = int(file_row["id"])
+        await cancel_durable_jobs(
+            kind="file_processing", dedupe_prefix=f"file:{file_id}", exact=True
+        )
+        await cancel_durable_jobs(kind="file_summary", dedupe_prefix=f"file:{file_id}", exact=True)
+    await cancel_durable_jobs(
+        kind="meeting_summary", dedupe_prefix=f"meeting:{meeting_id}", exact=True
+    )
+
     # Invalidate cached file summaries before deleting
     try:
         from ....services.chain._generate_helpers import invalidate_file_summaries
@@ -38,14 +49,41 @@ async def delete_meeting(
     except Exception:
         logger.warning("Failed to invalidate cached file summaries before delete", exc_info=True)
 
-    def _delete_db() -> None:
+    def _delete_db() -> list[str]:
         with get_write_connection() as conn:
+            affected_memories: list[str] = []
             existing = db.get_meeting(conn, meeting_id, user_id=ownership)
             if not existing:
                 raise HTTPException(404, "Meeting not found")
-            db.delete_meeting(conn, meeting_id, user_id=ownership)
+            for file_row in files:
+                affected_memories.extend(
+                    db.detach_memory_file_evidence(
+                        conn,
+                        user_id=principal["user_id"],
+                        file_id=int(file_row["id"]),
+                    )
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO pending_vector_deletions (collection, embedding_id) "
+                    "VALUES ('file', ?)",
+                    (str(file_row["file_path"]),),
+                )
+            from ....core.config import settings
 
-    await asyncio.to_thread(_delete_db)
+            conn.execute(
+                "INSERT OR IGNORE INTO pending_vector_deletions (collection, embedding_id) "
+                "VALUES ('directory', ?)",
+                (str(settings.UPLOAD_DIR / "meeting_assets" / str(meeting_id)),),
+            )
+            db.delete_meeting(conn, meeting_id, user_id=ownership)
+            return list(dict.fromkeys(affected_memories))
+
+    changed_memories = await asyncio.to_thread(_delete_db)
+
+    from ....services.memory._service._index_sync import index_current_memory
+
+    for key in changed_memories:
+        await asyncio.to_thread(index_current_memory, principal["user_id"], key)
 
     # Clean up vector data after SQL delete; queue retries when vector store fails.
     try:
@@ -62,7 +100,8 @@ async def delete_meeting(
         def _queue_vector_delete() -> None:
             with get_write_connection() as conn:
                 conn.execute(
-                    "INSERT INTO pending_vector_deletions (collection, embedding_id) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO pending_vector_deletions "
+                    "(collection, embedding_id) VALUES (?, ?)",
                     ("meeting", str(meeting_id)),
                 )
 
@@ -80,18 +119,19 @@ async def delete_meeting(
             exc_info=True,
         )
 
-    # Best-effort file cleanup after DB delete.
-    for f in files:
-        file_path = Path(f["file_path"])
-        try:
-            file_path.unlink(missing_ok=True)
-        except Exception:
-            logger.warning(
-                "Failed to delete file for meeting %d: %s",
-                meeting_id,
-                file_path,
-                exc_info=True,
-            )
+    # Process durable filesystem/vector deletion jobs immediately.  Failures
+    # remain queued for the lifecycle reconciler.
+    from ....services.memory._service._crud import cleanup_pending_vector_deletions
+
+    try:
+        await asyncio.to_thread(
+            cleanup_pending_vector_deletions,
+            collections={"file", "directory"},
+        )
+    except Exception:
+        logger.warning(
+            "Immediate meeting resource cleanup failed; jobs remain queued", exc_info=True
+        )
 
     audit_log("delete", "meeting", meeting_id, detail=f"title={m['title']}")
 

@@ -38,11 +38,17 @@ _RELATIVE_TEMPORAL_PATTERNS: list[tuple[re.Pattern[str], float, float]] = [
     (re.compile(r"前\s*半|first\s+half", re.I), 0.0, 0.55),
     (re.compile(r"后\s*半|second\s+half", re.I), 0.45, 1.0),
     # Individual regions
-    (re.compile(r"(?:开头|开始|前期|前段|开场|beginning|start|opening|early)", re.I), 0.0, 0.38),
-    (re.compile(r"(?:中间|中期|中段|middle|mid[\s-]?part)", re.I), 0.25, 0.75),
+    (
+        re.compile(r"(?:开头|开始|前期|前段|开场|\b(?:beginning|start|opening|early)\b)", re.I),
+        0.0,
+        0.38,
+    ),
+    (re.compile(r"(?:中间|中期|中段|\b(?:middle|mid[\s-]?part)\b)", re.I), 0.25, 0.75),
     (
         re.compile(
-            r"(?:后期|后段|结尾|末尾|结束|尾声|end(?:ing)?|closing|later|latter|final)", re.I
+            r"(?:后期|后段|结尾|末尾|结束|尾声|"
+            r"\b(?:end(?:ing)?|closing|later|latter|final)\b)",
+            re.I,
         ),
         0.62,
         1.0,
@@ -152,6 +158,14 @@ _SPEAKER_QUERY_PATTERNS_ZH = re.compile(
     r"发表了什么|说过什么|认为|表示|指出|提出|提议|强调|"
     r"都说了|都提出|都讲了|都认为|都建议|"
     r"什么观点|什么看法|什么意见|什么想法|什么建议|什么立场)"
+)
+
+_SPEAKER_QUERY_PATTERNS_EN = re.compile(
+    r"\b(?:according\s+to|said|says?|mentioned?|proposed?|suggested?|argued|stated|"
+    r"explained|asked|answered|commented|thinks?|believes?|recommended?|discussed?|"
+    r"presented?|emphasized?|opinion|views?|ideas?|suggestions?|recommendations?|"
+    r"position|comments?|remarks?)\b",
+    re.IGNORECASE,
 )
 
 # Words that look like capitalized names but are not
@@ -273,24 +287,28 @@ def _extract_speaker_names_from_query(
         for sp in known_speakers:
             if len(sp) < 2:
                 continue
-            pattern = _speaker_pattern_cached(sp)
-            if pattern.search(query):
+            contains_cjk = bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", sp))
+            if (contains_cjk and sp.casefold() in query.casefold()) or (
+                not contains_cjk and _speaker_pattern_cached(sp).search(query)
+            ):
                 found.append(sp)
-        if found:
-            return found
+        return found
 
-    # Layer 2: English names via regex (CJK-boundary-aware)
-    for m in _NAME_PATTERN.finditer(query):
-        name = m.group(1)
-        first_word = name.split()[0]
-        if first_word not in _NON_NAME_WORDS:
-            found.append(name)
+    # Layer 2: English names via regex (CJK-boundary-aware).  Without an
+    # authoritative speaker list, require an explicit speaker-intent cue so
+    # sentence-initial commands such as "List" are not treated as names.
+    if _SPEAKER_QUERY_PATTERNS_EN.search(query):
+        for m in _NAME_PATTERN.finditer(query):
+            name = m.group(1)
+            first_word = name.split()[0]
+            if first_word not in _NON_NAME_WORDS:
+                found.append(name)
 
     # CJK heuristic is a last resort when NO speaker list is available.
     # When known_speakers is provided, Layer 1 is authoritative: if nothing
     # matched there the query is not speaker-scoped, so stop here to avoid
     # regex artifacts (e.g. "明一下" from "说明一下").
-    if not found and not known_speakers and _SPEAKER_QUERY_PATTERNS_ZH.search(query):
+    if not found and _SPEAKER_QUERY_PATTERNS_ZH.search(query):
         for m in _ZH_NAME_PATTERN.finditer(query):
             name = m.group(1)
             if name not in _ZH_NON_NAMES and len(name) <= 3:

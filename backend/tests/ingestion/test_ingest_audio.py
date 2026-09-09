@@ -10,6 +10,14 @@ from src.core.database import get_connection
 from src.main import app
 
 
+async def _wait_for_processing(file_id: int) -> None:
+    # ASGITransport intentionally does not run application lifespan, so its
+    # embedded durable worker is absent in this focused integration test.
+    from src.services.processor._pipeline import process_meeting_file
+
+    await process_meeting_file(file_id)
+
+
 @pytest.fixture
 def client():
     transport = ASGITransport(app=app)
@@ -55,7 +63,9 @@ class TestAudioUploadAndProcess:
             data = resp.json()
             file_id = data["file_id"]
 
-            # ASGITransport runs BackgroundTasks automatically after response
+            # Processing is deliberately detached from the HTTP response but
+            # remains supervised and durable.  Wait for this file explicitly.
+            await _wait_for_processing(file_id)
             mock_transcribe.assert_awaited_once()
             call_args = mock_transcribe.call_args
             assert call_args[1]["provider"] is not None
@@ -65,13 +75,18 @@ class TestAudioUploadAndProcess:
             index_args = mock_index.call_args[1]
             assert index_args["segments"] == fake_segments
 
-            # File status should be ready
+            # Ingest is complete and the durable summary stage is now queued.
             with get_connection() as conn:
                 row = conn.execute(
                     "SELECT status, transcript FROM meeting_files WHERE id = ?",
                     (file_id,),
                 ).fetchone()
-            assert row["status"] == "ready"
+                summary_job = conn.execute(
+                    "SELECT status FROM durable_jobs WHERE kind='file_summary' AND dedupe_key=?",
+                    (f"file:{file_id}",),
+                ).fetchone()
+            assert row["status"] == "summarizing"
+            assert summary_job["status"] == "pending"
             assert "Hello from audio test." in row["transcript"]
 
     @pytest.mark.asyncio
@@ -110,6 +125,7 @@ class TestAudioUploadAndProcess:
             data = resp.json()
             file_id = data["file_id"]
 
+            await _wait_for_processing(file_id)
             mock_transcribe.assert_awaited_once()
             mock_index.assert_called_once()
 
@@ -117,7 +133,12 @@ class TestAudioUploadAndProcess:
                 row = conn.execute(
                     "SELECT status FROM meeting_files WHERE id = ?", (file_id,)
                 ).fetchone()
-            assert row["status"] == "ready"
+                summary_job = conn.execute(
+                    "SELECT status FROM durable_jobs WHERE kind='file_summary' AND dedupe_key=?",
+                    (f"file:{file_id}",),
+                ).fetchone()
+            assert row["status"] == "summarizing"
+            assert summary_job["status"] == "pending"
 
     @pytest.mark.asyncio
     async def test_upload_m4a_magic_bytes_pass(self, auth_headers):
@@ -165,7 +186,8 @@ class TestAudioUploadAndProcess:
                             )
                         },
                     )
-                assert resp.status_code == 200, f"M4A header {header!r} should pass"
+                    assert resp.status_code == 200, f"M4A header {header!r} should pass"
+                    await _wait_for_processing(resp.json()["file_id"])
 
     @pytest.mark.asyncio
     async def test_upload_mp3_sync_word_variants_pass(self, auth_headers):
@@ -210,9 +232,10 @@ class TestAudioUploadAndProcess:
                             )
                         },
                     )
-                assert resp.status_code == 200, (
-                    f"MP3 sync word \\xff{second_byte.hex()} should pass"
-                )
+                    assert resp.status_code == 200, (
+                        f"MP3 sync word \\xff{second_byte.hex()} should pass"
+                    )
+                    await _wait_for_processing(resp.json()["file_id"])
 
     @pytest.mark.asyncio
     async def test_audio_transcription_failure_marked_error(self, client, auth_headers):
@@ -237,6 +260,7 @@ class TestAudioUploadAndProcess:
                 )
             assert resp.status_code == 200
             file_id = resp.json()["file_id"]
+            await _wait_for_processing(file_id)
 
             with get_connection() as conn:
                 row = conn.execute(

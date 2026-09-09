@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
 
-from ..rag._vector import _vector_score_lower_is_better  # noqa: F401 — re-exported
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_MMR_LAMBDA = 0.7
+# Relevance/diversity balance for the final deterministic lexical MMR pass.
+# 1.0 keeps pure relevance order; lower values penalize repeated evidence more.
+_MMR_LAMBDA = 0.8
 _CONTENT_SIMILARITY_THRESHOLD = 0.85  # ngram overlap ratio to consider duplicates
 _LOW_INFO_MAX_ALPHA_RATIO = 0.30
 _LOW_INFO_MIN_WORDS = 5

@@ -1,0 +1,230 @@
+{
+  "date": "2026-09-07",
+  "release_ready": false,
+  "deployment": "single_instance_not_deployed",
+  "backend_regression": {
+    "passed": 2275,
+    "skipped": 1,
+    "log": "backend/benchmark-results/remediation-20260907/backend-final.log",
+    "note": "before final narrow harness and completion-metric fixes"
+  },
+  "targeted_regression": {
+    "harness_and_metrics": 157,
+    "completion_and_fresh_process_isolation": 54,
+    "counts_overlap": true
+  },
+  "frontend_regression": {
+    "passed": 178,
+    "files": 34
+  },
+  "authenticated_full_stack": {
+    "passed": 25,
+    "report": "backend/benchmark-results/e2e-smoke_2026-09-07T08-38-35Z.json"
+  },
+  "model_runs": [
+    {
+      "artifact": "backend/benchmark-results/memory-pipeline_2026-09-07T08-32-13.169372_00-00.json",
+      "valid": true,
+      "complete": true,
+      "stats": {
+        "pipeline_write_recall": 1.0,
+        "pipeline_reference_key_agreement": null,
+        "pipeline_latest_value_accuracy": 1.0,
+        "pipeline_confirmed_evidence_rate": 1.0,
+        "pipeline_events_attempted": 22,
+        "pipeline_events_correct": 22,
+        "pipeline_events_persisted": 21
+      },
+      "inputs_unchanged": true
+    },
+    {
+      "artifact": "backend/benchmark-results/memory-pipeline_2026-09-07T08-44-46.690971_00-00.json",
+      "valid": false,
+      "complete": false,
+      "stats": {
+        "pipeline_write_recall": 0.85,
+        "pipeline_reference_key_agreement": null,
+        "pipeline_latest_value_accuracy": 0.85,
+        "pipeline_confirmed_evidence_rate": 0.9,
+        "pipeline_events_attempted": 22,
+        "pipeline_events_correct": 19,
+        "pipeline_events_persisted": 20
+      },
+      "inputs_unchanged": true
+    }
+  ],
+  "latency": {
+    "artifact": "backend/benchmark-results/chat_2026-09-07T08-44-09.973513_00-00.json",
+    "samples": 20,
+    "stats_ms": {
+      "label": "chat_total",
+      "phase": "client",
+      "n": 20,
+      "p50": 15266.03,
+      "p95": 25073.63,
+      "p99": 26139.0,
+      "mean": 13164.6,
+      "stdev": 9221.6,
+      "status_counts": {
+        "success": 20
+      }
+    },
+    "goal_p95_ms": 3000,
+    "passed": false,
+    "shared_load": true,
+    "paired_comparison": false,
+    "bootstrap_wrapper_used": true
+  },
+  "container": {
+    "report": "backend/benchmark-results/remediation-20260907/container-acceptance.json",
+    "status": "passed",
+    "observed_and_repaired_failures": [
+      "root_without_DAC_OVERRIDE_cannot_touch_after_chown",
+      "completion_counters_deferred_until_background_cleanup",
+      "metrics_middleware_registration_before_metrics_initialization"
+    ],
+    "passed": true,
+    "checks": {
+      "backend_ready": true,
+      "frontend_requires_login": true,
+      "authenticated_spa": true,
+      "security_headers": true,
+      "nginx_ready_proxy": true,
+      "direct_api_requires_key": true,
+      "nginx_injects_api_key": true,
+      "stream_proxy_completes": true,
+      "completion_metrics_exported": true,
+      "runtime_starlette_patched": true
+    },
+    "backend_image_id": "sha256:29e78c7bca63c4573c970de1c8491f9063e0ae8537e5f147d27c21802be798c6",
+    "frontend_image_id": "sha256:64eee2b289aab526665728ea265dc581fded9011826f86627d06e0b8ab504755"
+  },
+  "dependency_audit": {
+    "artifact": "backend/benchmark-results/remediation-20260907/runtime-dependency-audit.json",
+    "vulnerable_packages": 1,
+    "advisories": 4,
+    "remaining_package": "chromadb",
+    "starlette_runtime": "1.6.0",
+    "system_packages_scanned": false
+  },
+  "slo": {
+    "rules_checked": 19,
+    "rule_tests_passed": true,
+    "actual_30_days_observed": false,
+    "availability": null,
+    "latency_p95": null,
+    "release_ready": false,
+    "streaming_latency_query_covered": false,
+    "implementation_acceptance_complete": false
+  },
+  "human_review": {
+    "candidates": 30,
+    "reviewed": 0,
+    "complete": false,
+    "coverage_eligible": false
+  },
+  "usability": {
+    "task_template_count": 5,
+    "real_participants_evaluated": 0,
+    "completed": false
+  },
+  "data": {
+    "current_turn_fingerprints_equal": true,
+    "baseline_sha256": "3c854dd5671d7fab1a22f6d5d3e90d8e8062de6e56f65d69584b006029097eee",
+    "historical_recovery_equivalence_proven": false
+  },
+  "remaining": [
+    "model_extraction_stability",
+    "human_reviewed_business_gold_and_scope_adjudication",
+    "paired_quality_calibration",
+    "latency_target",
+    "real_user_usability",
+    "30_day_slo",
+    "remaining_chroma_and_system_package_security_review",
+    "streaming_latency_slo_query_coverage",
+    "strict_output_and_adversarial_positive_control",
+    "approved_rag_snapshot_baselines"
+  ],
+  "not_implemented_expansions": [
+    "multi_tenant_acl",
+    "multi_instance_ha",
+    "general_cross_document_ocr_positioning"
+  ],
+  "model_diagnostic": {
+    "diagnostic_only": true,
+    "attempted": 8,
+    "correct": 6,
+    "valid": false,
+    "limitations": [
+      "not_full_dataset",
+      "security_review_omission_not_reproduced",
+      "billing_scope_expectation_requires_adjudication"
+    ],
+    "gold_or_scoring_changed": false
+  },
+  "static_checks": {
+    "ruff": true,
+    "pyright": true,
+    "docs_markdown_files": 72,
+    "diff_check": true
+  },
+  "status_audit": {
+    "date": "2026-09-07",
+    "kind": "evidence_and_source_review_with_targeted_regression",
+    "fresh_checks": {
+      "targeted_pytest_passed": 61,
+      "seconds": 2.91,
+      "ruff": true,
+      "pyright": true,
+      "docs_markdown_files": 72,
+      "git_diff_check": true,
+      "container_image_ids_match_report": true
+    },
+    "fresh_test_log": "backend/benchmark-results/remediation-20260907/status-audit-tests.log",
+    "not_rerun": [
+      "full_backend_suite",
+      "frontend_suite",
+      "authenticated_full_stack",
+      "container_runtime_acceptance",
+      "paid_model_evaluations",
+      "live_dependency_advisory_audit"
+    ],
+    "new_findings": [
+      {
+        "id": "slo_streaming_latency_omitted",
+        "status": "open",
+        "priority": "high",
+        "evidence": [
+          "backend/scripts/slo_report.py:62",
+          "monitoring/prometheus/alerts.yaml:5",
+          "monitoring/prometheus/alerts.yaml:26"
+        ],
+        "detail": "P95 queries select only /api/v1/chat, omitting /api/v1/chat/stream; completion metric export is working but SLO query coverage is incomplete."
+      }
+    ],
+    "restored_pending_items": {
+      "strict_adversarial_output": {
+        "evaluated": 16,
+        "passed": 13,
+        "canary_emissions": 0,
+        "tool_authorization_evaluated": false,
+        "latest_retest_found": false
+      },
+      "adversarial_positive_fact_recall": {
+        "status": "retest_required_after_admission_changes"
+      },
+      "rag_snapshot_baselines": {
+        "approved_json_files": 0,
+        "previous_cases_without_baseline": 10,
+        "status": "not_a_passing_regression"
+      }
+    },
+    "superseded_old_blockers": [
+      "container_build_and_proxy_acceptance",
+      "13_missing_source_identity_rows_in_old_retrieval_run",
+      "five_starlette_advisories_in_default_production_environment"
+    ],
+    "human_review_pending": 30,
+    "release_ready": false
+  }
+}

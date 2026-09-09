@@ -121,13 +121,8 @@ def clear_file_summary(conn: sqlite3.Connection, file_id: int) -> None:
         "summary_status='pending', updated_at=CURRENT_TIMESTAMP WHERE id=?",
         (file_id,),
     )
-    # Also remove from vector + BM25 stores so stale entries don't linger.
-    try:
-        from ...services.rag._summary_vectorstore import delete_file_summary
-
-        delete_file_summary(file_id)
-    except Exception:
-        logger.debug("File summary vector delete failed for file %s", file_id, exc_info=True)
+    # BM25 is persisted in this database. External vector-store cleanup belongs
+    # to the service orchestration layer, never the core persistence layer.
     try:
         from .bm25 import delete_file_summary_bm25
 
@@ -143,14 +138,3 @@ def clear_meeting_summary(conn: sqlite3.Connection, meeting_id: int) -> None:
         "UPDATE meetings SET summary_status='pending', updated_at=CURRENT_TIMESTAMP WHERE id=?",
         (meeting_id,),
     )
-    # Also remove from meeting-summary vector store.
-    try:
-        from ...services.rag._meeting_summary_vectorstore import delete_meeting_summary
-
-        delete_meeting_summary(meeting_id)
-    except Exception:
-        logger.debug(
-            "Meeting summary vector delete failed for meeting %s",
-            meeting_id,
-            exc_info=True,
-        )

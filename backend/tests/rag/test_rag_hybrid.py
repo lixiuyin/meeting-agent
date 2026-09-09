@@ -15,7 +15,9 @@ constants_module.DATABASE_PATH = constants_module.DATA_DIR / "test.db"
 constants_module.CHROMA_PATH = constants_module.DATA_DIR / "chroma"
 constants_module.UPLOAD_DIR = constants_module.DATA_DIR / "uploads"
 
+from src.core.database.bm25 import _build_fts_query  # noqa: E402
 from src.services import rag  # noqa: E402
+from src.services.rag import _rrf as rrf_module  # noqa: E402
 from src.services.rag._retriever import _rrf_merge  # noqa: E402
 
 
@@ -26,6 +28,13 @@ class TestHybridSearch:
         """Should handle empty result lists in RRF merge."""
         results = _rrf_merge([], [], 5, k=60)
         assert results == []
+
+    def test_fts_query_preserves_hyphenated_identifier_tokens(self):
+        """Query sanitization must mirror FTS5's punctuation boundaries."""
+        table, query = _build_fts_query("ticket ZXQ-4817")
+
+        assert table == "bm25_chunks"
+        assert query == '"ticket" OR "ZXQ" OR "4817"'
 
     def test_rrf_merge_vector_only(self):
         """Should return vector results when BM25 empty."""
@@ -79,6 +88,36 @@ class TestHybridSearch:
         results = _rrf_merge(vector_results, bm25_results, 5, k=60)
         # doc B should rank higher (1+2=3) vs doc A (1+2=3, tie but higher BM25)
         assert len(results) == 2
+
+    def test_alpha_zero_is_pure_bm25(self, monkeypatch):
+        monkeypatch.setattr(rrf_module.settings, "HYBRID_ALPHA", 0.0)
+        vector = [{"content": "vector", "metadata": {"chunk_id": "v"}}]
+        bm25 = [{"content": "keyword", "metadata": {"chunk_id": "b"}}]
+
+        assert [item["content"] for item in _rrf_merge(vector, bm25, 5)] == ["keyword"]
+
+    def test_alpha_one_is_pure_vector(self, monkeypatch):
+        monkeypatch.setattr(rrf_module.settings, "HYBRID_ALPHA", 1.0)
+        vector = [{"content": "vector", "metadata": {"chunk_id": "v"}}]
+        bm25 = [{"content": "keyword", "metadata": {"chunk_id": "b"}}]
+
+        assert [item["content"] for item in _rrf_merge(vector, bm25, 5)] == ["vector"]
+
+    def test_intermediate_alpha_changes_path_preference(self, monkeypatch):
+        vector = [
+            {"content": "vector", "metadata": {"chunk_id": "v"}},
+            {"content": "shared", "metadata": {"chunk_id": "shared"}},
+        ]
+        bm25 = [{"content": "keyword", "metadata": {"chunk_id": "b"}}]
+
+        monkeypatch.setattr(rrf_module.settings, "HYBRID_ALPHA", 0.8)
+        vector_heavy = _rrf_merge(vector, bm25, 5, k=60)
+        monkeypatch.setattr(rrf_module.settings, "HYBRID_ALPHA", 0.2)
+        keyword_heavy = _rrf_merge(vector, bm25, 5, k=60)
+
+        assert vector_heavy[0]["content"] == "vector"
+        assert keyword_heavy[0]["content"] == "keyword"
+        assert vector_heavy != keyword_heavy
 
 
 class TestDeleteOperations:

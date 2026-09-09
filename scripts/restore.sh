@@ -1,97 +1,113 @@
 #!/usr/bin/env bash
-# SQLite database restore from a backup file.
+# Restore a complete meeting-agent backup archive produced by backup.sh.
 #
-# Companion to scripts/backup.sh. Verifies the backup, copies it to the target
-# location, and validates the restored database passes integrity checks.
-#
-# Usage:
-#   ./scripts/restore.sh <BACKUP_FILE> [TARGET_DB_PATH]
-#
-# Arguments:
-#   BACKUP_FILE     Path to the backup .db file (required)
-#   TARGET_DB_PATH  Where to restore the database (default: backend/data/meetings.db)
-#
-# Safety:
-#   - Aborts if the backup file does not exist or is not a valid SQLite database.
-#   - Creates a .bak copy of the current database before overwriting.
-#   - Verifies the restored file passes PRAGMA integrity_check.
+# Usage: ./scripts/restore.sh <BACKUP.tar.gz> [TARGET_DATA_DIR] [--force]
+# The backend must be stopped. --force only bypasses process detection for
+# controlled automation; it does not make an online restore safe.
 
 set -euo pipefail
+umask 077
 
 BACKUP_FILE="${1:-}"
-TARGET_DB="${2:-backend/data/meetings.db}"
+TARGET_DATA_DIR="${2:-data}"
+FORCE="${3:-}"
 
-# ── Validate arguments ──────────────────────────────────────────────────────
-
-if [[ -z "$BACKUP_FILE" ]]; then
-  echo "ERROR: Missing required argument BACKUP_FILE" >&2
-  echo "Usage: $0 <BACKUP_FILE> [TARGET_DB_PATH]" >&2
+if [[ -z "$BACKUP_FILE" || ! -f "$BACKUP_FILE" ]]; then
+  echo "ERROR: Backup archive not found: ${BACKUP_FILE:-<missing>}" >&2
+  echo "Usage: $0 <BACKUP.tar.gz> [TARGET_DATA_DIR] [--force]" >&2
+  exit 1
+fi
+if [[ "$FORCE" != "" && "$FORCE" != "--force" ]]; then
+  echo "ERROR: Unknown option: $FORCE" >&2
+  exit 1
+fi
+if ! tar -tzf "$BACKUP_FILE" >/dev/null 2>&1; then
+  echo "ERROR: Backup is not a readable tar.gz archive: $BACKUP_FILE" >&2
   exit 1
 fi
 
-if [[ ! -f "$BACKUP_FILE" ]]; then
-  echo "ERROR: Backup file not found: $BACKUP_FILE" >&2
+# Reject absolute paths, traversal, and links before extracting untrusted input.
+if tar -tzf "$BACKUP_FILE" | awk '
+  {
+    name=$0; sub(/^\.\//, "", name)
+    if (name ~ /^\// || name ~ /(^|\/)\.\.($|\/)/) bad=1
+  }
+  END { exit bad ? 0 : 1 }
+'; then
+  echo "ERROR: Backup contains an unsafe path" >&2
+  exit 1
+fi
+if tar -tvzf "$BACKUP_FILE" | awk 'substr($1,1,1) ~ /[lh]/ { found=1 } END { exit found ? 0 : 1 }'; then
+  echo "ERROR: Backup contains symbolic or hard links" >&2
   exit 1
 fi
 
-# ── Verify backup is valid SQLite ───────────────────────────────────────────
-
-if ! sqlite3 "$BACKUP_FILE" "SELECT 1;" &>/dev/null; then
-  echo "ERROR: Backup file is not a valid SQLite database: $BACKUP_FILE" >&2
-  exit 1
-fi
-
-BACKUP_CHECK=$(sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;" 2>&1)
-if [[ "$BACKUP_CHECK" != "ok" ]]; then
-  echo "ERROR: Backup file failed integrity check: $BACKUP_CHECK" >&2
-  exit 1
-fi
-
-echo "Backup verified: $BACKUP_FILE"
-
-# ── Warn about running processes ────────────────────────────────────────────
-# Attempt to locate running backend processes that may hold the DB open.
-
-PIDS=$(pgrep -f "uvicorn src.main:app" 2>/dev/null || true)
-if [[ -n "$PIDS" ]]; then
-  echo "WARNING: Running backend processes detected (PIDs: $PIDS)"
-  echo "  Consider stopping them before restoring: kill $PIDS"
-  read -rp "Continue anyway? [y/N] " CONFIRM
-  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-    echo "Aborted."
-    exit 0
+if [[ "$FORCE" != "--force" ]]; then
+  PIDS=$(pgrep -f "uvicorn .*src.main:app" 2>/dev/null || true)
+  if [[ -n "$PIDS" ]]; then
+    echo "ERROR: Backend process is running (PIDs: $PIDS). Stop it before restore." >&2
+    exit 1
   fi
 fi
 
-# ── Preserve current database ───────────────────────────────────────────────
+TARGET_PARENT=$(dirname "$TARGET_DATA_DIR")
+TARGET_NAME=$(basename "$TARGET_DATA_DIR")
+mkdir -p "$TARGET_PARENT"
+STAGING_DIR=$(mktemp -d "${TARGET_PARENT}/.${TARGET_NAME}.restore.XXXXXX")
+ROLLBACK_DIR="${TARGET_DATA_DIR}.pre-restore.$(date +%Y%m%d-%H%M%S)"
+trap 'if [[ -d "${STAGING_DIR:-}" ]]; then rm -rf "$STAGING_DIR"; fi' EXIT
 
-if [[ -f "$TARGET_DB" ]]; then
-  BAK_FILE="${TARGET_DB}.bak.$(date +%Y%m%d-%H%M%S)"
-  echo "Saving current database to $BAK_FILE"
-  cp "$TARGET_DB" "$BAK_FILE"
+tar -xzf "$BACKUP_FILE" -C "$STAGING_DIR" --no-same-owner --no-same-permissions
+
+if [[ ! -f "$STAGING_DIR/meetings.db" || ! -f "$STAGING_DIR/SHA256SUMS" || ! -f "$STAGING_DIR/BACKUP_INFO" ]]; then
+  echo "ERROR: Backup is missing meetings.db, SHA256SUMS, or BACKUP_INFO" >&2
+  exit 1
 fi
-
-# ── Restore ─────────────────────────────────────────────────────────────────
-
-TARGET_DIR=$(dirname "$TARGET_DB")
-mkdir -p "$TARGET_DIR"
-
-echo "Restoring $BACKUP_FILE → $TARGET_DB"
-cp "$BACKUP_FILE" "$TARGET_DB"
-
-# ── Verify restored database ────────────────────────────────────────────────
-
-RESTORE_CHECK=$(sqlite3 "$TARGET_DB" "PRAGMA integrity_check;" 2>&1)
-if [[ "$RESTORE_CHECK" != "ok" ]]; then
-  echo "ERROR: Restored database failed integrity check: $RESTORE_CHECK" >&2
-  # Attempt rollback
-  if [[ -f "${BAK_FILE:-}" ]]; then
-    echo "Rolling back to previous database..."
-    cp "$BAK_FILE" "$TARGET_DB"
-  fi
+if ! grep -qx 'format=meeting-agent-full-v1' "$STAGING_DIR/BACKUP_INFO"; then
+  echo "ERROR: Unsupported backup format" >&2
   exit 1
 fi
 
-SIZE=$(du -h "$TARGET_DB" | cut -f1)
-echo "Restore complete: $TARGET_DB ($SIZE)"
-echo "Verify application connectivity before deleting the .bak file."
+(
+  cd "$STAGING_DIR"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c SHA256SUMS
+  else
+    while IFS= read -r line; do
+      expected=${line%% *}
+      file=${line#*  }
+      actual=$(shasum -a 256 "$file" | awk '{print $1}')
+      [[ "$actual" == "$expected" ]] || {
+        echo "Checksum mismatch: $file" >&2
+        exit 1
+      }
+    done < SHA256SUMS
+  fi
+)
+
+INTEGRITY=$(sqlite3 "$STAGING_DIR/meetings.db" "PRAGMA integrity_check;" 2>&1)
+if [[ "$INTEGRITY" != "ok" ]]; then
+  echo "ERROR: Restored database failed integrity_check: $INTEGRITY" >&2
+  exit 1
+fi
+FK_ERRORS=$(sqlite3 "$STAGING_DIR/meetings.db" "PRAGMA foreign_key_check;" 2>&1)
+if [[ -n "$FK_ERRORS" ]]; then
+  echo "ERROR: Restored database failed foreign_key_check: $FK_ERRORS" >&2
+  exit 1
+fi
+rm -f "$STAGING_DIR/meetings.db-wal" "$STAGING_DIR/meetings.db-shm"
+
+if [[ -e "$TARGET_DATA_DIR" ]]; then
+  mv "$TARGET_DATA_DIR" "$ROLLBACK_DIR"
+  echo "Previous data preserved at $ROLLBACK_DIR"
+fi
+if ! mv "$STAGING_DIR" "$TARGET_DATA_DIR"; then
+  if [[ -d "$ROLLBACK_DIR" && ! -e "$TARGET_DATA_DIR" ]]; then
+    mv "$ROLLBACK_DIR" "$TARGET_DATA_DIR"
+  fi
+  echo "ERROR: Atomic data-directory swap failed; rollback attempted" >&2
+  exit 1
+fi
+
+echo "Restore complete: $TARGET_DATA_DIR"
+echo "Start the backend and verify http://localhost:7008/api/v1/health/ready"

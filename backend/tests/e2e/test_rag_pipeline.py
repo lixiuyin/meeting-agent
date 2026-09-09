@@ -1,8 +1,5 @@
 """End-to-end RAG pipeline test: upload -> process -> query -> answer with sources."""
 
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,26 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-# Ensure temp paths before any app imports
-os.environ["DATA_DIR"] = tempfile.mkdtemp()
-os.environ["UPLOAD_DIR"] = str(Path(os.environ["DATA_DIR"]) / "uploads")
-os.environ["VECTOR_DB_DIR"] = str(Path(os.environ["DATA_DIR"]) / "vectordb")
-
-import src.core.constants as constants_module
-
-constants_module.DATA_DIR = Path(os.environ["DATA_DIR"])
-constants_module.UPLOAD_DIR = Path(os.environ["DATA_DIR"]) / "uploads"
-constants_module.VECTOR_DB_DIR = Path(os.environ["DATA_DIR"]) / "vectordb"
-constants_module.DB_PATH = Path(os.environ["DATA_DIR"]) / "meetings.db"
-
-constants_module.DATA_DIR.mkdir(parents=True, exist_ok=True)
-constants_module.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-constants_module.VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
-
-from src.core.database import init_db  # noqa: E402
-from src.main import app  # noqa: E402
-
-init_db()
+from src.main import app
 
 
 @pytest.fixture
@@ -47,15 +25,13 @@ def _isolate_vectorstore(tmp_path, monkeypatch):
     vs_dir = tmp_path / "vectordb"
     vs_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(config_mod.settings, "VECTOR_DB_DIR", vs_dir)
-    monkeypatch.setattr(constants_module, "VECTOR_DB_DIR", vs_dir)
-
     import src.services.rag._vectorstore as _vs_mod
 
-    _vs_mod._create_vectorstore.cache_clear()
+    _vs_mod.reset_vectorstore()
 
     yield
 
-    _vs_mod._create_vectorstore.cache_clear()
+    _vs_mod.reset_vectorstore()
 
 
 @pytest.fixture
@@ -80,6 +56,16 @@ def _mock_embeddings():
     mock.embed_documents.side_effect = lambda texts: _embed(texts)
     mock.embed_query.side_effect = lambda text: _embed(text)
     return mock
+
+
+def _embedding_singleton_patches():
+    """Patch both singleton value and its config identity to prevent live I/O."""
+    from src.services import embedder
+
+    return (
+        patch("src.services.embedder._embeddings", _mock_embeddings()),
+        patch("src.services.embedder._embeddings_key", embedder._embedding_config_key()),
+    )
 
 
 class _MockLLM(BaseChatModel):
@@ -114,8 +100,10 @@ def _mock_llm(answer: str):
 async def test_rag_pipeline_upload_process_query(client, auth_headers, tmp_path):
     """Full pipeline: upload a txt file, index it, query it, and verify answer + sources."""
     # Patch embeddings and LLM to avoid external API calls
+    embeddings_patch, embeddings_key_patch = _embedding_singleton_patches()
     with (
-        patch("src.services.embedder._embeddings", _mock_embeddings()),
+        embeddings_patch,
+        embeddings_key_patch,
         patch(
             "src.services.llm.get_llm",
             return_value=_mock_llm("The roadmap includes dark mode and SSO."),
@@ -180,8 +168,10 @@ async def test_rag_pipeline_upload_process_query(client, auth_headers, tmp_path)
 @pytest.mark.asyncio
 async def test_rag_stream_pipeline(client, auth_headers, tmp_path):
     """Stream endpoint returns valid SSE events with sources."""
+    embeddings_patch, embeddings_key_patch = _embedding_singleton_patches()
     with (
-        patch("src.services.embedder._embeddings", _mock_embeddings()),
+        embeddings_patch,
+        embeddings_key_patch,
         patch("src.services.llm._providers._llm", _mock_llm("Mobile rewrite is planned for Q2.")),
         patch("src.services.rag.get_vectorstore") as mock_vs,
     ):

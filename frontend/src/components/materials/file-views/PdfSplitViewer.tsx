@@ -1,7 +1,11 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
-import { Button, Spin, Tooltip, Segmented, Alert } from "antd";
+import { Button, Spin, Tooltip, Segmented, Alert, Switch, Space } from "antd";
+import { useIntl } from "react-intl";
 import { ZoomInOutlined, ZoomOutOutlined, FilePdfOutlined } from "@ant-design/icons";
-import { Document, Page as PdfPage } from "react-pdf";
+import { Document } from "react-pdf";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import VirtualPdfPage from "./VirtualPdfPage";
+import { usePdfPageDimensions } from "./usePdfPageDimensions";
 import "../../../pdf-worker";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -22,19 +26,22 @@ export default function PdfSplitViewer({
   page,
   meetingId,
   fileId,
+  evidenceExcerpt,
 }: {
   url: string;
   page?: number;
   meetingId: number;
   fileId: number;
+  evidenceExcerpt?: string;
 }) {
   return (
     <PdfSplitViewerInner
-      key={`${meetingId}:${fileId}`}
+      key={`${meetingId}:${fileId}:${page ?? 1}`}
       url={url}
       page={page}
       meetingId={meetingId}
       fileId={fileId}
+      evidenceExcerpt={evidenceExcerpt}
     />
   );
 }
@@ -44,13 +51,18 @@ function PdfSplitViewerInner({
   page,
   meetingId,
   fileId,
+  evidenceExcerpt,
 }: {
   url: string;
   page?: number;
   meetingId: number;
   fileId: number;
+  evidenceExcerpt?: string;
 }) {
+  const { formatMessage: t } = useIntl();
+  const [syncEnabled, setSyncEnabled] = useState(true);
   const [numPages, setNumPages] = useState(0);
+  const { ratios, loadDimensions } = usePdfPageDimensions();
   const [zoom, setZoom] = useState(1.0);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [parsedPages, setParsedPages] = useState<PageItem[]>([]);
@@ -67,6 +79,8 @@ function PdfSplitViewerInner({
 
   const sync = usePdfPageSync({
     totalPages: Math.max(numPages, sortedPages.length),
+    evidenceExcerpt,
+    enabled: syncEnabled,
   });
 
   // Mobile breakpoint detection
@@ -122,18 +136,22 @@ function PdfSplitViewerInner({
   useEffect(() => {
     if (initialSyncDone.current) return;
     if (safePage <= 0) return;
-    if (numPages === 0 || sortedPages.length === 0) return;
+    if (numPages === 0) return;
+    const targetPage = Math.min(safePage, numPages);
     initialSyncDone.current = true;
-    requestAnimationFrame(() => {
-      sync.scrollBothToPage(safePage);
-    });
+    // The sync controller retains this anchor as either pane finishes loading.
+    sync.scrollBothToPage(targetPage, Boolean(evidenceExcerpt));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safePage, sync.scrollBothToPage, numPages, sortedPages.length]);
+  }, [safePage, sync.scrollBothToPage, numPages, evidenceExcerpt]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
-    setNumPages(n);
-    setPdfError(null);
-  }, []);
+  const onDocumentLoadSuccess = useCallback(
+    (document: PDFDocumentProxy) => {
+      setNumPages(document.numPages);
+      setPdfError(null);
+      void loadDimensions(document);
+    },
+    [loadDimensions],
+  );
 
   const onDocumentLoadError = useCallback((error: Error) => {
     setPdfError(error.message || "Failed to load PDF");
@@ -216,43 +234,28 @@ function PdfSplitViewerInner({
               if (!width) return null;
               const scaledWidth = Math.floor(width * zoom);
               return (
-                <Document
-                  file={url}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={onDocumentLoadError}
-                  loading={
-                    <div style={{ textAlign: "center", padding: 40 }}>
-                      <Spin />
-                    </div>
-                  }
-                >
-                  {pageNumbers.map((pageNum) => (
-                    <div
-                      key={pageNum}
-                      data-page-num={pageNum}
-                      style={{ marginBottom: 8, boxShadow: "var(--shadow-sm)" }}
-                    >
-                      <PdfPage
-                        pageNumber={pageNum}
+                <div style={{ paddingBottom: "var(--viewer-tail-space, 0px)" }}>
+                  <Document
+                    file={url}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    loading={
+                      <div style={{ textAlign: "center", padding: 40 }}>
+                        <Spin />
+                      </div>
+                    }
+                  >
+                    {pageNumbers.map((pageNum) => (
+                      <VirtualPdfPage
+                        key={pageNum}
+                        number={pageNum}
                         width={scaledWidth}
-                        loading={
-                          <div
-                            style={{
-                              width: scaledWidth,
-                              height: scaledWidth * 1.414,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              background: "var(--color-bg-muted)",
-                            }}
-                          >
-                            <Spin />
-                          </div>
-                        }
+                        ratio={ratios[pageNum]}
+                        activePage={sync.currentPage}
                       />
-                    </div>
-                  ))}
-                </Document>
+                    ))}
+                  </Document>
+                </div>
               );
             }}
           />
@@ -264,12 +267,11 @@ function PdfSplitViewerInner({
   // --- Right pane: Parsed content ---
   const renderParsedPane = () => (
     <div
-      ref={sync.parsedContainerRef}
       style={{
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        overflow: "auto",
+        overflow: "hidden",
         border: "1px solid var(--color-border)",
         borderRadius: 8,
         background: "var(--color-bg-elevated)",
@@ -288,116 +290,133 @@ function PdfSplitViewerInner({
         Parsed Content ({sortedPages.length} pages)
       </div>
 
-      {loadingParsed ? (
-        <div style={{ textAlign: "center", padding: 40 }}>
-          <Spin />
-        </div>
-      ) : timelineError ? (
-        <Alert
-          type="warning"
-          message={timelineError}
-          showIcon
-          action={
-            <Button
-              size="small"
-              onClick={() => {
-                const ctrl = new AbortController();
-                setTimelineError(null);
-                setLoadingParsed(true);
-                getFileTimeline(meetingId, fileId, { signal: ctrl.signal })
-                  .then((res) => {
-                    if (ctrl.signal.aborted) return;
-                    if (res.data?.kind === "pages") {
-                      setParsedPages(res.data.pages ?? []);
-                    } else {
-                      setTimelineError("Timeline extraction failed for this document");
-                    }
-                  })
-                  .catch((err) => {
-                    if (ctrl.signal.aborted) return;
-                    if (err.name !== "CanceledError" && err.name !== "AbortError") {
-                      setTimelineError("Failed to load parsed pages");
-                    }
-                  })
-                  .finally(() => {
-                    if (!ctrl.signal.aborted) setLoadingParsed(false);
-                  });
-              }}
-            >
-              Retry
-            </Button>
-          }
-        />
-      ) : sortedPages.length === 0 ? (
-        <div style={{ padding: 24, color: "var(--color-text-muted)", textAlign: "center" }}>
-          No parsed content available
-        </div>
-      ) : (
-        <div style={{ padding: 12 }}>
-          {sortedPages.map((p) => {
-            const isActive = p.page_num === sync.currentPage;
-            return (
-              <div
-                key={p.page_num}
-                data-page-num={p.page_num}
-                ref={(el) => sync.registerPageRef(p.page_num, el)}
-                role="button"
-                tabIndex={0}
-                style={{
-                  marginBottom: 12,
-                  borderLeft: isActive ? "3px solid var(--color-primary)" : "3px solid transparent",
-                  paddingLeft: 12,
-                  borderRadius: 4,
-                  transition: "border-left-color 0.2s",
-                  cursor: "pointer",
-                }}
-                onClick={() => handlePageClick(p.page_num)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handlePageClick(p.page_num);
-                  }
+      <div ref={sync.parsedContainerRef} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {loadingParsed ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <Spin />
+          </div>
+        ) : timelineError ? (
+          <Alert
+            type="warning"
+            message={timelineError}
+            showIcon
+            action={
+              <Button
+                size="small"
+                onClick={() => {
+                  const ctrl = new AbortController();
+                  setTimelineError(null);
+                  setLoadingParsed(true);
+                  getFileTimeline(meetingId, fileId, { signal: ctrl.signal })
+                    .then((res) => {
+                      if (ctrl.signal.aborted) return;
+                      if (res.data?.kind === "pages") {
+                        setParsedPages(res.data.pages ?? []);
+                      } else {
+                        setTimelineError("Timeline extraction failed for this document");
+                      }
+                    })
+                    .catch((err) => {
+                      if (ctrl.signal.aborted) return;
+                      if (err.name !== "CanceledError" && err.name !== "AbortError") {
+                        setTimelineError("Failed to load parsed pages");
+                      }
+                    })
+                    .finally(() => {
+                      if (!ctrl.signal.aborted) setLoadingParsed(false);
+                    });
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "var(--color-primary)",
-                      background: "var(--color-bg-muted)",
-                      padding: "2px 8px",
-                      borderRadius: 10,
-                    }}
-                  >
-                    Page {p.page_num}
-                  </span>
-                  {p.heading && (
-                    <span
-                      style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}
+                Retry
+              </Button>
+            }
+          />
+        ) : sortedPages.length === 0 ? (
+          <div style={{ padding: 24, color: "var(--color-text-muted)", textAlign: "center" }}>
+            No parsed content available
+          </div>
+        ) : (
+          <div style={{ padding: "12px 12px var(--viewer-tail-space, 0px)" }}>
+            {sortedPages.map((p) => {
+              const isActive = p.page_num === sync.currentPage;
+              return (
+                <div
+                  key={p.page_num}
+                  data-page-num={p.page_num}
+                  style={{
+                    marginBottom: 12,
+                    borderLeft: isActive
+                      ? "3px solid var(--color-primary)"
+                      : "3px solid transparent",
+                    paddingLeft: 12,
+                    borderRadius: 4,
+                    transition: "border-left-color 0.2s",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      aria-label={`Go to page ${p.page_num}`}
+                      onClick={() => handlePageClick(p.page_num)}
+                      style={{
+                        border: 0,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: "var(--color-primary)",
+                        background: "var(--color-bg-muted)",
+                        padding: "2px 8px",
+                        borderRadius: 10,
+                      }}
                     >
-                      {p.heading.replace(/^#{1,6}\s*/, "")}
-                    </span>
-                  )}
+                      Page {p.page_num}
+                    </button>
+                    {p.heading && (
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        {p.heading.replace(/^#{1,6}\s*/, "")}
+                      </span>
+                    )}
+                  </div>
+                  <PageLayoutView
+                    pageNum={p.page_num}
+                    heading={p.heading}
+                    text={p.text}
+                    imageAssets={p.image_assets ?? []}
+                    label="Page"
+                    variant="modal"
+                    evidenceExcerpt={p.page_num === safePage ? evidenceExcerpt : undefined}
+                  />
                 </div>
-                <PageLayoutView
-                  pageNum={p.page_num}
-                  heading={p.heading}
-                  text={p.text}
-                  imageAssets={p.image_assets ?? []}
-                  label="Page"
-                  variant="modal"
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <Space wrap style={{ padding: "8px 12px", flexShrink: 0 }}>
+        <Switch
+          checked={syncEnabled}
+          onChange={setSyncEnabled}
+          aria-label={t({ id: "viewer.syncEnabled" })}
+        />
+        <span>{t({ id: "viewer.syncEnabled" })}</span>
+        <Button onClick={() => sync.scrollBothToPage(safePage, Boolean(evidenceExcerpt))}>
+          {t({ id: "viewer.returnCitation" })}
+        </Button>
+        <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+          {t({ id: "viewer.syncPrecision" })}
+        </span>
+      </Space>
       {isMobile && (
         <div
           style={{

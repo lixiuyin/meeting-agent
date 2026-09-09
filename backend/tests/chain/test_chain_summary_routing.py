@@ -45,7 +45,8 @@ async def test_router_narrows_scope_files(monkeypatch):
 
     routed = [201, 202]
 
-    def _fake_route(query, meeting_ids):
+    def _fake_route(query, meeting_ids, *, user_id=None):
+        assert user_id == "principal-a"
         return list(routed)
 
     monkeypatch.setattr(
@@ -54,7 +55,12 @@ async def test_router_narrows_scope_files(monkeypatch):
     )
 
     trace = _StubTrace()
-    result = await _routing_mod._route_scope_files_via_summary("alpha topic", [10], trace=trace)
+    result = await _routing_mod._route_scope_files_via_summary(
+        "alpha topic",
+        [10],
+        trace=trace,
+        user_id="principal-a",
+    )
     assert result == routed
     span_labels = [s.label for s in trace.spans]
     assert "summary_router" in span_labels
@@ -114,12 +120,21 @@ def test_persist_summary_writes_to_vector_collection(monkeypatch):
 
     captured: dict = {}
 
-    def _fake_upsert(file_id, summary, *, meeting_id, file_name=None, file_type=None):
+    def _fake_upsert(
+        file_id,
+        summary,
+        *,
+        meeting_id,
+        file_name=None,
+        file_type=None,
+        extra_metadata=None,
+    ):
         captured["file_id"] = file_id
         captured["summary"] = summary
         captured["meeting_id"] = meeting_id
         captured["file_name"] = file_name
         captured["file_type"] = file_type
+        captured["extra_metadata"] = extra_metadata
 
     def _fake_get_meeting_file(_conn, file_id):
         return {
@@ -127,6 +142,7 @@ def test_persist_summary_writes_to_vector_collection(monkeypatch):
             "meeting_id": 77,
             "file_name": "doc.pdf",
             "file_type": "pdf",
+            "user_id": "principal-a",
         }
 
     monkeypatch.setattr(
@@ -145,6 +161,7 @@ def test_persist_summary_writes_to_vector_collection(monkeypatch):
         "meeting_id": 77,
         "file_name": "doc.pdf",
         "file_type": "pdf",
+        "extra_metadata": {"user_id": "principal-a"},
     }
 
 

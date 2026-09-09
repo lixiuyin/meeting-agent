@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.services.llm._parsing import parse_llm_json, strip_thinking_blocks
+from src.services.llm._parsing import extract_visible_text, parse_llm_json, strip_thinking_blocks
 
 
 class TestStripThinkingBlocks:
@@ -42,3 +42,19 @@ class TestParseLLMJson:
     def test_raises_on_invalid_json(self):
         with pytest.raises(json.JSONDecodeError):
             parse_llm_json("not json")
+
+
+class TestExtractVisibleText:
+    def test_ignores_reasoning_blocks_and_keeps_text(self):
+        message = {
+            "type": "message",
+            "content": [
+                {"type": "reasoning", "text": "private chain"},
+                {"type": "text", "text": "Visible answer"},
+            ],
+        }
+        assert extract_visible_text(message) == "Visible answer"
+
+    def test_reasoning_only_response_is_empty(self):
+        message = {"type": "reasoning", "content": "private chain"}
+        assert extract_visible_text(message) == ""

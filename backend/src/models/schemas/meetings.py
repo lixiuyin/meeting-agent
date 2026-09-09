@@ -1,5 +1,7 @@
 """Meeting-related Pydantic models."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ._common import ExportFormat, FileType, MeetingStatus, UTCDatetime
@@ -37,12 +39,46 @@ class MeetingFileResponse(BaseModel):
     file_name: str
     status: MeetingStatus
     created_at: UTCDatetime
+    updated_at: UTCDatetime
+    material_role: Literal["transcript", "minutes", "agenda", "decision_log", "attachment"]
+    business_domain: Literal["unspecified", "meeting", "course", "research"] = "unspecified"
+    approval_status: Literal["unreviewed", "draft", "reviewed", "approved", "rejected"]
+    approval_reason: str | None = None
+    source_revision: int = 1
+    content_recorded_at: UTCDatetime | None = None
+    semantic_updated_at: UTCDatetime | None = None
+    evidence_sync_status: Literal["pending", "syncing", "ready", "failed"] = "pending"
+    evidence_sync_error: str | None = None
+    source_revisions: list[str] = Field(
+        default_factory=list,
+        description="Current file/index revision identifiers accepted by evidence links",
+    )
     transcript_preview: str | None = Field(None, description="First 200 characters of transcript")
     error_message: str | None = Field(None, description="Failure reason when status is 'failed'")
     summary: str | None = Field(None, description="Per-file summary when available")
     summary_status: str | None = Field(
         None, description="File summary status: pending|generating|ready|failed"
     )
+
+
+class UpdateMeetingFileSemanticsRequest(BaseModel):
+    business_domain: Literal["unspecified", "meeting", "course", "research"] | None = None
+    material_role: (
+        Literal["transcript", "minutes", "agenda", "decision_log", "attachment"] | None
+    ) = None
+    approval_status: Literal["unreviewed", "draft", "reviewed", "approved", "rejected"] | None = (
+        None
+    )
+    approval_reason: str | None = Field(None, max_length=1000)
+
+
+class MeetingFileSemanticEventResponse(BaseModel):
+    source_revision: int
+    business_domain: str = "unspecified"
+    material_role: str
+    approval_status: str
+    approval_reason: str | None = None
+    changed_at: UTCDatetime
 
 
 class MeetingDetailResponse(BaseModel):
@@ -321,6 +357,14 @@ class TimelineSegmentItem(BaseModel):
     speaker: str | None = Field(None, description="Speaker label")
 
 
+class SourceBlock(BaseModel):
+    block_id: str
+    window_start: int
+    window_end: int
+    text: str
+    parser_revision: str = "canonical-block-v1"
+
+
 class TimelinePageItem(BaseModel):
     """A single page in a document timeline."""
 
@@ -332,6 +376,7 @@ class TimelinePageItem(BaseModel):
 
     page_num: int = Field(description="Page number (1-based)")
     text: str = Field(description="Page text content")
+    blocks: list[SourceBlock] = Field(default_factory=list)
     heading: str | None = Field(None, description="Page heading or title, if detected")
     image_assets: list[TimelinePageImageAsset] = Field(
         default_factory=list, description="Extracted image assets on the page"

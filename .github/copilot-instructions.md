@@ -76,7 +76,7 @@ uv run python -m src.mcp
 ```
 
 For Playwright-based MCP/browser automation sessions, run the app first and target the frontend URL:
-- local dev: `http://localhost:5173` (`make dev` or `cd frontend && npm run dev`)
+- local dev: `http://localhost:8307` (`make dev` or `cd frontend && npm run dev`)
 - docker: `http://localhost:8307` (`docker compose up --build`)
 
 ## High-level architecture

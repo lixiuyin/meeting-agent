@@ -91,26 +91,41 @@ export const MEETING_STATUS_CONFIG: Record<
   { color: string; bg: string; label: string; dot: string }
 > = {
   uploading: {
-    color: "#6b7280",
+    color: "var(--color-status-uploading)",
     bg: "rgba(107, 114, 128, 0.1)",
     label: "Uploading",
     dot: "#6b7280",
   },
   processing: {
-    color: "#3b82f6",
+    color: "var(--color-status-processing)",
     bg: "rgba(59, 130, 246, 0.1)",
     label: "Processing",
     dot: "#3b82f6",
   },
   summarizing: {
-    color: "#8b5cf6",
+    color: "var(--color-status-summarizing)",
     bg: "rgba(139, 92, 246, 0.1)",
     label: "Summarizing",
     dot: "#8b5cf6",
   },
-  ready: { color: "#10b981", bg: "rgba(16, 185, 129, 0.1)", label: "Ready", dot: "#10b981" },
-  failed: { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", label: "Failed", dot: "#ef4444" },
-  error: { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", label: "Failed", dot: "#ef4444" },
+  ready: {
+    color: "var(--color-status-ready)",
+    bg: "rgba(16, 185, 129, 0.1)",
+    label: "Ready",
+    dot: "#10b981",
+  },
+  failed: {
+    color: "var(--color-status-failed)",
+    bg: "rgba(239, 68, 68, 0.1)",
+    label: "Failed",
+    dot: "#ef4444",
+  },
+  error: {
+    color: "var(--color-status-failed)",
+    bg: "rgba(239, 68, 68, 0.1)",
+    label: "Failed",
+    dot: "#ef4444",
+  },
 };
 
 export type MeetingStatusConfig =

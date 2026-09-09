@@ -1,6 +1,18 @@
 # Benchmark Construction Flow
 
-This document describes how the RAG chunk/retrieval benchmark is constructed and executed, starting from the AMI Meeting Corpus dataset all the way to final Phase 1 and Phase 2 reports.
+> Scope: specialized two-phase audio chunk/retrieval experiment. Verified
+> against the current `_bench_rag_phase1.py`, `_bench_rag_phase2.py`, and
+> benchmark CLI on 2026-09-09. Both phases are configuration-tuning evidence:
+> they select and score configurations on the same development material and
+> therefore emit `grade=tuning_only`, `release_ready=false`. They do not replace
+> a frozen configuration's one-time evaluation on an untouched test set, the production holdout,
+> lineage, memory, multi-turn, or release-evidence documentation in
+> [`backend/docs/benchmarking.md`](../../backend/docs/benchmarking.md).
+
+This document describes how the RAG chunk/retrieval tuning benchmark is
+constructed and executed, starting from the AMI Meeting Corpus dataset through
+Phase 1 and Phase 2 development reports. “Recommendation” means the best
+development configuration, not an unbiased estimate of production quality.
 
 ---
 
@@ -9,7 +21,13 @@ This document describes how the RAG chunk/retrieval benchmark is constructed and
 The benchmark is a two-phase evaluation pipeline:
 
 - **Phase 1** compares 8 chunk-strategy configurations (3 methods x 2-3 presets) using the same retrieval settings, and selects the top-2 configs by `combined_recall@10`.
-- **Phase 2** runs a retrieval grid search on those top-2 configs, testing 4 retrieval strategy combinations (native/hybrid x no reranker/BGE reranker).
+- **Phase 2** runs a retrieval grid search on those top-2 configs, testing 4 retrieval strategy combinations (vector/hybrid x no reranker/BGE reranker).
+
+After Phase 2, freeze the chosen chunk/retrieval configuration. Do not tune on
+the final test set. Evaluate the frozen configuration once on a separately
+sampled, untouched, versioned set (and on the principal-scoped production
+holdout for a release claim). If the final result drives another configuration
+change, it has become development data and a new untouched set is required.
 
 All benchmark runs are isolated via `bench_environment()`, which creates a temporary database and vector store per run.
 
@@ -185,8 +203,8 @@ Phase 2 tests 4 retrieval combinations on each of the top-2 chunk configs:
 
 | Provider | Reranker | Description |
 |----------|----------|-------------|
-| native | off | Vector-only retrieval |
-| native | bge | Vector + BGE reranker |
+| vector | off | Vector-only retrieval |
+| vector | bge | Vector + BGE reranker |
 | hybrid | off | Vector + BM25 hybrid |
 | hybrid | bge | Hybrid + BGE reranker |
 
@@ -197,7 +215,7 @@ Total: 2 configs x 4 combinations = 8 runs.
 Same as Phase 1, with two key differences:
 
 1. **Reranker handling**: When `reranker` is enabled, `fetch_multiplier` is set to `RAG_RERANK_FETCH_MULTIPLIER` (default 6) so the reranker has extra candidates to reorder. The `rerank()` function is explicitly called on the retrieved results.
-2. **Retrieval provider**: `RAG_RETRIEVER_PROVIDER` is set to `native` or `hybrid`, and `RERANKER_BINDING` is set accordingly.
+2. **Retrieval provider**: `RAG_RETRIEVER_PROVIDER` is set to `vector` or `hybrid`, and `RERANKER_BINDING` is set accordingly.
 
 ### 6.3 Scoring
 
@@ -216,6 +234,11 @@ The combination with the highest `weighted_score` is recommended as the optimal 
 ---
 
 ## 7. Results and Artifacts
+
+All Phase 1/2 artifacts include an `evidence_quality` block marking them
+`tuning_only`. Their metric values remain useful for configuration selection and
+regression diagnosis but must not be copied into README as current production
+accuracy.
 
 After each run, two files are written to `backend/benchmark-results/`:
 
@@ -253,7 +276,7 @@ For a full run (Phase 1 + Phase 2):
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `sqlite3.OperationalError: no such table` | Stale thread-local connection from previous run | Already fixed: `close_all_connections()` is called before each `init_db()` |
-| Vector search timeout → BM25 fallback | Slow embedding provider or disabled hybrid search | Ensure `HYBRID_SEARCH_ENABLED=true` in `.env`; benchmark locks this to `True` |
+| Vector branch timeout → BM25 availability fallback | Slow embedding provider | Check embedding latency; for intentional vector+BM25 fusion, run the `hybrid` provider with `HYBRID_SEARCH_ENABLED=true` |
 | Empty `expected_chunks` for a query | `compute_expected_chunks` couldn't match keywords/embeddings | Lower `keyword_threshold` or check that golden answers are actually in the corpus |
 | Phase 2 reranker shows no improvement | `fetch_multiplier=1` gives reranker nothing to reorder | Already fixed: Phase 2 now uses `fetch_multiplier=RAG_RERANK_FETCH_MULTIPLIER` when reranker is enabled |
 | Golden queries lack `expected_meeting_ids` | Old golden file from before prompt fix | Regenerate golden queries with updated prompt |

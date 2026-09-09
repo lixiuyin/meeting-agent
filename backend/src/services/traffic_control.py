@@ -4,10 +4,13 @@ Protects the LLM provider from concurrent request spikes and cascading failures.
 Wraps individual LLM invoke calls, not the HTTP layer (slowapi handles that).
 
 Usage:
-    from .traffic_control import traffic_controller
+    from .traffic_control import get_traffic_controller
 
-    async with traffic_controller:
-        result = await asyncio.to_thread(llm.invoke, prompt)
+    controller = get_traffic_controller()
+    if controller is not None:
+        async with controller:
+            result = await asyncio.to_thread(llm.invoke, prompt)
+            controller.record_success()
 
 H-6 Note:
     The semaphore, circuit breaker, and rate-limiter state are **process-local**.
@@ -101,6 +104,11 @@ class CircuitBreaker:
                         "Circuit breaker closed after %d successful probes",
                         self._recovery_successes,
                     )
+                else:
+                    # Allow the next serialized recovery probe.  Leaving the
+                    # breaker in ``probing`` would reject every subsequent
+                    # request and make recovery_successes > 1 unreachable.
+                    self._state = "half-open"
             else:
                 self._probe_success_count = 0
             self._failure_count = 0
@@ -120,6 +128,18 @@ class CircuitBreaker:
                 # Probing call failed but threshold not yet reached; revert to
                 # half-open so another probe can be attempted after a delay.
                 self._state = "open"
+
+    def release_probe(self) -> None:
+        """Return an unexecuted half-open probe slot without recording failure.
+
+        A caller can be cancelled or time out while waiting for concurrency or
+        rate-limit capacity, before it ever reaches the provider. Without this
+        transition the breaker would remain in the private ``probing`` state
+        and reject every future recovery attempt.
+        """
+        with self._lock:
+            if self._state == "probing":
+                self._state = "half-open"
 
 
 # ---------------------------------------------------------------------------
@@ -238,19 +258,36 @@ class TrafficController:
             raise LLMCircuitBreakerError(
                 "LLM service temporarily unavailable (circuit breaker open)"
             )
+        acquired = False
+        deadline = time.monotonic() + self._timeout
         try:
             await asyncio.wait_for(
                 self._semaphore.acquire(),
-                timeout=self._timeout,
+                timeout=max(deadline - time.monotonic(), 0.001),
             )
-        except TimeoutError:
-            logger.warning(
-                "Traffic controller: timeout waiting for semaphore (concurrency=%d, timeout=%.1fs)",
-                self._max_concurrency,
-                self._timeout,
+            acquired = True
+            self._update_inflight_gauge()
+            await asyncio.wait_for(
+                self._acquire_token(),
+                timeout=max(deadline - time.monotonic(), 0.001),
             )
+        except BaseException as exc:
+            # __aexit__ is not entered when __aenter__ fails or is cancelled.
+            # Return the permit here so cancelled rate-limit waiters cannot
+            # permanently exhaust the controller.
+            if acquired:
+                self._semaphore.release()
+                self._update_inflight_gauge()
+            self._breaker.release_probe()
+            self._update_breaker_gauge()
+            if isinstance(exc, TimeoutError):
+                logger.warning(
+                    "Traffic controller: timeout waiting for capacity "
+                    "(concurrency=%d, timeout=%.1fs)",
+                    self._max_concurrency,
+                    self._timeout,
+                )
             raise
-        await self._acquire_token()
         return self
 
     async def __aexit__(
@@ -316,7 +353,13 @@ def init_traffic_controller() -> TrafficController:
         max_concurrency=settings.LLM_MAX_CONCURRENCY,
         rpm=settings.LLM_RPM,
         timeout=30.0,
+        circuit_breaker=CircuitBreaker(
+            failure_threshold=settings.LLM_CIRCUIT_BREAKER_THRESHOLD,
+            recovery_timeout=float(settings.LLM_CIRCUIT_BREAKER_RECOVERY),
+        ),
     )
+    traffic_controller._update_breaker_gauge()
+    traffic_controller._update_inflight_gauge()
     logger.info(
         "Traffic controller initialized (concurrency=%d, rpm=%d)",
         settings.LLM_MAX_CONCURRENCY,
@@ -332,4 +375,9 @@ def init_traffic_controller() -> TrafficController:
             workers,
         )
 
+    return traffic_controller
+
+
+def get_traffic_controller() -> TrafficController | None:
+    """Return the current controller without copying a replaceable singleton."""
     return traffic_controller

@@ -1,5 +1,11 @@
 # Benchmark Configurations and Invocation Guide
 
+> Scope: specialized two-phase audio chunk/retrieval experiment. Verified
+> against `backend/scripts/_bench_chunk_configs.py` and the `rag-chunk-phase1`
+> / `rag-chunk-phase2` commands on 2026-09-09. For the full current evaluation
+> surface and release-grade evidence rules, use
+> [`backend/docs/benchmarking.md`](../../backend/docs/benchmarking.md).
+
 This document catalogs all experimental configurations used in the chunk/retrieval benchmark, and provides copy-paste commands for every invocation mode.
 
 ---
@@ -51,19 +57,19 @@ Phase 2 tests a 2x2 grid on each of the top-2 chunk configs.
 
 | Provider | Reranker | `RAG_RETRIEVER_PROVIDER` | `RERANKER_BINDING` | `fetch_multiplier` |
 |----------|----------|--------------------------|--------------------|--------------------|
-| native | off | `native` | `""` | 1 |
-| native | bge | `native` | `bge` | 6 |
+| vector | off | `vector` | `""` | 1 |
+| vector | bge | `vector` | `bge` | 6 |
 | hybrid | off | `hybrid` | `""` | 1 |
 | hybrid | bge | `hybrid` | `bge` | 6 |
 
-- **native**: Vector-only retrieval (Chroma cosine similarity).
+- **vector**: Vector-only retrieval (Chroma cosine similarity).
 - **hybrid**: Reciprocal Rank Fusion (RRF) of vector + BM25 scores.
 - **bge**: Local BGE cross-encoder reranker (`BAAI/bge-reranker-v2-m3`). Requires `uv sync --extra huggingface`.
 
 ### 2.2 How Retrieval Configs Are Applied
 
 ```python
-settings.RAG_RETRIEVER_PROVIDER = provider   # "native" or "hybrid"
+settings.RAG_RETRIEVER_PROVIDER = provider   # "vector" or "hybrid"
 settings.RERANKER_BINDING = reranker         # "" or "bge"
 ```
 
@@ -127,8 +133,8 @@ uv run python -m scripts.benchmark rag-chunk-phase1 --list-configs
 Output:
 ```
 Available chunk configs (use --config-index N to run a single one):
-  [0] A Native（Segment-Aware） S | chunk_size=512 | method=native
-  [1] A Native（Segment-Aware） M | chunk_size=1024 | method=native
+  [0] A Native (Segment-Aware) S | chunk_size=512 | method=native
+  [1] A Native (Segment-Aware) M | chunk_size=1024 | method=native
   ...
 ```
 
@@ -232,9 +238,9 @@ uv run python -m scripts.benchmark all --iterations 5 --top-k 10 --judge-repeats
 ```python
 # backend/scripts/_bench_chunk_configs.py
 AUDIO_CHUNK_CONFIGS = [
-    ChunkConfig(name="A Native（Segment-Aware）", preset="S", method="native", chunk_size=512, chunk_overlap=64, parent_child_enabled=False, audio_semantic_boundary_enabled=True, audio_semantic_boundary_threshold=0.5),
-    ChunkConfig(name="A Native（Segment-Aware）", preset="M", method="native", chunk_size=1024, chunk_overlap=128, parent_child_enabled=False, audio_semantic_boundary_enabled=True, audio_semantic_boundary_threshold=0.5),
-    ChunkConfig(name="A Native（Segment-Aware）", preset="L", method="native", chunk_size=2048, chunk_overlap=256, parent_child_enabled=False, audio_semantic_boundary_enabled=False),
+    ChunkConfig(name="A Native (Segment-Aware)", preset="S", method="native", chunk_size=512, chunk_overlap=64, parent_child_enabled=False, audio_semantic_boundary_enabled=True, audio_semantic_boundary_threshold=0.5),
+    ChunkConfig(name="A Native (Segment-Aware)", preset="M", method="native", chunk_size=1024, chunk_overlap=128, parent_child_enabled=False, audio_semantic_boundary_enabled=True, audio_semantic_boundary_threshold=0.5),
+    ChunkConfig(name="A Native (Segment-Aware)", preset="L", method="native", chunk_size=2048, chunk_overlap=256, parent_child_enabled=False, audio_semantic_boundary_enabled=False),
     ChunkConfig(name="B Flat", preset="S", method="flat", chunk_size=512, chunk_overlap=64, parent_child_enabled=False, non_text_chunking_strategy="text"),
     ChunkConfig(name="B Flat", preset="M", method="flat", chunk_size=1024, chunk_overlap=128, parent_child_enabled=False, non_text_chunking_strategy="text"),
     ChunkConfig(name="B Flat", preset="L", method="flat", chunk_size=2048, chunk_overlap=256, parent_child_enabled=False, non_text_chunking_strategy="text"),
@@ -248,8 +254,8 @@ AUDIO_CHUNK_CONFIGS = [
 ```python
 # backend/scripts/_bench_rag_phase2.py
 RETRIEVAL_GRID = [
-    ("native", ""),      # Vector only, no rerank
-    ("native", "bge"),   # Vector + BGE rerank
+    ("vector", ""),      # Vector only, no rerank
+    ("vector", "bge"),   # Vector + BGE rerank
     ("hybrid", ""),      # Hybrid, no rerank
     ("hybrid", "bge"),   # Hybrid + BGE rerank
 ]

@@ -42,6 +42,7 @@ async def _shared_wide_fetch(
     trace: TraceContext | None,
     rag_mode: str | None,
     known_speakers: list[str] | None,
+    user_id: str | None,
 ) -> list[dict]:
     """Wide fetch with optional request-scoped caching for multi-query.
 
@@ -58,8 +59,9 @@ async def _shared_wide_fetch(
             trace,
             rag_mode,
             known_speakers,
+            user_id=user_id,
         )
-    key = broad_recall_ctx.make_key(meeting_ids, anchor_meeting_ids)
+    key = broad_recall_ctx.make_key(meeting_ids, anchor_meeting_ids, primary_query)
     return await broad_recall_ctx.get_or_compute(
         key,
         lambda: asyncio.to_thread(
@@ -70,6 +72,7 @@ async def _shared_wide_fetch(
             trace,
             rag_mode,
             known_speakers,
+            user_id=user_id,
         ),
     )
 
@@ -92,6 +95,7 @@ class FileScopingStrategy(Protocol):
         *,
         summary_intent: bool = False,
         broad_recall_ctx: BroadRecallContext | None = None,
+        user_id: str | None = None,
     ) -> ScopeSelection: ...
 
 
@@ -120,9 +124,15 @@ class RouterAndFunnelStrategy:
         *,
         summary_intent: bool = False,
         broad_recall_ctx: BroadRecallContext | None = None,
+        user_id: str | None = None,
     ) -> ScopeSelection:
         router_task = asyncio.create_task(
-            _route_scope_files_with_scores(primary_query, meeting_ids, trace=trace)
+            _route_scope_files_with_scores(
+                primary_query,
+                meeting_ids,
+                trace=trace,
+                user_id=user_id,
+            )
         )
         wide_docs = await _shared_wide_fetch(
             broad_recall_ctx,
@@ -132,6 +142,7 @@ class RouterAndFunnelStrategy:
             trace,
             rag_mode,
             known_speakers,
+            user_id,
         )
         routed_with_scores = await router_task
         return await asyncio.to_thread(
@@ -148,6 +159,7 @@ class RouterAndFunnelStrategy:
             min_chunk_evidence=settings.RAG_FUNNEL_NARROW_MIN_EVIDENCE,
             prefetched_wide_docs=wide_docs,
             summary_intent=summary_intent,
+            user_id=user_id,
         )
 
 
@@ -169,6 +181,7 @@ class FunnelOnlyStrategy:
         *,
         summary_intent: bool = False,
         broad_recall_ctx: BroadRecallContext | None = None,
+        user_id: str | None = None,
     ) -> ScopeSelection:
         if broad_recall_ctx is not None:
             wide_docs = await _shared_wide_fetch(
@@ -179,6 +192,7 @@ class FunnelOnlyStrategy:
                 trace,
                 rag_mode,
                 known_speakers,
+                user_id,
             )
             return await asyncio.to_thread(
                 narrow_scope_via_funnel,
@@ -194,6 +208,7 @@ class FunnelOnlyStrategy:
                 min_chunk_evidence=settings.RAG_FUNNEL_NARROW_MIN_EVIDENCE,
                 prefetched_wide_docs=wide_docs,
                 summary_intent=summary_intent,
+                user_id=user_id,
             )
         return await asyncio.to_thread(
             narrow_scope_via_funnel,
@@ -208,6 +223,7 @@ class FunnelOnlyStrategy:
             target_files=target_files,
             min_chunk_evidence=settings.RAG_FUNNEL_NARROW_MIN_EVIDENCE,
             summary_intent=summary_intent,
+            user_id=user_id,
         )
 
 
@@ -229,11 +245,13 @@ class RouterPreFilterStrategy:
         *,
         summary_intent: bool = False,
         broad_recall_ctx: BroadRecallContext | None = None,
+        user_id: str | None = None,
     ) -> ScopeSelection:
         pre_filter_meeting_ids = await router_prefilter_meetings(
             primary_query,
             meeting_ids,
             trace=trace,
+            user_id=user_id,
         )
         if broad_recall_ctx is not None:
             wide_docs = await _shared_wide_fetch(
@@ -244,6 +262,7 @@ class RouterPreFilterStrategy:
                 trace,
                 rag_mode,
                 known_speakers,
+                user_id,
             )
             return await asyncio.to_thread(
                 narrow_scope_via_funnel,
@@ -259,6 +278,7 @@ class RouterPreFilterStrategy:
                 min_chunk_evidence=settings.RAG_FUNNEL_NARROW_MIN_EVIDENCE,
                 prefetched_wide_docs=wide_docs,
                 summary_intent=summary_intent,
+                user_id=user_id,
             )
         return await asyncio.to_thread(
             narrow_scope_via_funnel,
@@ -273,6 +293,7 @@ class RouterPreFilterStrategy:
             target_files=target_files,
             min_chunk_evidence=settings.RAG_FUNNEL_NARROW_MIN_EVIDENCE,
             summary_intent=summary_intent,
+            user_id=user_id,
         )
 
 
@@ -299,12 +320,14 @@ class RouterOnlyStrategy:
         *,
         summary_intent: bool = False,
         broad_recall_ctx: BroadRecallContext | None = None,
+        user_id: str | None = None,
     ) -> ScopeSelection:
         # Try scored router first
         routed_with_scores = await _route_scope_files_with_scores(
             primary_query,
             meeting_ids,
             trace=trace,
+            user_id=user_id,
         )
         scope_file_ids: list[int] = []
         file_scores: dict[int, float] = {}
@@ -316,17 +339,18 @@ class RouterOnlyStrategy:
             if not settings.RAG_SUMMARY_ROUTER_FALLBACK_TO_CHUNK:
                 scope_file_ids = []
             else:
-                scope_file_ids = await _enumerate_scope_files(meeting_ids)
+                scope_file_ids = await _enumerate_scope_files(meeting_ids, user_id=user_id)
         else:
             routed_file_ids = await _route_scope_files_via_summary(
                 primary_query,
                 meeting_ids,
                 trace=trace,
+                user_id=user_id,
             )
             if routed_file_ids:
                 scope_file_ids = routed_file_ids
             else:
-                scope_file_ids = await _enumerate_scope_files(meeting_ids)
+                scope_file_ids = await _enumerate_scope_files(meeting_ids, user_id=user_id)
 
         # Anchor injection with cap+evict (consistent with funnel narrow)
         if settings.RAG_ANCHOR_BOOST_IN_BROAD_RECALL and anchor_file_ids:
@@ -353,10 +377,10 @@ _STRATEGY_MAP: dict[str, type] = {
 
 def get_scoping_strategy(mode: str | None = None) -> FileScopingStrategy:
     """Return the file scoping strategy for the given mode."""
-    mode = mode or settings.RAG_FILE_SCOPING_MODE
-    cls = _STRATEGY_MAP.get(mode)
+    selected_mode = mode or settings.RAG_FILE_SCOPING_MODE or "router_and_funnel"
+    cls = _STRATEGY_MAP.get(selected_mode)
     if cls is None:
         raise ValueError(
-            f"Unknown RAG_FILE_SCOPING_MODE={mode!r}. Valid modes: {sorted(_STRATEGY_MAP)}"
+            f"Unknown RAG_FILE_SCOPING_MODE={selected_mode!r}. Valid modes: {sorted(_STRATEGY_MAP)}"
         )
     return cls()

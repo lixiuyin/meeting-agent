@@ -114,7 +114,6 @@ class TestRawQuestionRetry:
             return []
 
         monkeypatch.setattr(settings, "RAG_SIBLING_CORETRIEVE_ENABLED", False)
-        monkeypatch.setattr(settings, "RAG_HIERARCHICAL_ENABLED", False)
         monkeypatch.setattr(
             "src.services.rag._scoping_strategies._route_scope_files_with_scores", _no_route
         )
@@ -159,7 +158,6 @@ class TestRawQuestionRetry:
             return [], None
 
         monkeypatch.setattr(settings, "RAG_SIBLING_CORETRIEVE_ENABLED", False)
-        monkeypatch.setattr(settings, "RAG_HIERARCHICAL_ENABLED", False)
         with patch("src.services.chain._steps_retrieve.retrieve", side_effect=mock_retrieve):
             await retrieve_documents(ctx)
 

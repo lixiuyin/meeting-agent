@@ -52,6 +52,10 @@ class TestSearchSemanticFileScope:
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value=batch,
             ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             entries = await service.search_semantic(user_id, query="q", limit=10, file_ids=[11])
@@ -128,6 +132,10 @@ class TestSearchSemanticFileScope:
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value=batch,
             ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             entries = await service.search_semantic(user_id, query="q", limit=10, meeting_ids=[1])
@@ -161,6 +169,10 @@ class TestSearchSemanticFileScope:
             patch(
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value=batch,
+            ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
             ),
             patch.object(service, "search_important", return_value=[]),
         ):
@@ -197,8 +209,8 @@ class TestMemoryScopePersistence:
         assert sorted(mids) == [42, 43]
         assert fids == [7]
 
-    def test_set_memory_conflict_accumulates_scope(self) -> None:
-        """Repeated set_memory on the same key unions scope IDs (deduplicated)."""
+    def test_same_value_reconfirmation_accumulates_scope(self) -> None:
+        """The same fact may be confirmed by additional meetings."""
         from src.core import database as db
         from src.core.database import get_connection, get_write_connection
         from src.core.database._scopes import get_scopes
@@ -215,7 +227,7 @@ class TestMemoryScopePersistence:
                 conn,
                 user_id="scope_union",
                 key="k1",
-                value="v2",
+                value="v1",
                 meeting_ids=[20],
             )
             # Same ID again — should dedupe via INSERT OR IGNORE
@@ -223,7 +235,7 @@ class TestMemoryScopePersistence:
                 conn,
                 user_id="scope_union",
                 key="k1",
-                value="v3",
+                value="v1",
                 meeting_ids=[10],
             )
 
@@ -236,6 +248,31 @@ class TestMemoryScopePersistence:
             mids, _ = get_scopes(conn, kind="memory", owner_id=int(row["id"]))
 
         assert set(mids) == {10, 20}
+
+    def test_value_change_cannot_silently_broaden_scope(self) -> None:
+        from src.core import database as db
+        from src.core.database import get_connection, get_write_connection
+        from src.core.database.memories import MemoryScopeConflictError
+
+        with get_write_connection() as conn:
+            db.set_memory(
+                conn, user_id="scope_conflict", key="owner", value="Alice", meeting_ids=[1]
+            )
+
+        with pytest.raises(MemoryScopeConflictError):
+            with get_write_connection() as conn:
+                db.set_memory(
+                    conn,
+                    user_id="scope_conflict",
+                    key="owner",
+                    value="Bob",
+                    meeting_ids=[2],
+                )
+
+        with get_connection() as conn:
+            row = db.get_memory_full(conn, user_id="scope_conflict", key="owner")
+        assert row["value"] == "Alice"
+        assert row["meeting_ids"] == "1"
 
 
 class TestLegacyScopeFlag:
@@ -335,6 +372,10 @@ class TestLegacyScopeFlag:
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value=batch,
             ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             scoped = await service.search_semantic(user_id, query="q", limit=10, meeting_ids=[1])
@@ -375,6 +416,10 @@ class TestOversampleFactor:
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value={},
             ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             await service.search_semantic("user", query="q", limit=5, meeting_ids=[1])
@@ -402,12 +447,63 @@ class TestOversampleFactor:
                 "src.services.memory._service._search.db.get_memories_batch",
                 return_value={},
             ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                return_value=["preselected"],
+            ),
             patch.object(service, "search_important", return_value=[]),
         ):
             await service.search_semantic("user", query="q", limit=5)
 
         kwargs = mock_vs.similarity_search.call_args.kwargs
         assert kwargs.get("fetch_multiplier") == 2
+
+
+class TestImportantFallbackScope:
+    @pytest.mark.asyncio
+    async def test_database_fallback_preserves_scope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.core.config import settings
+
+        service = MemoryService()
+        mock_vs = MagicMock()
+        mock_vs.similarity_search.return_value = []
+        important = [
+            {
+                "key": "meeting_fact",
+                "value": "scoped",
+                "importance": 4,
+                "meeting_ids": "17",
+                "file_ids": None,
+                "updated_at": "2026-01-01",
+            }
+        ]
+        monkeypatch.setattr(settings, "SCOPED_MEMORY_STRICT", True)
+
+        def _allowed_keys(_conn, *, meeting_ids=None, **_kwargs):
+            return ["meeting_fact"] if meeting_ids == [17] else []
+
+        def _rows(_conn, *, keys, **_kwargs):
+            return {"meeting_fact": important[0]} if "meeting_fact" in keys else {}
+
+        with (
+            patch(
+                "src.services.memory._service._search.get_memory_vectorstore",
+                return_value=mock_vs,
+            ),
+            patch(
+                "src.services.memory._service._search.db.list_memory_keys_for_scope",
+                side_effect=_allowed_keys,
+            ),
+            patch(
+                "src.services.memory._service._search.db.get_memories_batch",
+                side_effect=_rows,
+            ),
+        ):
+            matching = await service.search_semantic("user", query="q", limit=5, meeting_ids=[17])
+            foreign = await service.search_semantic("user", query="q", limit=5, meeting_ids=[99])
+
+        assert [entry.key for entry in matching] == ["meeting_fact"]
+        assert foreign == []
 
 
 class TestDiversifyByMeeting:
@@ -593,6 +689,9 @@ class TestExtractionThreading:
             ]
 
         monkeypatch.setattr(ex_mod.settings, "MEMORY_AUTO_EXTRACT", True)
+        # Privacy mode must not leave the local ``existing`` collection
+        # uninitialized later in the extraction pipeline.
+        monkeypatch.setattr(ex_mod.settings, "MEMORY_EXTRACTION_INCLUDE_EXISTING", False)
         monkeypatch.setattr(ex_mod.settings, "MEMORY_EXTRACTION_MODE", "balanced")
         monkeypatch.setattr(ex_mod.settings, "MEMORY_MAX_FACTS_PER_TURN", 3)
         monkeypatch.setattr(ex_mod, "extract_facts", fake_extract_facts)

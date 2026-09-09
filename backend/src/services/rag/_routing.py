@@ -32,7 +32,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _enumerate_scope_files(meeting_ids: list[int] | None) -> list[int]:
+async def _enumerate_scope_files(
+    meeting_ids: list[int] | None,
+    *,
+    user_id: str | None = None,
+) -> list[int]:
     """Enumerate ready file IDs for broad recall mode."""
     limit = settings.BROAD_RECALL_MAX_FILES
 
@@ -40,8 +44,12 @@ async def _enumerate_scope_files(meeting_ids: list[int] | None) -> list[int]:
         try:
             with get_connection() as conn:
                 if meeting_ids:
-                    return list_ready_file_ids_for_meetings(conn, meeting_ids)
-                return list_recent_ready_file_ids(conn, limit=limit)
+                    return list_ready_file_ids_for_meetings(
+                        conn,
+                        meeting_ids,
+                        user_id=user_id,
+                    )
+                return list_recent_ready_file_ids(conn, limit=limit, user_id=user_id)
         except Exception:
             logger.warning("Failed to enumerate scope files", exc_info=True)
             return []
@@ -54,6 +62,7 @@ async def _route_scope_files_via_summary(
     meeting_ids: list[int] | None,
     *,
     trace: TraceContext | None,
+    user_id: str | None = None,
 ) -> list[int] | None:
     """Use summary-vector router to pre-narrow files for broad recall.
 
@@ -83,6 +92,7 @@ async def _route_scope_files_via_summary(
             route_files_by_summary,
             query,
             meeting_ids,
+            user_id=user_id,
         )
     except Exception:
         logger.warning("Summary router invocation failed", exc_info=True)
@@ -111,6 +121,7 @@ async def _route_scope_files_with_scores(
     meeting_ids: list[int] | None,
     *,
     trace: TraceContext | None,
+    user_id: str | None = None,
 ) -> list[tuple[int, float]] | None:
     """Like ``_route_scope_files_via_summary`` but returns scored pairs."""
     if not settings.RAG_SUMMARY_ROUTER_ENABLED:
@@ -121,6 +132,7 @@ async def _route_scope_files_with_scores(
             route_files_with_scores,
             query,
             meeting_ids,
+            user_id=user_id,
         )
     except Exception:
         logger.warning("Summary router (scored) invocation failed", exc_info=True)
@@ -132,6 +144,7 @@ async def router_prefilter_meetings(
     meeting_ids: list[int] | None,
     *,
     trace: TraceContext | None,
+    user_id: str | None = None,
 ) -> list[int] | None:
     """Use summary router to narrow meeting scope for funnel pre-filtering.
 
@@ -142,6 +155,7 @@ async def router_prefilter_meetings(
         query,
         meeting_ids,
         trace=trace,
+        user_id=user_id,
     )
     if not routed_file_ids:
         return meeting_ids
@@ -150,10 +164,16 @@ async def router_prefilter_meetings(
         try:
             with get_connection() as conn:
                 placeholders = ",".join("?" for _ in file_ids)
-                rows = conn.execute(
-                    f"SELECT DISTINCT meeting_id FROM meeting_files WHERE id IN ({placeholders})",
-                    file_ids,
-                ).fetchall()
+                sql = (
+                    "SELECT DISTINCT mf.meeting_id FROM meeting_files mf "
+                    "JOIN meetings m ON m.id=mf.meeting_id "
+                    f"WHERE mf.id IN ({placeholders})"
+                )
+                params: list[object] = list(file_ids)
+                if user_id is not None:
+                    sql += " AND m.user_id=?"
+                    params.append(user_id)
+                rows = conn.execute(sql, params).fetchall()
                 return [r["meeting_id"] for r in rows] or None
         except Exception:
             logger.warning("Failed to map router files to meetings", exc_info=True)

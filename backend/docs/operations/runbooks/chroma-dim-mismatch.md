@@ -13,17 +13,19 @@
 
 ## Mitigation Steps
 
-1. Stop ingestion jobs temporarily.
-2. Trigger vector rebuild endpoint:
-   - `POST /api/v1/settings/rebuild-vectors`
-3. If rebuild cannot proceed, snapshot data and recreate vector collection.
+1. Stop ingestion jobs and take a complete application-data backup.
+2. Correct the embedding binding/model/dimension in deployment configuration; do not use the live settings endpoint, which rejects index-shaping changes.
+3. Restart one backend instance. Startup reconciliation compares the active fingerprint with real Chroma/BM25 generations and queues durable file reprocessing.
+4. Use `POST /api/v1/settings/rebuild-vectors` only for a compatible guarded refresh. It fails closed if stored source data cannot safely reconstruct every ready file.
+5. Do not delete the live collection manually unless the backup has been verified and the manifest-driven repair path cannot recover it.
 
 ## Recovery Validation
 
 - no new dimension mismatch errors in logs
+- readiness reports zero `repair_pending_indexes` and zero `config_manifest_mismatches`
 - retrieval returns sources with normal score distribution
 - ingest pipeline completes to `ready` status
 
 ## Prevention
 
-- couple embedding model updates with mandatory vector rebuild in release checklist
+- couple embedding model updates with controlled restart, manifest reconciliation, and durable reprocessing in the release checklist

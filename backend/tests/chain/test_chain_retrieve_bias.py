@@ -1,7 +1,11 @@
 """Tests for query-intent content-type bias in retrieval reranking."""
 
-from src.services.chain._retrieve_filters import _apply_content_type_bias
+from src.services.chain._retrieve_filters import (
+    _apply_content_type_bias,
+    _apply_temporal_filter,
+)
 from src.services.chain._retrieve_utils import _dedup_docs, _filter_low_information_chunks
+from src.services.rag._query_analysis import TemporalHint
 
 
 def test_apply_content_type_bias_prefers_table_when_query_mentions_table():
@@ -54,6 +58,83 @@ def test_apply_content_type_bias_avoids_overboosting_low_info_table_noise():
     ]
     result = _apply_content_type_bias("show me the table summary", docs)
     assert result[0]["metadata"]["content_type"] == "text"
+
+
+def test_apply_content_type_bias_uses_meeting_material_roles_for_decisions():
+    docs = [
+        {
+            "content": "Background discussion",
+            "metadata": {"material_role": "transcript"},
+            "score": 0.51,
+        },
+        {
+            "content": "Approved storage migration",
+            "metadata": {"material_role": "decision_log"},
+            "score": 0.46,
+        },
+    ]
+
+    result = _apply_content_type_bias("What decisions were approved?", docs)
+
+    assert result[0]["metadata"]["material_role"] == "decision_log"
+    assert docs[1]["score"] == 0.46
+
+
+def test_apply_content_type_bias_prioritizes_minutes_for_meeting_summary():
+    docs = [
+        {"content": "Transcript", "metadata": {"material_role": "transcript"}, "score": 0.5},
+        {"content": "Minutes", "metadata": {"material_role": "minutes"}, "score": 0.49},
+    ]
+
+    result = _apply_content_type_bias("Summarize this meeting", docs)
+
+    assert result[0]["metadata"]["material_role"] == "minutes"
+
+
+def test_apply_content_type_bias_excludes_rejected_evidence_from_factual_query():
+    docs = [
+        {
+            "content": "Withdrawn decision",
+            "metadata": {"material_role": "decision_log", "approval_status": "rejected"},
+            "score": 0.99,
+        },
+        {
+            "content": "Current decision",
+            "metadata": {"material_role": "decision_log", "approval_status": "approved"},
+            "score": 0.6,
+        },
+    ]
+
+    result = _apply_content_type_bias("What decision was approved?", docs)
+
+    assert [doc["content"] for doc in result] == ["Current decision"]
+    audit_result = _apply_content_type_bias("Why was the decision rejected?", docs)
+    assert {doc["content"] for doc in audit_result} == {
+        "Withdrawn decision",
+        "Current decision",
+    }
+
+
+def test_temporal_filter_does_not_widen_an_explicit_empty_range():
+    docs = [
+        {
+            "content": "Late discussion",
+            "metadata": {
+                "timestamp_start": 200,
+                "timestamp_end": 210,
+                "meeting_duration": 300,
+            },
+            "score": 0.9,
+        }
+    ]
+
+    assert (
+        _apply_temporal_filter(
+            docs,
+            TemporalHint(ratio_min=0, ratio_max=0.1, absolute_seconds=(0, 30)),
+        )
+        == []
+    )
 
 
 def test_filter_low_information_chunks_drops_footer_noise_from_tail():

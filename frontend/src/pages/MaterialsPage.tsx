@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Button, Modal, Divider } from "antd";
+import { useState, useCallback, useEffect } from "react";
+import { Button, Modal, Divider, message } from "antd";
 import { motion } from "framer-motion";
 import UploadPanel from "../components/UploadPanel";
 import { SearchToolbar, MaterialsContent } from "../components/materials/MaterialsContent";
@@ -14,8 +14,13 @@ import { useSelection } from "../hooks/useSelection";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useMeetingDetail } from "../hooks/useMeetingDetail";
 import { useViewer } from "../contexts/ViewerContext";
+import { useSearchParams } from "react-router-dom";
+import { parseEvidenceViewerCoordinates } from "../utils/evidenceNavigation";
+import { getMeeting, isRequestCanceled, formatApiErrorMessage } from "../api/client";
+import { useIntl } from "react-intl";
 
 export default function MaterialsPage() {
+  const { formatMessage } = useIntl();
   type UploadMode = "new" | "existing";
   const { meetings, loading, fetchMeetings, deleteMeetings } = useMeetings();
   const {
@@ -49,7 +54,71 @@ export default function MaterialsPage() {
   } | null>(null);
 
   const detail = useMeetingDetail(fetchMeetings);
+  const { handleOpenDetail } = detail;
   const { openViewer } = useViewer();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sourceQuery = searchParams.toString();
+
+  useEffect(() => {
+    const params = new URLSearchParams(sourceQuery);
+    if (!params.has("meetingId")) return;
+    const meetingId = Number(params.get("meetingId"));
+    const fileId = Number(params.get("fileId"));
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    const openSource = async () => {
+      try {
+        if (!Number.isInteger(meetingId) || meetingId <= 0)
+          throw new Error(formatMessage({ id: "viewer.sourceUnavailable" }));
+        const { data: meeting } = await getMeeting(meetingId, options);
+        if (controller.signal.aborted) return;
+        if (!params.has("fileId")) {
+          await handleOpenDetail(meeting);
+          return;
+        }
+        const file = meeting.files.find((item) => item.id === fileId);
+        if (!file) throw new Error(formatMessage({ id: "viewer.sourceUnavailable" }));
+        const coordinates = parseEvidenceViewerCoordinates(params);
+        if (controller.signal.aborted) return;
+        openViewer({
+          ...coordinates,
+          page:
+            params.has("pageNumber") || params.has("slideNumber") ? coordinates.page : undefined,
+          meetingId,
+          fileId: file.id,
+          fileName: file.file_name,
+          fileType: file.file_type ?? "unknown",
+          meetingTitle: meeting.title,
+        });
+      } catch (error) {
+        if (!controller.signal.aborted && !isRequestCanceled(error)) {
+          message.error(
+            formatApiErrorMessage(error, formatMessage({ id: "viewer.sourceUnavailable" })),
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          for (const key of [
+            "meetingId",
+            "fileId",
+            "pageNumber",
+            "slideNumber",
+            "timestampStart",
+            "timestampEnd",
+            "sourceRevision",
+            "chunkIndex",
+            "windowStart",
+            "windowEnd",
+            "evidenceExcerpt",
+          ])
+            params.delete(key);
+          setSearchParams(params, { replace: true });
+        }
+      }
+    };
+    void openSource();
+    return () => controller.abort();
+  }, [sourceQuery, handleOpenDetail, openViewer, formatMessage, setSearchParams]);
 
   const handleUploadSuccess = useCallback(() => {
     setUploadModalVisible(false);
@@ -156,6 +225,9 @@ export default function MaterialsPage() {
       {/* Upload Modal */}
       <Modal
         open={uploadModalVisible}
+        // Keep hit targets stationary while the modal appears. The default
+        // origin-based zoom can move Close between pointer-down/up in WebKit.
+        transitionName="ant-fade"
         onCancel={() => setUploadModalVisible(false)}
         footer={null}
         width="min(96vw, 760px)"
@@ -200,6 +272,7 @@ export default function MaterialsPage() {
         segments={detail.timestampsData}
         playback={detail.timestampsPlayback}
         seekTo={detail.timestampsSeekTo}
+        seekEnd={undefined}
         activeSegmentIndex={detail.activeSegmentIndex}
         listRef={detail.timestampsListRef}
         isUnnamedSpeaker={detail.isUnnamedSpeaker}

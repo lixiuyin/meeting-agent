@@ -6,6 +6,7 @@ underlying distance metric.
 """
 
 import pytest
+from langchain_core.documents import Document
 
 
 class TestExtractKeyPoints:
@@ -118,6 +119,31 @@ class TestRouterScoreDirection:
         normalised.sort(key=lambda x: x[1], reverse=True)
         assert normalised[0][0] == 1
         assert normalised[0][1] == 0.9
+
+    @pytest.mark.unit
+    def test_route_with_scores_normalizes_vector_only_l2_fallback(self, monkeypatch):
+        from src.services.rag import _summary_router as router
+
+        store = type(
+            "Store",
+            (),
+            {
+                "similarity_search_with_score": lambda self, *_args, **_kwargs: [
+                    (Document(page_content="near", metadata={"file_id": 1}), 0.1),
+                    (Document(page_content="far", metadata={"file_id": 2}), 0.9),
+                ]
+            },
+        )()
+        monkeypatch.setattr(router, "get_summary_vectorstore", lambda: store)
+        monkeypatch.setattr(router.settings, "RAG_SUMMARY_ROUTER_ENABLED", True)
+        monkeypatch.setattr(router.settings, "RAG_SUMMARY_ROUTER_HYBRID_ENABLED", False)
+        monkeypatch.setattr(router.settings, "DISTANCE_METRIC", "l2")
+
+        result = router.route_files_with_scores("query", top_k=2)
+
+        assert result is not None
+        assert [file_id for file_id, _score in result] == [1, 2]
+        assert result[0][1] > result[1][1]
 
 
 class TestFunnelNormalizeToUnit:

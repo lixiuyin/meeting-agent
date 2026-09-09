@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -318,12 +318,49 @@ def _build_meeting_file_response(f: dict) -> MeetingFileResponse:
         preview = transcript[:TRANSCRIPT_PREVIEW_LEN] + "..."
     elif transcript:
         preview = transcript
+    from ....services.rag._contextual import infer_material_role
+
+    material_role = cast(
+        Literal["transcript", "minutes", "agenda", "decision_log", "attachment"],
+        f.get("material_role") or infer_material_role(str(f["file_name"]), str(f["file_type"])),
+    )
+    evidence_sync_status = cast(
+        Literal["pending", "syncing", "ready", "failed"],
+        {
+            "building": "syncing",
+            "ready": "ready",
+            "failed": "failed",
+        }.get(str(f.get("native_index_status") or ""), "pending"),
+    )
     return MeetingFileResponse(
         id=f["id"],
         file_type=FileType(f["file_type"]),
         file_name=f["file_name"],
         status=MeetingStatus(f["status"]),
         created_at=f["created_at"],
+        updated_at=f["updated_at"],
+        material_role=material_role,
+        business_domain=f.get("business_domain") or "unspecified",
+        approval_status=f.get("approval_status") or "unreviewed",
+        approval_reason=f.get("approval_reason"),
+        source_revision=int(f.get("source_revision") or 1),
+        content_recorded_at=f.get("content_recorded_at") or f.get("created_at"),
+        semantic_updated_at=f.get("semantic_updated_at"),
+        evidence_sync_status=evidence_sync_status,
+        evidence_sync_error=f.get("native_index_error"),
+        source_revisions=list(
+            dict.fromkeys(
+                str(value)
+                for value in (
+                    f.get("active_index_generation"),
+                    f.get("content_hash"),
+                    f"r:{int(f.get('source_revision') or 1)}",
+                    f"source:{int(f.get('source_revision') or 1)}",
+                    f.get("updated_at"),
+                )
+                if value
+            )
+        ),
         transcript_preview=preview,
         error_message=f.get("error_message"),
         summary=f.get("summary"),

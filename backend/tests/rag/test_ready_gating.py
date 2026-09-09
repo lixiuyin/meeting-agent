@@ -28,11 +28,54 @@ async def test_schedule_skips_when_summary_already_ready():
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        from src.services.processor._pipeline_common import schedule_post_ready_summary
+        from src.services.processor._pipeline_common import run_post_ready_summary
 
-        await schedule_post_ready_summary(1, 10)
+        await run_post_ready_summary(1, 10)
 
     mock_update.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_schedule_repairs_ready_summary_stuck_in_summarizing():
+    """A replay completes the file lifecycle after a post-persist crash."""
+    file_row = {
+        "id": 11,
+        "meeting_id": 10,
+        "file_type": "pdf",
+        "file_name": "doc.pdf",
+        "transcript": "text",
+        "status": "summarizing",
+        "summary_status": "ready",
+        "segments_json": None,
+    }
+    read_conn = MagicMock()
+    write_conn = MagicMock()
+
+    with (
+        patch("src.core.database.get_connection") as mock_get_conn,
+        patch("src.core.database.get_write_connection") as mock_get_write_conn,
+        patch("src.core.database.get_meeting_file", return_value=file_row),
+        patch("src.core.database.update_meeting_file_status") as mock_update_status,
+        patch(
+            "src.services.processor._pipeline_common._update_meeting_status_from_files"
+        ) as mock_update_meeting,
+        patch(
+            "src.services.processor._pipeline_common._maybe_finalize_meeting_summary",
+            new_callable=AsyncMock,
+        ) as mock_finalize_meeting,
+    ):
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=read_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_write_conn.return_value.__enter__ = MagicMock(return_value=write_conn)
+        mock_get_write_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+        from src.services.processor._pipeline_common import run_post_ready_summary
+
+        await run_post_ready_summary(11, 10)
+
+    mock_update_status.assert_called_once_with(write_conn, 11, "ready")
+    mock_update_meeting.assert_called_once_with(write_conn, 10)
+    mock_finalize_meeting.assert_awaited_once_with(10)
 
 
 @pytest.mark.anyio
@@ -62,9 +105,9 @@ async def test_schedule_marks_ready_when_no_transcript():
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        from src.services.processor._pipeline_common import schedule_post_ready_summary
+        from src.services.processor._pipeline_common import run_post_ready_summary
 
-        await schedule_post_ready_summary(2, 10)
+        await run_post_ready_summary(2, 10)
 
     mock_update.assert_any_call(2, "ready")
 
@@ -106,9 +149,9 @@ async def test_schedule_generates_and_persists_summary():
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        from src.services.processor._pipeline_common import schedule_post_ready_summary
+        from src.services.processor._pipeline_common import run_post_ready_summary
 
-        await schedule_post_ready_summary(3, 10)
+        await run_post_ready_summary(3, 10)
 
     calls = mock_update.call_args_list
     assert any(c[0] == (3, "generating") for c in calls)
@@ -151,9 +194,9 @@ async def test_schedule_marks_failed_on_exception():
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        from src.services.processor._pipeline_common import schedule_post_ready_summary
+        from src.services.processor._pipeline_common import run_post_ready_summary
 
-        await schedule_post_ready_summary(4, 10)
+        await run_post_ready_summary(4, 10)
 
     calls = mock_update.call_args_list
     assert any(c[0] == (4, "failed") for c in calls)
@@ -188,7 +231,8 @@ async def test_maybe_finalize_skips_when_pending_files():
     with (
         patch("src.core.database.get_connection") as mock_get_conn,
         patch(
-            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary"
+            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary",
+            new_callable=AsyncMock,
         ) as mock_trigger,
     ):
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -213,7 +257,8 @@ async def test_maybe_finalize_skips_when_still_summarizing():
     with (
         patch("src.core.database.get_connection") as mock_get_conn,
         patch(
-            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary"
+            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary",
+            new_callable=AsyncMock,
         ) as mock_trigger,
     ):
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -237,7 +282,8 @@ async def test_maybe_finalize_triggers_when_all_terminal():
     with (
         patch("src.core.database.get_connection") as mock_get_conn,
         patch(
-            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary"
+            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary",
+            new_callable=AsyncMock,
         ) as mock_trigger,
     ):
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -258,7 +304,8 @@ async def test_maybe_finalize_noop_when_no_files():
     with (
         patch("src.core.database.get_connection") as mock_get_conn,
         patch(
-            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary"
+            "src.services.processor._pipeline_common._maybe_trigger_meeting_summary",
+            new_callable=AsyncMock,
         ) as mock_trigger,
     ):
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
@@ -309,9 +356,9 @@ async def test_schedule_passes_segments_for_video():
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        from src.services.processor._pipeline_common import schedule_post_ready_summary
+        from src.services.processor._pipeline_common import run_post_ready_summary
 
-        await schedule_post_ready_summary(5, 10)
+        await run_post_ready_summary(5, 10)
 
     mock_generate.assert_called_once()
     assert mock_generate.call_args.kwargs["segments"] == segments

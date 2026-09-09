@@ -177,3 +177,31 @@ def test_summary_persist_idempotent_on_unchanged_text(fake_meeting_summary_vs):
         content_hash=new_hash,
     )
     assert counting.call_count == 2
+
+
+def test_meeting_summary_router_isolates_default_principal(fake_meeting_summary_vs, monkeypatch):
+    """The bootstrap ``default`` principal is tenant-scoped like any other."""
+    from src.core.config import settings
+    from src.core.database import get_write_connection
+
+    msv, _counting = fake_meeting_summary_vs
+    with get_write_connection() as conn:
+        conn.execute(
+            "INSERT INTO meetings (id, title, status, summary_status, user_id) "
+            "VALUES (501, 'Default meeting', 'ready', 'ready', 'default')"
+        )
+        conn.execute(
+            "INSERT INTO meetings (id, title, status, summary_status, user_id) "
+            "VALUES (502, 'Foreign meeting', 'ready', 'ready', 'other-user')"
+        )
+
+    msv.upsert_meeting_summary(501, "Default", "alpha topic", user_id="default")
+    msv.upsert_meeting_summary(502, "Foreign", "alpha topic", user_id="other-user")
+    monkeypatch.setattr(settings, "RAG_MEETING_SUMMARY_ROUTER_ENABLED", True)
+    routed = msv.route_meetings_by_summary("alpha", top_k=5, min_score=0.0, user_id="default")
+
+    assert routed is not None
+    assert [meeting_id for meeting_id, _score in routed] == [501]
+    # A foreign tenant candidate is not an orphan and must not be deleted.
+    remaining = msv.get_meeting_summary_vectorstore()._collection.get(ids=["ms_502"])
+    assert remaining["ids"] == ["ms_502"]

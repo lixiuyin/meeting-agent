@@ -12,6 +12,8 @@ Labels:
     - path: URL path template
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from prometheus_client import Counter, Gauge, Histogram
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,24 @@ CHAT_REQUEST_TOTAL = Counter(
     "chat_request_total",
     "Total chat/RAG requests",
     labelnames=["intent"],
+)
+
+CHAT_COMPLETION_TOTAL = Counter(
+    "chat_completion_total",
+    "Completed or failed chat responses including SSE errors",
+    labelnames=["endpoint", "outcome"],
+)
+CHAT_COMPLETION_DURATION = Histogram(
+    "chat_completion_duration_seconds",
+    "Chat latency through the final response body",
+    labelnames=["endpoint", "outcome"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 2.5, 3, 5, 10, 30, 60, 120),
+)
+
+CHAT_MODE_REQUEST_TOTAL = Counter(
+    "chat_mode_request_total",
+    "Total requests by stable RAG and memory operating mode",
+    labelnames=["endpoint", "retrieval_profile", "memory_mode"],
 )
 
 # ---------------------------------------------------------------------------
@@ -80,6 +100,12 @@ BACKGROUND_TASK_FAILURES_TOTAL = Counter(
     "background_task_failures_total",
     "Total supervised background task failures",
     labelnames=["name", "error_type"],
+)
+
+BACKGROUND_TASK_EXHAUSTED_TOTAL = Counter(
+    "background_task_exhausted_total",
+    "Total supervised background tasks that exhausted their restart budget",
+    labelnames=["name"],
 )
 
 SQLITE_BUSY_TIMEOUTS_TOTAL = Counter(
@@ -234,11 +260,16 @@ FUNNEL_NARROW_ROUTER_ONLY_FILES = Histogram(
 # Application info
 # ---------------------------------------------------------------------------
 
-APP_INFO = Counter(
-    "app_info_total",
+APP_INFO = Gauge(
+    "app_info",
     "Application metadata (always 1, use labels for version info)",
     labelnames=["version"],
 )
+try:
+    _APP_VERSION = version("meeting-agent")
+except PackageNotFoundError:
+    _APP_VERSION = "unknown"
+APP_INFO.labels(version=_APP_VERSION).set(1)
 
 # ---------------------------------------------------------------------------
 # Memory lifecycle
@@ -284,15 +315,25 @@ MEMORY_SEARCH_TOTAL = Counter(
     labelnames=["status"],  # success | error
 )
 
+MEMORY_INGEST_WINDOWS_TOTAL = Counter(
+    "memory_ingest_extraction_windows_total",
+    "Source windows scheduled for evidence-backed memory extraction",
+)
+
+MEMORY_INGEST_TRUNCATED_FILES_TOTAL = Counter(
+    "memory_ingest_extraction_truncated_files_total",
+    "Files whose memory extraction hit the configured source-window cost guard",
+)
+
+SESSION_SUMMARY_SEARCH_TOTAL = Counter(
+    "session_summary_search_total",
+    "Session-summary searches by effective retrieval path",
+    labelnames=["path"],  # hybrid | vector_only | fts_only | fts_fallback | empty | error
+)
+
 MEMORY_CIRCUIT_BREAKER_TRIPS = Counter(
     "memory_circuit_breaker_trips_total",
     "Total times the extraction circuit breaker opened",
-)
-
-MEMORY_ACTIVE_GAUGE = Gauge(
-    "memory_active_count",
-    "Current number of active (non-expired) memories per user",
-    labelnames=["user_id"],
 )
 
 # ---------------------------------------------------------------------------
@@ -303,6 +344,38 @@ BG_TASK_AGE_SECONDS = Gauge(
     "bg_task_age_seconds",
     "Age of the oldest in-flight background task (stuck detection)",
     labelnames=["kind"],
+)
+
+PENDING_VECTOR_DELETION_JOBS = Gauge(
+    "pending_vector_deletion_jobs",
+    "Current vector deletion jobs by lifecycle status",
+    labelnames=["status"],
+)
+
+DURABLE_JOBS = Gauge(
+    "durable_jobs",
+    "Current durable background jobs by lifecycle status",
+    labelnames=["status"],
+)
+
+DURABLE_JOB_EXPIRED_RUNNING = Gauge(
+    "durable_job_expired_running",
+    "Number of running durable jobs whose worker lease has expired",
+)
+
+DURABLE_JOB_OLDEST_EXPIRED_SECONDS = Gauge(
+    "durable_job_oldest_expired_seconds",
+    "Age in seconds of the oldest expired durable-job lease",
+)
+
+INDEX_REPAIR_PENDING = Gauge(
+    "index_repair_pending",
+    "Number of ready files whose native index manifest requires repair",
+)
+
+APP_DATA_DISK_USAGE_RATIO = Gauge(
+    "app_data_disk_usage_ratio",
+    "Fraction of the application data filesystem currently used",
 )
 
 DB_READ_TX_AGE_SECONDS = Histogram(
@@ -316,9 +389,9 @@ WAL_CHECKPOINT_FAILURES_TOTAL = Counter(
     "Total WAL checkpoint failures (timeout or error)",
 )
 
-VECTORSTORE_ORPHAN_TOTAL = Counter(
-    "vectorstore_orphan_total",
-    "Total orphaned vectors detected during reconciliation",
+VECTOR_DELETION_CLEANED_TOTAL = Counter(
+    "vector_deletion_cleaned_total",
+    "Total deferred vector/index deletion jobs completed",
     labelnames=["collection"],
 )
 

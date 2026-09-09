@@ -38,11 +38,12 @@ test("memory CRUD baseline flow", async ({ page }) => {
     }
     if (request.method() === "POST") {
       const payload = request.postDataJSON() as { key: string; value: string };
-      memories.push({ id: Date.now(), key: payload.key, value: payload.value, importance: 3 });
+      const created = { id: Date.now(), key: payload.key, value: payload.value, importance: 3 };
+      memories.push(created);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({}),
+        body: JSON.stringify(created),
       });
       return;
     }
@@ -141,6 +142,9 @@ test("memory semantic search can be cleared", async ({ page }) => {
   await page.getByRole("button", { name: "search" }).click();
 
   await expect.poll(() => searchCalled).toBeGreaterThan(0);
+  await expect(page.getByText("semantic-key")).toBeVisible();
+  // A fast explicit search must survive the pending 250 ms literal debounce.
+  await page.waitForTimeout(600);
   await expect(page.getByText("semantic-key")).toBeVisible();
   await page.getByRole("button", { name: /clear semantic results/i }).click();
   await expect(page.getByText("No memories found")).toBeVisible();

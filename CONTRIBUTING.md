@@ -4,17 +4,20 @@ Thank you for your interest in contributing! This guide covers the basics.
 
 ## Development Setup
 
+Use Python 3.12 and Node.js 24 (the repository pins them in
+`backend/.python-version` and `.node-version`; the frontend supports Node
+`>=22 <26`). Prefer the lockfiles so local development matches CI.
+
 ```bash
 # Backend
 cd backend
 uv sync --dev                    # recommended (uses uv.lock; includes pytest, ruff, bandit)
-# or: pip install -e ".[dev]"   # note: does not include dev tools (pytest, ruff, etc.)
 cp .env.example .env
 # Edit .env and set LLM_API_KEY
 
 # Frontend
 cd frontend
-npm install
+npm ci
 ```
 
 ### Pre-commit Hooks
@@ -37,7 +40,9 @@ From the project root, common development commands are available via `make`:
 | `make dev-fe` | Frontend only |
 | `make lint` | Lint everything (backend + frontend) |
 | `make test` | Run all tests |
-| `make qa` | Full QA: lint + tests + Playwright E2E |
+| `make e2e-auth` | Isolated production-mode API-key browser checks |
+| `make e2e-full-stack` | Isolated live-provider browser acceptance suite |
+| `make qa` | Full QA: lint + tests + build + both Playwright suites |
 
 ## Code Style
 
@@ -47,7 +52,7 @@ From the project root, common development commands are available via `make`:
 - Line length: 100 characters
 - Type hints on all public function signatures
 - Docstrings on all public modules, classes, and functions
-- Run `ruff check src/` and `ruff format src/` before committing
+- Run `uv run ruff check src/` and `uv run ruff format src/` before committing
 
 ### Frontend (TypeScript)
 
@@ -70,16 +75,18 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`
 1. Work on your dedicated long-lived branch
 2. Make your changes with clear, focused commits
 3. Add tests for new functionality
-4. Ensure all existing tests pass: `cd backend && python -m pytest` (~1,615 tests across 175+ files) and `cd frontend && npm run test:run` (114 tests across 20 files)
-5. Run linters: `cd backend && ruff check src/` and `cd frontend && npm run lint`
+4. Ensure all existing tests pass: `make test`. Do not hard-code test counts in
+   review notes; the suites evolve continuously.
+5. Run linters: `cd backend && uv run ruff check src/` and `cd frontend && npm run lint`
 6. Push to your branch and open a PR against `main`
 7. CI must pass; a CODEOWNERS review is required before merge
 
 ## Documentation
 
 - Repository index (diagrams + product ADRs): [`docs/README.md`](docs/README.md)
-- Backend subsystem docs (Chinese): [`backend/docs/README.md`](backend/docs/README.md)
-- Agent-oriented map: [`CLAUDE.md`](CLAUDE.md)
+- Backend subsystem docs: [`backend/docs/README.md`](backend/docs/README.md)
+- Frontend subsystem docs: [`frontend/docs/README.md`](frontend/docs/README.md)
+- Agent-oriented map: [`docs/README.md`](docs/README.md)
 
 ## Reporting Issues
 

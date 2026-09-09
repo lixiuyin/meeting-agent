@@ -7,13 +7,18 @@ class MemoryEntry:
 
     key: str
     value: str
-    importance: int
+    importance: float
     category: str | None
     source: str
     last_accessed: str | None
     access_count: int
     expires_at: str | None
     updated_at: str
+    salience: float = 3.0
+    confidence: float = 1.0
+    freshness_score: float = 1.0
+    usefulness_score: float = 0.0
+    usefulness_count: int = 0
     # Scope metadata (from vector store, None = global/unscoped)
     meeting_ids: list[int] | None = field(default=None, repr=False)
     file_ids: list[int] | None = field(default=None, repr=False)
@@ -25,3 +30,4 @@ class MemoryEntry:
     decay_score: float = 0.0
     semantic_score: float = 0.0
     combined_score: float = 0.0
+    metadata: dict = field(default_factory=dict, repr=False)

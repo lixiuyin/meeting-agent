@@ -7,12 +7,13 @@
  * Prerequisites: Docker stack running at localhost:8307.
  * Run: npx playwright test stream-abort-mid.spec.ts
  */
-import { test, expect } from "@playwright/test";
+import { deploymentAuthHeaders, test, expect } from "./fixtures";
 
-const BASE = "http://localhost:8307";
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:8307";
 
 test.describe("Stream Abort Mid-Response", () => {
   const headers = {
+    ...deploymentAuthHeaders(),
     "X-API-Key": process.env.VITE_API_KEY || "",
     "Content-Type": "application/json",
   };
@@ -37,9 +38,10 @@ test.describe("Stream Abort Mid-Response", () => {
       }
     }
 
-    // After all abort cycles, server should still respond to health check
+    // This assertion is about process health, so use liveness. Readiness can
+    // legitimately be 503 while an earlier vector rebuild is still converging.
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const healthResp = await request.get(`${BASE}/api/v1/health`, { headers });
+    const healthResp = await request.get(`${BASE}/api/v1/health/live`, { headers });
     expect(healthResp.status()).toBe(200);
   });
 });

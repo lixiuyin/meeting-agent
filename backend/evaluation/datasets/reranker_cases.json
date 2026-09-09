@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "launch_date_semantics",
+      "query": "When will the mobile app launch?",
+      "relevant_ids": ["c08"],
+      "candidates": [
+        {"id": "c01", "content": "The mobile design review begins on January 22."},
+        {"id": "c02", "content": "The database migration finishes on March 1."},
+        {"id": "c03", "content": "The analytics API still lacks production access."},
+        {"id": "c04", "content": "Customer retention reached 94 percent."},
+        {"id": "c05", "content": "Alice follows up with the design team."},
+        {"id": "c06", "content": "The next planning meeting is January 29."},
+        {"id": "c07", "content": "Revenue increased 12 percent quarter over quarter."},
+        {"id": "c08", "content": "The new mobile application is scheduled to launch by February 15."},
+        {"id": "c09", "content": "Bob submits the cloud storage request."},
+        {"id": "c10", "content": "Carol requests API credentials."},
+        {"id": "c11", "content": "The team reviewed fourth-quarter results."},
+        {"id": "c12", "content": "The roadmap contains three engineering priorities."}
+      ]
+    },
+    {
+      "id": "budget_blocker_paraphrase",
+      "query": "What is preventing the database migration?",
+      "relevant_ids": ["c09"],
+      "candidates": [
+        {"id": "c01", "content": "The database migration deadline is March 1."},
+        {"id": "c02", "content": "The mobile application is waiting for UI designs."},
+        {"id": "c03", "content": "The analytics pipeline needs production API access."},
+        {"id": "c04", "content": "Bob presented the engineering roadmap."},
+        {"id": "c05", "content": "PostgreSQL is the migration destination."},
+        {"id": "c06", "content": "The meeting took place on January 15."},
+        {"id": "c07", "content": "A budget request must be submitted by January 18."},
+        {"id": "c08", "content": "Storage capacity was discussed in planning."},
+        {"id": "c09", "content": "The migration cannot proceed until additional cloud-storage budget is approved."},
+        {"id": "c10", "content": "Revenue increased in the previous quarter."},
+        {"id": "c11", "content": "The next meeting is scheduled for January 29."},
+        {"id": "c12", "content": "Carol will contact an external provider."}
+      ]
+    },
+    {
+      "id": "cross_lingual_owner",
+      "query": "谁负责提交云存储预算申请？",
+      "relevant_ids": ["c10"],
+      "candidates": [
+        {"id": "c01", "content": "Alice follows up on final UI designs."},
+        {"id": "c02", "content": "Carol requests analytics API credentials."},
+        {"id": "c03", "content": "Dave attended the planning meeting."},
+        {"id": "c04", "content": "The mobile launch is planned for February 15."},
+        {"id": "c05", "content": "The database migration deadline is March 1."},
+        {"id": "c06", "content": "The storage budget still needs approval."},
+        {"id": "c07", "content": "The design team expects to deliver on January 22."},
+        {"id": "c08", "content": "The presentation lists three blockers."},
+        {"id": "c09", "content": "Bob described the engineering roadmap."},
+        {"id": "c10", "content": "Bob is assigned to submit the cloud-storage budget request."},
+        {"id": "c11", "content": "Customer retention reached 94 percent."},
+        {"id": "c12", "content": "The team will meet again on January 29."}
+      ]
+    },
+    {
+      "id": "unknown_entity_abstention",
+      "query": "Which vendor supplies the analytics API?",
+      "relevant_ids": ["c11"],
+      "candidates": [
+        {"id": "c01", "content": "Carol owns the follow-up with the API provider."},
+        {"id": "c02", "content": "The analytics pipeline is a first-quarter priority."},
+        {"id": "c03", "content": "The mobile app depends on UI designs."},
+        {"id": "c04", "content": "The database will move to PostgreSQL."},
+        {"id": "c05", "content": "The API has not provided production access."},
+        {"id": "c06", "content": "The team discussed blockers and risks."},
+        {"id": "c07", "content": "Bob must submit a budget request."},
+        {"id": "c08", "content": "The meeting included four attendees."},
+        {"id": "c09", "content": "Revenue rose by 12 percent."},
+        {"id": "c10", "content": "Customer retention was 94 percent."},
+        {"id": "c11", "content": "The source refers only to an unnamed third-party API provider; no vendor name is given."},
+        {"id": "c12", "content": "The next meeting occurs later in January."}
+      ]
+    },
+    {
+      "id": "negated_approval",
+      "query": "Was the production launch approved?",
+      "relevant_ids": ["c09"],
+      "candidates": [
+        {"id": "c01", "content": "The team approved the user-interface mockups."},
+        {"id": "c02", "content": "The launch review is scheduled for Friday."},
+        {"id": "c03", "content": "Production access was requested last week."},
+        {"id": "c04", "content": "The mobile release remains on the roadmap."},
+        {"id": "c05", "content": "Security approved the database migration plan."},
+        {"id": "c06", "content": "The launch checklist has twelve items."},
+        {"id": "c07", "content": "The staging deployment completed successfully."},
+        {"id": "c08", "content": "Approval owners attended the meeting."},
+        {"id": "c09", "content": "No production launch approval was granted; security review is still pending."},
+        {"id": "c10", "content": "The design launch event was approved."},
+        {"id": "c11", "content": "Operations prepared a rollback document."},
+        {"id": "c12", "content": "The next status review is on Monday."}
+      ]
+    },
+    {
+      "id": "latest_owner_change",
+      "query": "Who is the current owner of the release after the reassignment?",
+      "relevant_ids": ["c10"],
+      "candidates": [
+        {"id": "c01", "content": "Alice originally owned the release workstream."},
+        {"id": "c02", "content": "Alice presented last month's release plan."},
+        {"id": "c03", "content": "Carol owns the analytics workstream."},
+        {"id": "c04", "content": "The release date remains February 15."},
+        {"id": "c05", "content": "Bob attended the ownership review."},
+        {"id": "c06", "content": "The release has one accountable owner."},
+        {"id": "c07", "content": "Alice will archive her previous notes."},
+        {"id": "c08", "content": "The reassignment was discussed on Tuesday."},
+        {"id": "c09", "content": "Dave owns the migration project."},
+        {"id": "c10", "content": "Effective immediately, Bob replaces Alice as the release owner."},
+        {"id": "c11", "content": "The release workstream has several contributors."},
+        {"id": "c12", "content": "Ownership will be reviewed next quarter."}
+      ]
+    },
+    {
+      "id": "english_query_chinese_evidence",
+      "query": "What is blocking the data migration?",
+      "relevant_ids": ["c08"],
+      "candidates": [
+        {"id": "c01", "content": "数据库迁移计划在三月完成。"},
+        {"id": "c02", "content": "移动端设计仍在评审。"},
+        {"id": "c03", "content": "分析团队需要新的仪表板。"},
+        {"id": "c04", "content": "Bob 负责提交预算申请。"},
+        {"id": "c05", "content": "迁移目标是 PostgreSQL。"},
+        {"id": "c06", "content": "团队讨论了存储容量。"},
+        {"id": "c07", "content": "下次会议安排在月底。"},
+        {"id": "c08", "content": "数据迁移目前被云存储预算尚未批准这一条件阻塞。"},
+        {"id": "c09", "content": "安全评审已经完成。"},
+        {"id": "c10", "content": "旧数据库仍然在线。"},
+        {"id": "c11", "content": "迁移脚本通过了单元测试。"},
+        {"id": "c12", "content": "项目有三个里程碑。"}
+      ]
+    },
+    {
+      "id": "multiple_release_blockers",
+      "query": "Which two unresolved items block the release?",
+      "relevant_ids": ["c09", "c11"],
+      "candidates": [
+        {"id": "c01", "content": "The release date is February 15."},
+        {"id": "c02", "content": "The database migration has a separate deadline."},
+        {"id": "c03", "content": "Alice completed the design handoff."},
+        {"id": "c04", "content": "The team tracks release risks weekly."},
+        {"id": "c05", "content": "Customer retention improved this quarter."},
+        {"id": "c06", "content": "The release checklist has twelve items."},
+        {"id": "c07", "content": "Bob submitted the storage request."},
+        {"id": "c08", "content": "The staging environment is available."},
+        {"id": "c09", "content": "Production API credentials have not yet been issued."},
+        {"id": "c10", "content": "The product page is ready for publication."},
+        {"id": "c11", "content": "The final security review remains incomplete."},
+        {"id": "c12", "content": "Operations drafted a rollback plan."}
+      ]
+    }
+  ]
+}

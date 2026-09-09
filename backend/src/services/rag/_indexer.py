@@ -15,6 +15,7 @@ from ...core.trace import TraceContext
 from ..embedder import get_embeddings
 from ..llm._embeddings_adapter import embed_documents_batched
 from ..parser.types import ParsedDocument
+from ..tokenizer import count_tokens
 from ._chunkers import _split_by_structure
 from ._indexer_extract import (
     _extract_image_texts,
@@ -102,6 +103,27 @@ _SEPARATORS = [
 ]
 
 
+def _token_splitter(*, child: bool = False) -> RecursiveCharacterTextSplitter:
+    token_size = getattr(
+        settings, "CHILD_CHUNK_SIZE_TOKENS" if child else "CHUNK_SIZE_TOKENS", None
+    )
+    token_overlap = getattr(
+        settings,
+        "CHILD_CHUNK_OVERLAP_TOKENS" if child else "CHUNK_OVERLAP_TOKENS",
+        None,
+    )
+    if not isinstance(token_size, int):
+        token_size = int(settings.CHILD_CHUNK_SIZE if child else settings.CHUNK_SIZE)
+    if not isinstance(token_overlap, int):
+        token_overlap = int(settings.CHILD_CHUNK_OVERLAP if child else settings.CHUNK_OVERLAP)
+    return RecursiveCharacterTextSplitter(
+        chunk_size=token_size,
+        chunk_overlap=token_overlap,
+        length_function=count_tokens,
+        separators=_SEPARATORS,
+    )
+
+
 def index_meeting(
     meeting_id: int,
     text: str,
@@ -109,6 +131,7 @@ def index_meeting(
     trace: TraceContext | None = None,
     target_vs: Any = None,
     skip_bm25: bool = False,
+    strict_bm25: bool = False,
 ) -> None:
     """Chunk meeting text and store in vector DB.
 
@@ -124,8 +147,8 @@ def index_meeting(
     else:
         _index_flat(meeting_id, text, metadata, _SEPARATORS, trace, target_vs)
 
-    if settings.HYBRID_SEARCH_ENABLED and not skip_bm25:
-        _add_to_bm25(meeting_id, text, metadata, _SEPARATORS)
+    if not skip_bm25:
+        _add_to_bm25(meeting_id, text, metadata, _SEPARATORS, strict=strict_bm25)
 
 
 def index_meeting_pages(
@@ -133,17 +156,15 @@ def index_meeting_pages(
     parsed: ParsedDocument,
     metadata: dict,
     trace: TraceContext | None = None,
+    replace_existing: bool = True,
+    strict_bm25: bool = False,
 ) -> list[tuple[str, int, str, dict[str, Any]]] | None:
     """Index a parsed document preserving page/slide numbers in chunk metadata."""
     if trace:
         trace.start_span("chunk", "index")
 
     try:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
-            separators=_SEPARATORS,
-        )
+        splitter = _token_splitter()
 
         all_chunks: list[tuple[str, int, str, dict[str, Any]]] = []
         for page in parsed.pages:
@@ -156,7 +177,10 @@ def index_meeting_pages(
             if page_image_thumbnail_path:
                 page_extra_meta["page_image_thumbnail_path"] = page_image_thumbnail_path
             if page_text.strip():
-                if len(page_text) <= settings.CHUNK_SIZE:
+                token_size = getattr(settings, "CHUNK_SIZE_TOKENS", None)
+                if not isinstance(token_size, int):
+                    token_size = int(settings.CHUNK_SIZE)
+                if count_tokens(page_text) <= token_size:
                     all_chunks.append((page_text, page_num, "text", page_extra_meta))
                 else:
                     for sub in splitter.split_text(page_text):
@@ -209,7 +233,7 @@ def index_meeting_pages(
     if reindex_lock is not None:
         reindex_lock.acquire()
     try:
-        if file_id is not None:
+        if file_id is not None and replace_existing:
             delete_meeting_chunks(meeting_id, file_id=file_id)
 
         docs = [
@@ -226,8 +250,21 @@ def index_meeting_pages(
             )
             for i, (text, page_num, content_type, extra_meta) in enumerate(all_chunks)
         ]
-        prefix = _chunk_id_prefix(meeting_id, metadata.get("file_id"))
+        prefix = _chunk_id_prefix(
+            meeting_id,
+            metadata.get("file_id"),
+            metadata.get("source_kind"),
+            metadata.get("index_generation"),
+        )
         ids = [f"{prefix}_chunk_{i}" for i in range(len(docs))]
+        logical_prefix = _chunk_id_prefix(
+            meeting_id,
+            metadata.get("file_id"),
+            metadata.get("source_kind"),
+        )
+        for i, doc in enumerate(docs):
+            doc.metadata["chunk_id"] = ids[i]
+            doc.metadata["logical_chunk_id"] = f"{logical_prefix}_chunk_{i}"
 
         vectorstore = get_vectorstore()
         new_docs, new_ids = _dedup_existing_chunks(docs, ids, vectorstore)
@@ -237,7 +274,7 @@ def index_meeting_pages(
 
         _upsert_with_trace(vectorstore, new_docs, new_ids, trace, meeting_id)
 
-        _add_docs_to_bm25(meeting_id, docs, ids)
+        _add_docs_to_bm25(meeting_id, docs, ids, strict=strict_bm25)
 
         return all_chunks
     finally:
@@ -494,6 +531,7 @@ def index_meeting_segments(
     trace: TraceContext | None = None,
     target_vs: Any = None,
     skip_bm25: bool = False,
+    strict_bm25: bool = False,
 ) -> None:
     """Index audio/video transcription segments with semantic boundary detection.
 
@@ -512,8 +550,7 @@ def index_meeting_segments(
 
     Args:
         target_vs: Optional Chroma vectorstore to write to instead of the singleton.
-                   Used by the shadow-collection speaker rename (H-12) to index into
-                   a staging collection without disturbing the live one.
+                   Used by guarded whole-collection maintenance rebuilds.
         skip_bm25: When True, skip the BM25/FTS5 write.  The caller is responsible
                    for rebuilding BM25 after an atomic swap.
     """
@@ -600,9 +637,20 @@ def index_meeting_segments(
                 },
             )
         )
-    prefix = _chunk_id_prefix(meeting_id, metadata.get("file_id"))
+    prefix = _chunk_id_prefix(
+        meeting_id,
+        metadata.get("file_id"),
+        metadata.get("source_kind"),
+        metadata.get("index_generation"),
+    )
+    logical_prefix = _chunk_id_prefix(
+        meeting_id,
+        metadata.get("file_id"),
+        metadata.get("source_kind"),
+    )
     for i, doc in enumerate(docs):
         doc.metadata["chunk_id"] = f"{prefix}_chunk_{i}"
+        doc.metadata["logical_chunk_id"] = f"{logical_prefix}_chunk_{i}"
     ids = [f"{prefix}_chunk_{i}" for i in range(len(docs))]
 
     # 7. Dedup and persist (reusing embeddings)
@@ -619,8 +667,8 @@ def index_meeting_segments(
     # Pass pre-computed embeddings to avoid recomputation
     _upsert_with_trace(vectorstore, new_docs, new_ids, trace, meeting_id, embeddings=new_embeddings)
 
-    if settings.HYBRID_SEARCH_ENABLED and not skip_bm25:
-        _add_docs_to_bm25(meeting_id, docs, ids)
+    if not skip_bm25:
+        _add_docs_to_bm25(meeting_id, docs, ids, strict=strict_bm25)
 
 
 def _index_flat(
@@ -637,24 +685,19 @@ def _index_flat(
     try:
         if settings.SEMANTIC_CHUNKING_ENABLED:
             chunks = _split_by_structure(text, max_chunk_size=settings.CHUNK_SIZE)
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP,
-                separators=separators,
-            )
+            splitter = _token_splitter()
             final_chunks: list[str] = []
             for chunk in chunks:
-                if len(chunk) > settings.CHUNK_SIZE:
+                token_size = getattr(settings, "CHUNK_SIZE_TOKENS", None)
+                if not isinstance(token_size, int):
+                    token_size = int(settings.CHUNK_SIZE)
+                if count_tokens(chunk) > token_size:
                     final_chunks.extend(splitter.split_text(chunk))
                 else:
                     final_chunks.append(chunk)
             chunks = final_chunks
         else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP,
-                separators=separators,
-            )
+            splitter = _token_splitter()
             chunks = splitter.split_text(text)
     finally:
         if trace:
@@ -664,7 +707,17 @@ def _index_flat(
         logger.warning("Meeting %d: empty text, skipping index", meeting_id)
         return
 
-    prefix = _chunk_id_prefix(meeting_id, metadata.get("file_id"))
+    prefix = _chunk_id_prefix(
+        meeting_id,
+        metadata.get("file_id"),
+        metadata.get("source_kind"),
+        metadata.get("index_generation"),
+    )
+    logical_prefix = _chunk_id_prefix(
+        meeting_id,
+        metadata.get("file_id"),
+        metadata.get("source_kind"),
+    )
     docs = [
         Document(
             page_content=chunk,
@@ -672,6 +725,7 @@ def _index_flat(
                 "meeting_id": meeting_id,
                 "chunk_index": i,
                 "chunk_id": f"{prefix}_chunk_{i}",
+                "logical_chunk_id": f"{logical_prefix}_chunk_{i}",
                 "file_id": metadata.get("file_id"),
                 "file_type": metadata.get("file_type"),
                 **{k: v for k, v in metadata.items() if k not in ("file_id", "file_type")},
@@ -699,16 +753,8 @@ def _index_parent_child(
     target_vs: Any = None,
 ) -> None:
     """Two-level chunking: parent chunks for context, child chunks for retrieval."""
-    parent_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.CHUNK_SIZE,
-        chunk_overlap=settings.CHUNK_OVERLAP,
-        separators=separators,
-    )
-    child_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.CHILD_CHUNK_SIZE,
-        chunk_overlap=settings.CHILD_CHUNK_OVERLAP,
-        separators=separators,
-    )
+    parent_splitter = _token_splitter()
+    child_splitter = _token_splitter(child=True)
 
     if trace:
         trace.start_span("chunk", "index")
@@ -735,13 +781,24 @@ def _index_parent_child(
 
         all_docs: list[Document] = []
         all_ids: list[str] = []
-        prefix = _chunk_id_prefix(meeting_id, metadata.get("file_id"))
+        prefix = _chunk_id_prefix(
+            meeting_id,
+            metadata.get("file_id"),
+            metadata.get("source_kind"),
+            metadata.get("index_generation"),
+        )
+        logical_prefix = _chunk_id_prefix(
+            meeting_id,
+            metadata.get("file_id"),
+            metadata.get("source_kind"),
+        )
 
         def _offset_meta(start: int, end: int) -> dict:
             return {"parent_start_offset": start, "parent_end_offset": end} if start >= 0 else {}
 
         for i, parent_text in enumerate(parent_chunks):
             parent_id = f"{prefix}_parent_{i}"
+            logical_parent_id = f"{logical_prefix}_parent_{i}"
             p_start, p_end = parent_offsets[i]
             all_docs.append(
                 Document(
@@ -751,6 +808,7 @@ def _index_parent_child(
                         "meeting_id": meeting_id,
                         "chunk_index": i,
                         "chunk_id": parent_id,
+                        "logical_chunk_id": logical_parent_id,
                         "chunk_type": "parent",
                         **_offset_meta(p_start, p_end),
                     },
@@ -761,6 +819,7 @@ def _index_parent_child(
             child_chunks = child_splitter.split_text(parent_text)
             for j, child_text in enumerate(child_chunks):
                 child_id = f"{prefix}_child_{i}_{j}"
+                logical_child_id = f"{logical_prefix}_child_{i}_{j}"
                 all_docs.append(
                     Document(
                         page_content=child_text,
@@ -769,8 +828,10 @@ def _index_parent_child(
                             "meeting_id": meeting_id,
                             "chunk_index": i * 1000 + j,
                             "chunk_id": child_id,
+                            "logical_chunk_id": logical_child_id,
                             "chunk_type": "child",
                             "parent_id": parent_id,
+                            "logical_parent_id": logical_parent_id,
                             **_offset_meta(p_start, p_end),
                         },
                     )

@@ -13,6 +13,7 @@ import {
 import { InfoCircleOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { motion } from "framer-motion";
 import { useIntl } from "react-intl";
+import VectorRebuildStatus from "./VectorRebuildStatus";
 import { cardVariants, settingsCardStyle, twoColGrid } from "./constants";
 
 const { Text } = Typography;
@@ -93,7 +94,7 @@ export function SystemTab({
           style={{ marginBottom: 12, borderRadius: 8 }}
           title={formatMessage({ id: "settings.system.readonlyNote" })}
         />
-        <Descriptions column={1} bordered size="small" labelStyle={{ width: 220 }}>
+        <Descriptions column={1} bordered size="small" styles={{ label: { width: 220 } }}>
           <Descriptions.Item label={formatMessage({ id: "settings.system.environment" })}>
             <ReadOnlyTag name={["server", "environment"]} />
           </Descriptions.Item>
@@ -123,7 +124,7 @@ export function SystemTab({
         }
         style={{ ...settingsCardStyle, marginBottom: 16 }}
       >
-        <Descriptions column={1} bordered size="small" labelStyle={{ width: 260 }}>
+        <Descriptions column={1} bordered size="small" styles={{ label: { width: 260 } }}>
           <Descriptions.Item
             label={formatMessage({ id: "settings.system.securityHeadersEnabled" })}
           >
@@ -155,7 +156,7 @@ export function SystemTab({
         }
         style={{ ...settingsCardStyle, marginBottom: 16 }}
       >
-        <Descriptions column={1} bordered size="small" labelStyle={{ width: 260 }}>
+        <Descriptions column={1} bordered size="small" styles={{ label: { width: 260 } }}>
           <Descriptions.Item label={formatMessage({ id: "settings.system.trustedProxiesLabel" })}>
             <ReadOnlyValue
               name={["server", "trusted_proxies"]}
@@ -218,6 +219,7 @@ export function SystemTab({
             </Button>
           </div>
 
+          <VectorRebuildStatus submitting={rebuilding} />
           <Divider style={{ margin: "4px 0" }} />
 
           <div

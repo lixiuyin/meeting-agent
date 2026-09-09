@@ -1,0 +1,55 @@
+{
+  "status": "not_executed",
+  "participant_id": null,
+  "tested_revision": null,
+  "started_at": null,
+  "tasks": [
+    {
+      "id": "prepare",
+      "instruction": "在指定项目的会前准备页找出未完成和逾期任务，核对负责人、期限及出处。",
+      "success": null,
+      "duration_seconds": null,
+      "assistance_count": null,
+      "evidence_verified": null,
+      "observations": null
+    },
+    {
+      "id": "review",
+      "instruction": "在会后审核页比较候选与当前事实，依据原文处理冲突并核对最终状态。",
+      "success": null,
+      "duration_seconds": null,
+      "assistance_count": null,
+      "evidence_verified": null,
+      "observations": null
+    },
+    {
+      "id": "follow_up",
+      "instruction": "比较两个业务时点的状态，说明负责人或期限发生的变化及对应证据。",
+      "success": null,
+      "duration_seconds": null,
+      "assistance_count": null,
+      "evidence_verified": null,
+      "observations": null
+    },
+    {
+      "id": "evidence",
+      "instruction": "从回答引用定位到指定长 PDF 原文，核对页码、引文和来源版本。",
+      "success": null,
+      "duration_seconds": null,
+      "assistance_count": null,
+      "evidence_verified": null,
+      "observations": null
+    },
+    {
+      "id": "recover",
+      "instruction": "在另一窗口修改事实后提交旧版本，处理过期提示并核对没有覆盖新状态。",
+      "success": null,
+      "duration_seconds": null,
+      "assistance_count": null,
+      "evidence_verified": null,
+      "observations": null
+    }
+  ],
+  "overall_satisfaction_1_to_5": null,
+  "release_ready": false
+}

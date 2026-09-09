@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
-from ..core.metrics import BACKGROUND_TASK_FAILURES_TOTAL
+from ..core.metrics import BACKGROUND_TASK_EXHAUSTED_TOTAL, BACKGROUND_TASK_FAILURES_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,23 @@ class BackgroundTaskRegistry:
         self._tasks: dict[str, asyncio.Task] = {}
 
     def register(self, name: str, task: asyncio.Task) -> None:
-        if name in self._tasks:
+        if name in self._tasks and not self._tasks[name].done():
             logger.warning("Background task %r is being overwritten", name)
         self._tasks[name] = task
+
+        def _remove_completed(completed: asyncio.Task) -> None:
+            if self._tasks.get(name) is completed:
+                self._tasks.pop(name, None)
+            if completed.cancelled():
+                return
+            # Retrieve the exception even for supervised tasks.  The runner
+            # already records/logs it, while retrieving it here prevents the
+            # event loop from emitting a late "exception was never retrieved"
+            # warning during shutdown.
+            with contextlib.suppress(asyncio.CancelledError):
+                completed.exception()
+
+        task.add_done_callback(_remove_completed)
 
     def create(
         self,
@@ -36,13 +51,17 @@ class BackgroundTaskRegistry:
         base_backoff_seconds: float = 1.0,
     ) -> asyncio.Task:
         """Create a supervised task and register it."""
+        existing = self._tasks.get(name)
+        if existing is not None and not existing.done():
+            logger.info("Background task %r is already active; reusing it", name)
+            return existing
         task = create_supervised_task(
             name,
             task_factory,
             max_restarts=max_restarts,
             base_backoff_seconds=base_backoff_seconds,
         )
-        self._tasks[name] = task
+        self.register(name, task)
         return task
 
     def cancel_all(self) -> list[tuple[str, asyncio.Task]]:
@@ -74,6 +93,22 @@ class BackgroundTaskRegistry:
     def task_names(self) -> list[str]:
         return list(self._tasks.keys())
 
+    def is_active(self, name: str) -> bool:
+        task = self._tasks.get(name)
+        return bool(task and not task.done())
+
+    async def wait_for(self, name: str, timeout: float | None = None) -> bool:
+        """Wait for one named task, primarily for coordinated callers/tests.
+
+        Returns ``False`` when the task already finished and left the registry.
+        ``shield`` ensures a caller timeout does not cancel durable work.
+        """
+        task = self._tasks.get(name)
+        if task is None:
+            return False
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        return True
+
 
 # Module-level singleton
 _background_tasks = BackgroundTaskRegistry()
@@ -100,9 +135,16 @@ def create_supervised_task(
                 return
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 attempt += 1
-                BACKGROUND_TASK_FAILURES_TOTAL.labels(name=name).inc()
+                error_type = type(exc).__name__
+                try:
+                    BACKGROUND_TASK_FAILURES_TOTAL.labels(
+                        name=name,
+                        error_type=error_type,
+                    ).inc()
+                except Exception:
+                    logger.debug("Failed to record background task failure metric", exc_info=True)
                 logger.error(
                     "Background task %s crashed (attempt=%d)",
                     name,
@@ -110,6 +152,13 @@ def create_supervised_task(
                     exc_info=True,
                 )
                 if attempt > max_restarts:
+                    try:
+                        BACKGROUND_TASK_EXHAUSTED_TOTAL.labels(name=name).inc()
+                    except Exception:
+                        logger.debug(
+                            "Failed to record background task exhaustion metric",
+                            exc_info=True,
+                        )
                     logger.critical(
                         "Background task %s exhausted max_restarts=%d — "
                         "this task will NOT be restarted and the associated "

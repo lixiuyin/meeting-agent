@@ -120,13 +120,27 @@ export function AiModelsTab({ bindings }: Props) {
         </Form.Item>
         <Form.Item
           name={["embedding", "host"]}
-          label={formatMessage({ id: "settings.models.host" })}
+          label={
+            <span>
+              {formatMessage({ id: "settings.models.host" })}
+              <Tooltip title={formatMessage({ id: "settings.models.embeddingChangeWarning" })}>
+                <QuestionCircleOutlined style={{ marginLeft: 8, opacity: 0.5 }} />
+              </Tooltip>
+            </span>
+          }
         >
           <Input placeholder="e.g., http://localhost:11434 for Ollama" />
         </Form.Item>
         <Form.Item
           name={["embedding", "base_url"]}
-          label={formatMessage({ id: "settings.models.baseUrl" })}
+          label={
+            <span>
+              {formatMessage({ id: "settings.models.baseUrl" })}
+              <Tooltip title={formatMessage({ id: "settings.models.embeddingChangeWarning" })}>
+                <QuestionCircleOutlined style={{ marginLeft: 8, opacity: 0.5 }} />
+              </Tooltip>
+            </span>
+          }
         >
           <Input placeholder="e.g., https://api.openai.com/v1" />
         </Form.Item>

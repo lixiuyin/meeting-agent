@@ -6,10 +6,91 @@ with no hint of what went wrong, making operational debugging painful.
 
 from __future__ import annotations
 
-from src.core.trace import TraceContext
+import json
+import stat
+
+from src.core.trace import TraceContext, write_ingest_trace, write_pipeline_log
 
 
 class TestTraceErrorCapture:
+    def test_serialized_trace_has_causal_process_fields(self) -> None:
+        trace = TraceContext(trace_id="trace-test")
+        trace.start_span("pipeline", "pipeline")
+        trace.start_span("retrieve", "retrieve", parent_label="pipeline")
+        trace.finish_span("retrieve")
+        trace.finish_span("pipeline")
+
+        payload = trace.to_dict()
+        pipeline, retrieve = payload["spans"]
+
+        assert payload["schema_version"] == 2
+        assert pipeline["span_id"] == "trace-test:0"
+        assert pipeline["sequence"] == 0
+        assert retrieve["span_id"] == "trace-test:1"
+        assert retrieve["parent_span_id"] == "trace-test:0"
+        assert retrieve["sequence"] == 1
+        assert retrieve["start_offset_ms"] <= retrieve["end_offset_ms"]
+
+    def test_writer_resolves_default_log_dir_at_call_time(self, monkeypatch, tmp_path) -> None:
+        from src.core import constants
+
+        monkeypatch.setattr(constants, "LOG_DIR", tmp_path)
+        trace = TraceContext()
+        trace.start_span("pipeline", "pipeline")
+        trace.finish_span("pipeline")
+
+        write_pipeline_log(trace, "isolated")
+
+        lines = (tmp_path / "pipeline.jsonl").read_text(encoding="utf-8").splitlines()
+        payload = json.loads(lines[-1])
+        assert "question" not in payload
+        assert payload["question_chars"] == len("isolated")
+        assert len(payload["question_sha256"]) == 64
+        assert stat.S_IMODE((tmp_path / "pipeline.jsonl").stat().st_mode) == 0o600
+
+    def test_ingest_writer_records_join_keys_and_first_error(self, tmp_path) -> None:
+        trace = TraceContext(trace_id="ingest-test")
+        trace.start_span("fetch_metadata", "metadata")
+        trace.finish_span("fetch_metadata")
+        trace.start_span("parse", "extract")
+        trace.finish_span("parse", "error", error=ValueError("empty document"))
+
+        write_ingest_trace(
+            trace,
+            file_id=7,
+            meeting_id=3,
+            terminal_status="error",
+            ready_status="error",
+            log_dir=tmp_path,
+        )
+
+        payload = json.loads(
+            (tmp_path / "ingest.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+        )
+        assert payload["process"] == "ingest"
+        assert payload["trace_id"] == "ingest-test"
+        assert payload["file_id"] == 7
+        assert payload["meeting_id"] == 3
+        assert payload["terminal_status"] == "error"
+        assert payload["ready_status"] == "error"
+        assert payload["error_span"] == "parse"
+        assert payload["error_type"] == "ValueError"
+        assert [span["sequence"] for span in payload["spans"]] == [0, 1]
+        assert stat.S_IMODE((tmp_path / "ingest.jsonl").stat().st_mode) == 0o600
+
+    def test_finish_latest_open_span_preserves_causal_failure(self) -> None:
+        trace = TraceContext()
+        trace.start_span("fetch_metadata", "metadata")
+        trace.finish_span("fetch_metadata")
+        trace.start_span("index_meeting", "index")
+
+        assert trace.finish_latest_open_span(error=RuntimeError("vector write failed")) == (
+            "index_meeting"
+        )
+        span = trace.spans[-1]
+        assert span.status == "error"
+        assert span.error_type == "RuntimeError"
+
     def test_finish_span_with_error_records_type_and_message(self) -> None:
         trace = TraceContext()
         trace.start_span("generate_answer", "generate")
@@ -49,6 +130,24 @@ class TestTraceErrorCapture:
         assert log["status"] == "success"
         assert "error_type" not in log
         assert "error_message" not in log
+        assert "error_span" not in log
+
+    def test_timeout_marks_pipeline_log_degraded_without_failing_request(self) -> None:
+        trace = TraceContext()
+        trace.start_span("pipeline", "pipeline")
+        trace.start_span("skill_match", "skill")
+        trace.finish_span("skill_match", "timeout", error=TimeoutError("optional fallback"))
+        trace.finish_span("pipeline")
+
+        payload = trace.to_dict()
+        skill_span = next(span for span in payload["spans"] if span["label"] == "skill_match")
+        assert skill_span["status"] == "timeout"
+        assert skill_span["error_type"] == "TimeoutError"
+
+        log = trace.to_pipeline_log("q")
+        assert log["status"] == "degraded"
+        assert log["span_statuses"] == {"skill_match": "timeout"}
+        assert log["degraded_spans"] == ["skill_match"]
         assert "error_span" not in log
 
     def test_long_error_message_is_truncated(self) -> None:

@@ -71,6 +71,7 @@ async def _index_from_pretranscribed(
         "chunk_strategy_route": (
             "text" if settings.NON_TEXT_CHUNKING_STRATEGY == "text" else "native"
         ),
+        **metrics,
     }
 
     # Clean old index for this file
@@ -113,6 +114,7 @@ async def _index_from_pretranscribed(
             update_meeting_file_status(conn, file_id, "ready", error_message=None)
             # Update meeting status based on all files
             from src.core.database import list_meeting_files
+
             files = list_meeting_files(conn, meeting_id)
             if all(f.get("status") == "ready" for f in files):
                 # Must transition uploading → processing → ready
@@ -132,7 +134,10 @@ async def _index_from_pretranscribed(
                 "SELECT COUNT(*) AS c FROM bm25_chunks WHERE meeting_id = ?",
                 (meeting_id,),
             ).fetchone()["c"]
-            print(f"[DIAG] meeting_id={meeting_id} file_id={file_id} bm25_index={count_idx} bm25_chunks={count_fts}")
+            print(
+                f"[DIAG] meeting_id={meeting_id} file_id={file_id} "
+                f"bm25_index={count_idx} bm25_chunks={count_fts}"
+            )
 
     await asyncio.to_thread(_diag_bm25)
 
@@ -151,6 +156,7 @@ async def ingest_amicorpus_meeting(meeting_name: str) -> tuple[int, int]:
             title=meeting_name,
             description="AMI benchmark fixture",
             meeting_date="2026-01-15",
+            user_id="benchmark",
         )
 
     upload_dir = Path(settings.UPLOAD_DIR)
@@ -165,6 +171,7 @@ async def ingest_amicorpus_meeting(meeting_name: str) -> tuple[int, int]:
             file_type="audio",
             file_name=audio_src.name,
             file_path=str(dest_path),
+            user_id="benchmark",
         )
 
     pre_path = _pretranscribed_path(meeting_name)

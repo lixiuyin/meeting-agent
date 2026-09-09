@@ -223,6 +223,26 @@ def persist_meeting_summary(
 
     content_hash = hashlib.sha256(summary.encode()).hexdigest()[:16]
 
+    # Resolve ownership from the authoritative row.  It is recorded in vector
+    # metadata for future push-down filtering, while retrieval still performs
+    # an authoritative DB check for compatibility with older vectors.
+    user_id: str | None = None
+    try:
+        from ...core.database import get_connection
+
+        with get_connection() as conn:
+            owner = conn.execute(
+                "SELECT user_id FROM meetings WHERE id=?", (meeting_id,)
+            ).fetchone()
+        if owner is not None:
+            user_id = str(owner["user_id"])
+    except Exception:
+        logger.warning(
+            "Failed to resolve owner for meeting %d summary vector",
+            meeting_id,
+            exc_info=True,
+        )
+
     # 1. SQLite (save_meeting_summary also transitions meeting -> ready atomically)
     try:
         from ...core.database.meetings import save_meeting_summary
@@ -246,6 +266,7 @@ def persist_meeting_summary(
             contributing_file_ids=contributing_file_ids,
             contributing_file_names=contributing_file_names,
             content_hash=content_hash,
+            user_id=user_id,
         )
     except Exception:
         logger.error(
@@ -267,7 +288,8 @@ def reconcile_meeting_summaries(limit: int = 200) -> dict[str, int]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT ms.meeting_id, m.title, ms.summary, ms.contributing_file_ids "
+                "SELECT ms.meeting_id, m.title, m.user_id, ms.summary, "
+                "ms.contributing_file_ids "
                 "FROM meeting_summaries ms "
                 "JOIN meetings m ON m.id = ms.meeting_id "
                 "WHERE m.summary_status = 'ready' AND ms.summary IS NOT NULL "
@@ -285,7 +307,9 @@ def reconcile_meeting_summaries(limit: int = 200) -> dict[str, int]:
             try:
                 existing = store._collection.get(ids=[doc_id], include=["metadatas"])
                 if existing and existing.get("ids") and existing["ids"][0] == doc_id:
-                    continue
+                    metadata = (existing.get("metadatas") or [{}])[0]
+                    if metadata.get("user_id") == row["user_id"]:
+                        continue
             except Exception:
                 logger.debug("Vector existence check failed for %s", doc_id, exc_info=True)
 
@@ -329,10 +353,10 @@ async def enqueue_meeting_summary_rebuild(meeting_id: int) -> None:
     Must be called from an async context so ``asyncio.create_task`` can
     schedule the background generation.
     """
-    from ..processor._pipeline_summary import _maybe_trigger_meeting_summary
+    from ..summaries import enqueue_meeting_summary
 
     try:
-        _maybe_trigger_meeting_summary(meeting_id)
+        await enqueue_meeting_summary(meeting_id)
     except Exception:
         logger.debug(
             "Failed to enqueue meeting summary rebuild for %d",

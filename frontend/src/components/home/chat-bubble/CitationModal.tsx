@@ -35,8 +35,16 @@ export function CitationModal({ citation, onClose, onOpenSource, onCopySourceSni
             Type: {formatContentType(citation.source)}
           </div>
           <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-            Score: {(citation.source.score * 100).toFixed(0)}%
+            Retrieval score: {citation.source.score.toFixed(3)} (not a probability)
           </div>
+          {!!citation.source.alternate_sources?.length && (
+            <div aria-label="Additional evidence sources" style={{ fontSize: 12 }}>
+              Also found in:{" "}
+              {citation.source.alternate_sources
+                .map((item) => String(item.file_name ?? `File ${item.file_id ?? "unknown"}`))
+                .join(" · ")}
+            </div>
+          )}
           <div
             style={{
               padding: "10px 12px",

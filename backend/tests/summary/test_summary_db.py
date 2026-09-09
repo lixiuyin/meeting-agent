@@ -78,6 +78,76 @@ class TestSessionSummaryCRUD:
         assert result["summary"] == "Updated version"
         assert result["turn_count"] == 4
 
+    def test_late_stale_summary_cannot_overwrite_more_complete_summary(self):
+        """LLM completion order must not move summarized coverage backwards."""
+        user_id = "monotonic_summary_user"
+        session_id = _create_session_with_messages(
+            user_id, "Concurrent Summary", [("human", "q"), ("ai", "a")]
+        )
+
+        with get_write_connection() as conn:
+            db.upsert_session_summary(
+                conn,
+                session_id=session_id,
+                user_id=user_id,
+                summary="Covers twelve messages",
+                turn_count=12,
+            )
+            # Make the stored timestamp older so the former `turn_count OR
+            # updated_at` predicate would incorrectly accept the stale write.
+            conn.execute(
+                "UPDATE session_summaries SET updated_at="
+                "datetime('now', '-1 day') WHERE session_id=?",
+                (session_id,),
+            )
+            db.upsert_session_summary(
+                conn,
+                session_id=session_id,
+                user_id=user_id,
+                summary="Late result covering only ten messages",
+                turn_count=10,
+            )
+
+        with db.get_connection() as conn:
+            result = db.get_session_summary(conn, session_id)
+        assert result is not None
+        assert result["summary"] == "Covers twelve messages"
+        assert result["turn_count"] == 12
+
+    def test_equal_coverage_retry_can_replace_older_summary(self):
+        """A retry for the same snapshot may improve an older generated result."""
+        user_id = "equal_coverage_summary_user"
+        session_id = _create_session_with_messages(
+            user_id, "Summary Retry", [("human", "q"), ("ai", "a")]
+        )
+
+        with get_write_connection() as conn:
+            db.upsert_session_summary(
+                conn,
+                session_id=session_id,
+                user_id=user_id,
+                summary="First attempt",
+                turn_count=2,
+            )
+            conn.execute(
+                "UPDATE session_summaries SET updated_at="
+                "datetime('now', '-1 day') WHERE session_id=?",
+                (session_id,),
+            )
+            db.upsert_session_summary(
+                conn,
+                session_id=session_id,
+                user_id=user_id,
+                summary="Improved retry",
+                turn_count=2,
+            )
+
+        with db.get_connection() as conn:
+            result = db.get_session_summary(conn, session_id)
+        assert result is not None
+        assert result["summary"] == "Improved retry"
+        assert result["turn_count"] == 2
+
     def test_list_summaries(self):
         """List summaries returns them ordered by creation date."""
         user_id = "list_summary_user"
@@ -180,6 +250,24 @@ class TestUnsummarizedSessions:
 
 
 class TestChatMessageFTS:
+    def test_hyphenated_identifier_uses_token_boundaries(self):
+        user_id = "fts_identifier_user"
+        session_id = _create_session_with_messages(
+            user_id,
+            "Incident",
+            [("human", "Please inspect incident ZYX-9921"), ("ai", "Resolved")],
+        )
+
+        with db.get_connection() as conn:
+            results = db.search_chat_messages(
+                conn,
+                user_id=user_id,
+                query="ZYX-9921",
+                limit=10,
+            )
+
+        assert {row["session_id"] for row in results} == {session_id}
+
     def test_search_finds_matching_messages(self):
         """FTS search returns messages containing the search term."""
         user_id = "fts_user"

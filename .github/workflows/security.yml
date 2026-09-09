@@ -64,6 +64,9 @@ jobs:
           image-ref: "meeting-agent-backend:scan"
           format: "table"
           severity: "HIGH,CRITICAL"
+          # Unfixed upstream advisories stay visible in the report and release
+          # evidence; block only findings for which an upgrade is available.
+          ignore-unfixed: true
           exit-code: "1"
 
       - name: Run Trivy frontend scan (blocking)
@@ -73,6 +76,7 @@ jobs:
           image-ref: "meeting-agent-frontend:scan"
           format: "table"
           severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
           exit-code: "1"
 
   osv:
@@ -83,6 +87,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.22"
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
       - name: Install osv-scanner
         run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1
       - name: Run osv-scanner (SARIF for upload)
@@ -93,8 +98,22 @@ jobs:
             --output=osv-results.sarif || true
       - name: Run osv-scanner (blocking gate)
         run: |
-          ~/go/bin/osv-scanner --lockfile=backend/uv.lock || true
+          # Exact advisory exceptions are temporary and must not silently
+          # become permanent.  The mitigations and upgrade blockers are
+          # documented in SECURITY.md; fail CI after the review deadline.
+          review_before="2026-10-01"
+          if [ "$(date -u +%F)" \> "$review_before" ] || [ "$(date -u +%F)" = "$review_before" ]; then
+            echo "Dependency advisory exceptions expired on $review_before; re-audit and update SECURITY.md."
+            exit 1
+          fi
           ~/go/bin/osv-scanner --lockfile=frontend/package-lock.json
+          cd backend
+          uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-txt |
+            uvx pip-audit -r /dev/stdin --no-deps --disable-pip --desc --strict \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln CVE-2026-45830 \
+            --ignore-vuln CVE-2026-45831 \
+            --ignore-vuln CVE-2026-45833
       - name: Upload OSV scan results
         uses: github/codeql-action/upload-sarif@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
         if: always()

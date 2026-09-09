@@ -9,7 +9,9 @@ Tier 2 — *full definitions*: ``SkillDefinition`` objects loaded lazily only
 when a skill is matched. Cached per-name until ``invalidate()`` is called.
 """
 
+import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,17 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT_CANDIDATE = _BACKEND_ROOT.parent
+_DEFAULT_DATA_DIR = (
+    _REPO_ROOT_CANDIDATE / "data"
+    if (_REPO_ROOT_CANDIDATE / "backend").is_dir()
+    else _BACKEND_ROOT / "data"
+)
+_DEFAULT_CUSTOM_SKILLS_DIR = Path(
+    os.getenv("CUSTOM_SKILLS_DIR", str(Path(os.getenv("DATA_DIR", _DEFAULT_DATA_DIR)) / "skills"))
+).expanduser()
 
 
 def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
@@ -49,8 +62,25 @@ class SkillLoader:
         full     = loader.get_full("my_skill")   # lazy, cached per-name
     """
 
-    def __init__(self, skills_dir: str | Path = "skills/builtin"):
-        self.skills_dir = Path(skills_dir)
+    def __init__(
+        self,
+        skills_dir: str | Path | None = None,
+        *,
+        custom_skills_dir: str | Path | None = None,
+    ):
+        explicit_source = skills_dir is not None
+        self.builtin_skills_dir = (
+            Path(skills_dir) if explicit_source else Path(__file__).resolve().parent / "builtin"
+        )
+        self.custom_skills_dir = (
+            Path(custom_skills_dir)
+            if custom_skills_dir is not None
+            else (None if explicit_source else _DEFAULT_CUSTOM_SKILLS_DIR)
+        )
+        # Backward-compatible mutation target used by the skills API.  An
+        # explicitly supplied directory remains both source and destination;
+        # the default loader writes only to persistent data/skills.
+        self.skills_dir = self.custom_skills_dir or self.builtin_skills_dir
         # Tier-1: summaries
         self._summaries: list[SkillSummary] = []
         self._summaries_loaded: bool = False
@@ -135,20 +165,23 @@ class SkillLoader:
     # ------------------------------------------------------------------
 
     def _collect_skill_dirs(self) -> list[Path]:
-        if not self.skills_dir.exists():
-            return []
-        return sorted(
-            d for d in self.skills_dir.iterdir() if d.is_dir() and (d / "skill.md").exists()
-        )
+        roots = [self.builtin_skills_dir]
+        if self.custom_skills_dir is not None:
+            roots.append(self.custom_skills_dir)
+        directories: list[Path] = []
+        for root in roots:
+            if root.exists():
+                directories.extend(
+                    d for d in root.iterdir() if d.is_dir() and (d / "skill.md").exists()
+                )
+        return sorted(directories, key=lambda path: str(path))
 
     def _current_mtimes(self) -> dict[str, float]:
         mtimes: dict[str, float] = {}
         for skill_dir in self._collect_skill_dirs():
             skill_file = skill_dir / "skill.md"
-            try:
-                mtimes[skill_dir.name] = skill_file.stat().st_mtime
-            except OSError:
-                pass
+            with contextlib.suppress(OSError):
+                mtimes[str(skill_file)] = skill_file.stat().st_mtime
         return mtimes
 
     def _mtimes_changed(self) -> bool:
@@ -172,9 +205,7 @@ class SkillLoader:
                     name=metadata["name"],
                     display_name=metadata.get("display_name", metadata["name"]),
                     description=metadata.get("description", ""),
-                    intent_matching=IntentMatchingConfig(
-                        **metadata.get("intent_matching", {})
-                    ),
+                    intent_matching=IntentMatchingConfig(**metadata.get("intent_matching", {})),
                     base_path=skill_dir,
                 )
                 self._summaries.append(summary)
@@ -206,9 +237,7 @@ class SkillLoader:
                 version=metadata.get("version", "1.0.0"),
                 display_name=metadata.get("display_name", name),
                 description=metadata.get("description", ""),
-                intent_matching=IntentMatchingConfig(
-                    **metadata.get("intent_matching", {})
-                ),
+                intent_matching=IntentMatchingConfig(**metadata.get("intent_matching", {})),
                 execution=ExecutionConfig(**metadata.get("execution", {})),
                 output=OutputConfig(**metadata.get("output", {})),
                 metadata=SkillMetadata(**metadata.get("metadata", {})),
@@ -228,6 +257,7 @@ class SkillLoader:
             dest = quarantine / skill_dir.name
             if dest.exists():
                 import shutil
+
                 shutil.rmtree(dest)
             skill_dir.rename(dest)
             logger.warning("Quarantined broken skill: %s -> %s", skill_dir.name, dest)

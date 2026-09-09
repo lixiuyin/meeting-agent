@@ -57,8 +57,9 @@ class TestStreamingThinkingFilter:
         f.feed("internal reasoning")
         # Buffer has content, not yet flushed via feed
         result = f.flush()
-        # After thinking block, flush returns whatever is left
-        assert result is not None or f.content_started  # either flushed or already emitted
+        # Unterminated internal reasoning is incomplete output, not an answer.
+        assert result is None
+        assert not f.content_started
 
     def test_flush_empty_returns_none(self):
         f = StreamingThinkingFilter()

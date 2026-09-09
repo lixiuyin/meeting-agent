@@ -1,5 +1,6 @@
 """Legacy format converters — PPT, DOC, XLS to modern formats."""
 
+import contextlib
 import logging
 import shutil
 import tempfile
@@ -122,6 +123,7 @@ def _convert_ppt_to_pdf(ppt_path: Path) -> Path:
         logger.info("LibreOffice unavailable for .ppt→.pdf (%s). Trying .ppt→.pptx fallback.", exc)
     import subprocess
 
+    pptx_path: Path | None = None
     try:
         pptx_path = _convert_via_libreoffice(ppt_path, "pptx")
     except (LibreOfficeMissingError, OSError, subprocess.CalledProcessError):
@@ -131,6 +133,11 @@ def _convert_ppt_to_pdf(ppt_path: Path) -> Path:
         return _convert_via_libreoffice(pptx_path, "pdf")
     except (LibreOfficeMissingError, OSError, subprocess.CalledProcessError):
         return _pptx_to_pdf_via_extract(pptx_path)
+    finally:
+        with contextlib.suppress(OSError):
+            pptx_path.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            pptx_path.parent.rmdir()
 
 
 def _pptx_to_pdf_via_extract(pptx_path: Path) -> Path:
@@ -140,7 +147,7 @@ def _pptx_to_pdf_via_extract(pptx_path: Path) -> Path:
     a simple text-based PDF. Visual fidelity is reduced but the content
     is fully preserved for the cascade OCR/parsing pipeline.
     """
-    import fitz
+    import pymupdf as fitz
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 

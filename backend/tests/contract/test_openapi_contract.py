@@ -7,6 +7,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/meetings/search/content": {"get"},
     # Sessions
     "/api/v1/sessions": {"get"},
+    "/api/v1/sessions/batch-delete": {"post"},
     "/api/v1/sessions/summaries": {"get"},
     "/api/v1/sessions/search": {"post"},
     # Chat
@@ -16,10 +17,12 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     # Memory
     "/api/v1/memory": {"get", "post", "put", "delete"},
     "/api/v1/memory/batch": {"post"},
+    "/api/v1/memory/batch-delete": {"post"},
     "/api/v1/memory/export": {"get"},
     "/api/v1/memory/search": {"post"},
     "/api/v1/memory/decay": {"post"},
     "/api/v1/memory/entities": {"get"},
+    "/api/v1/memory/entities/batch-delete": {"post"},
     "/api/v1/memory/entities/merge": {"post"},
     # Settings
     "/api/v1/settings": {"get", "put"},
@@ -99,3 +102,31 @@ def test_parameterized_routes_exist():
     ]
     missing = [r for r in param_routes if r not in paths]
     assert not missing, f"Missing parameterized routes: {missing}"
+
+
+async def test_validation_responses_match_the_published_contract(auth_headers):
+    from httpx import ASGITransport, AsyncClient
+    from jsonschema import Draft202012Validator
+
+    schema = app.openapi()
+    cases = [
+        ("get", "/api/v1/memory", "/api/v1/memory?cursor=null", None),
+        ("get", "/api/v1/memory/export", "/api/v1/memory/export?cursor=null", None),
+        (
+            "patch",
+            "/api/v1/meetings/{meeting_id}/files/{file_id}/semantics",
+            "/api/v1/meetings/1/files/1/semantics",
+            {},
+        ),
+        ("get", "/api/v1/memory", "/api/v1/memory?limit=invalid", None),
+    ]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for method, path, url, body in cases:
+            response = await client.request(method, url, json=body, headers=auth_headers)
+            assert response.status_code == 422
+            response_schema = schema["paths"][path][method]["responses"]["422"]["content"][
+                "application/json"
+            ]["schema"]
+            Draft202012Validator({"components": schema["components"], **response_schema}).validate(
+                response.json()
+            )

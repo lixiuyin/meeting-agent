@@ -122,16 +122,44 @@ def test_process_meeting_file_trace_spans(monkeypatch, tmp_path):
     assert index_metadata["ingest_image_asset_count"] == 3
     assert index_metadata["ingest_image_caption_success_count"] == 2
     assert index_metadata["ingest_image_ocr_success_count"] == 1
+    assert index_metadata["file_source_revision"] == 2
 
     with get_write_connection() as conn:
         file_row = conn.execute(
-            "SELECT metrics_json FROM meeting_files WHERE id=?", (file_id,)
+            "SELECT metrics_json, source_revision FROM meeting_files WHERE id=?", (file_id,)
         ).fetchone()
     assert file_row is not None
     assert file_row["metrics_json"] is not None
     metrics_json = json.loads(file_row["metrics_json"])
     assert metrics_json["cleaned_line_count"] == 8
     assert metrics_json["image_caption_success_count"] == 2
+    assert file_row["source_revision"] == index_metadata["file_source_revision"]
+
+    extraction_calls: list[int] = []
+
+    async def _capture_extraction(**_kwargs):
+        extraction_calls.append(1)
+        return 1
+
+    monkeypatch.setattr(
+        "src.services.processor._memory_extraction.schedule_file_memory_extraction",
+        _capture_extraction,
+    )
+    asyncio.run(process_meeting_file(file_id, force_native_reindex=True))
+    assert extraction_calls == [], "metadata-only reindex must not duplicate fact extraction"
+
+    # Review changes invalidate an in-flight extractor even when bytes match.
+    # The successor must schedule current evidence instead of losing the fact.
+    from src.core.database import update_meeting_file_semantics
+
+    with get_write_connection() as conn:
+        revision = update_meeting_file_semantics(
+            conn, file_id, user_id="test", approval_status="approved"
+        )
+    asyncio.run(
+        process_meeting_file(file_id, force_native_reindex=True, expected_source_revision=revision)
+    )
+    assert extraction_calls == [1], "reviewed evidence must get a current extraction job"
 
 
 def test_index_meeting_trace_spans():
@@ -235,7 +263,7 @@ def test_process_meeting_file_indexes_multimodal_when_text_short(monkeypatch, tm
 
     indexed: list[tuple[int, object]] = []
 
-    def _mock_index_pages(meeting_id, parsed, metadata=None, trace=None):
+    def _mock_index_pages(meeting_id, parsed, metadata=None, trace=None, **kwargs):
         indexed.append((meeting_id, parsed))
 
     monkeypatch.setattr(
@@ -333,7 +361,7 @@ def test_process_meeting_file_does_not_skip_initial_index_with_precomputed_hash(
 
     indexed: list[int] = []
 
-    def _mock_index_pages(meeting_id, parsed, metadata=None, trace=None):
+    def _mock_index_pages(meeting_id, parsed, metadata=None, trace=None, **kwargs):
         indexed.append(meeting_id)
 
     monkeypatch.setattr(
@@ -359,6 +387,134 @@ def test_process_meeting_file_does_not_skip_initial_index_with_precomputed_hash(
     assert file_row["status"] == "ready"
     assert file_row["content_hash"] == expected_hash
     assert file_row["error_message"] is None
+
+
+def test_manifest_repair_never_skips_an_unchanged_ready_file():
+    from src.services.processor._pipeline import _should_skip_unchanged_index
+
+    record = {"status": "ready", "content_hash": "same"}
+    assert _should_skip_unchanged_index(record, new_hash="same", force_native_reindex=False)
+    assert not _should_skip_unchanged_index(record, new_hash="same", force_native_reindex=True)
+
+
+def test_pptx_conversion_preserves_original_and_uses_managed_derivative(monkeypatch, tmp_path):
+    """Parsing a PPTX must not rename, delete, or replace the user's upload."""
+    from src.services.parser import converters
+    from src.services.processor._pipeline import _convert_pptx_to_pdf
+
+    original = tmp_path / "quarterly-review.pptx"
+    original.write_bytes(b"original-presentation")
+    converter_dir = tmp_path / "converter-output"
+    converter_dir.mkdir()
+    converted = converter_dir / "quarterly-review.pdf"
+    converted.write_bytes(b"derived-pdf")
+
+    monkeypatch.setattr("src.services.processor._pipeline.settings.UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(converters, "_convert_pptx_to_pdf", lambda _path: converted)
+
+    import asyncio
+
+    derived_path, processing_type, logical_name = asyncio.run(
+        _convert_pptx_to_pdf(
+            file_id=9,
+            meeting_id=7,
+            file_path=original,
+            file_name=original.name,
+        )
+    )
+
+    assert original.read_bytes() == b"original-presentation"
+    assert derived_path == tmp_path / "meeting_assets" / "7" / "9" / "converted.pdf"
+    assert derived_path.read_bytes() == b"derived-pdf"
+    assert processing_type == "pdf"
+    assert logical_name == "quarterly-review.pptx"
+
+
+def test_pptx_processing_keeps_original_provenance_in_db_and_index(monkeypatch, tmp_path):
+    from src.core.database import (
+        create_meeting,
+        create_meeting_file,
+        get_connection,
+        get_write_connection,
+    )
+    from src.services.parser.types import PageContent, ParsedDocument
+    from src.services.processor._processors._types import FileArtefact
+
+    original = tmp_path / "roadmap.pptx"
+    original_bytes = b"synthetic-original-pptx"
+    original.write_bytes(original_bytes)
+    derived = tmp_path / "converted.pdf"
+    derived.write_bytes(b"synthetic-derived-pdf")
+
+    with get_write_connection() as conn:
+        meeting_id = create_meeting(conn, title="PPTX provenance", user_id="test")
+        file_id = create_meeting_file(
+            conn,
+            meeting_id=meeting_id,
+            file_name=original.name,
+            file_path=str(original),
+            file_type="ppt",
+        )
+
+    async def _stub_convert(*, file_id, meeting_id, file_path, file_name):
+        return derived, "pdf", file_name
+
+    parsed = ParsedDocument(
+        file_type="pdf",
+        pages=[
+            PageContent(
+                page_num=1,
+                text="This slide has enough synthetic content for the indexing quality gate.",
+            )
+        ],
+        metadata={"parser": "local"},
+        total_pages=1,
+    )
+
+    class _StubProcessor:
+        async def process(self, ctx):
+            assert ctx.file_type == "pdf"
+            assert ctx.file_name == "roadmap.pptx"
+            return FileArtefact(
+                text=parsed.pages[0].text,
+                structured_json='[{"page_num":1}]',
+                structured_kind="pages",
+                metrics={"page_count": 1, "word_count": 11},
+                parsed_doc=parsed,
+            )
+
+    indexed_metadata = []
+
+    def _capture_index(meeting_id, parsed, metadata=None, trace=None, **kwargs):
+        indexed_metadata.append(metadata)
+
+    monkeypatch.setattr("src.services.processor._pipeline._convert_pptx_to_pdf", _stub_convert)
+    monkeypatch.setattr(
+        "src.services.processor._pipeline._resolve_processor", lambda _file_type: _StubProcessor()
+    )
+    monkeypatch.setattr("src.services.processor._pipeline.index_meeting_pages", _capture_index)
+    monkeypatch.setattr(
+        "src.services.processor._pipeline.settings.MEETING_AUTO_SUMMARIZE_FILES", False
+    )
+
+    import asyncio
+
+    asyncio.run(process_meeting_file(file_id))
+
+    assert indexed_metadata[0]["file_name"] == "roadmap.pptx"
+    assert indexed_metadata[0]["file_type"] == "ppt"
+    assert indexed_metadata[0]["original_format"] == "pptx"
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT file_name, file_type, file_path, content_hash FROM meeting_files WHERE id=?",
+            (file_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["file_name"] == "roadmap.pptx"
+    assert row["file_type"] == "ppt"
+    assert row["file_path"] == str(original)
+    assert row["content_hash"] == hashlib.sha256(original_bytes).hexdigest()
+    assert original.read_bytes() == original_bytes
 
 
 def test_process_meeting_file_routes_audio_artefact_text_through_text_chunking(

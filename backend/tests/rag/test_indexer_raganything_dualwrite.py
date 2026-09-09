@@ -1,6 +1,7 @@
 """Integration tests for native + RAGAnything dual-write in ingest pipeline."""
 
 import asyncio
+from contextlib import nullcontext
 from pathlib import Path
 
 from src.core.database import (
@@ -11,6 +12,7 @@ from src.core.database import (
 )
 from src.services.processor import process_meeting_file
 from src.services.processor._processors._types import FileArtefact
+from src.services.rag._indexer_store import NativeIndexManifest
 
 
 def _create_meeting_file(tmp_path: Path) -> tuple[int, int]:
@@ -37,6 +39,16 @@ def _create_meeting_file(tmp_path: Path) -> tuple[int, int]:
     return meeting_id, file_id
 
 
+def _native_manifest() -> NativeIndexManifest:
+    return NativeIndexManifest(
+        generation="test-generation",
+        config_fingerprint="test-fingerprint",
+        chroma_chunk_count=1,
+        bm25_chunk_count=1,
+        checksum="test-checksum",
+    )
+
+
 class _StubProcessor:
     async def process(self, _ctx):
         return FileArtefact(
@@ -58,7 +70,15 @@ def test_dualwrite_marks_raganything_doc_id_on_success(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "src.services.processor._pipeline.index_meeting",
-        lambda meeting_id, text, metadata, trace=None: native_indexed.append(meeting_id),
+        lambda meeting_id, text, metadata, trace=None, **_kwargs: native_indexed.append(meeting_id),
+    )
+    monkeypatch.setattr(
+        "src.services.processor._pipeline.atomic_file_index_replacement",
+        lambda *_args, **_kwargs: nullcontext("test-generation"),
+    )
+    monkeypatch.setattr(
+        "src.services.processor._pipeline.inspect_native_index_generation",
+        lambda *_args, **_kwargs: _native_manifest(),
     )
     monkeypatch.setattr(
         "src.services.processor._pipeline.index_with_raganything",
@@ -92,7 +112,15 @@ def test_dualwrite_raganything_failure_keeps_native_success(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         "src.services.processor._pipeline.index_meeting",
-        lambda meeting_id, text, metadata, trace=None: native_indexed.append(meeting_id),
+        lambda meeting_id, text, metadata, trace=None, **_kwargs: native_indexed.append(meeting_id),
+    )
+    monkeypatch.setattr(
+        "src.services.processor._pipeline.atomic_file_index_replacement",
+        lambda *_args, **_kwargs: nullcontext("test-generation"),
+    )
+    monkeypatch.setattr(
+        "src.services.processor._pipeline.inspect_native_index_generation",
+        lambda *_args, **_kwargs: _native_manifest(),
     )
     monkeypatch.setattr(
         "src.services.processor._pipeline.index_with_raganything",

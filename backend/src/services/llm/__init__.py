@@ -1,8 +1,10 @@
 """LLM service - LangChain wrapper with multi-provider support."""
 
+from ._async import invoke_llm_text
 from ._cache import _get_llm_cache, cached_invoke, cached_retry_invoke, retry_invoke
 from ._embeddings_adapter import embed_documents_batched
-from ._parsing import parse_llm_json
+from ._parsing import extract_visible_text, parse_llm_json
+from ._prompt_safety import escape_prompt_data
 from ._prompts import (
     get_combined_extraction_prompt,
     get_contradiction_resolution_prompt,
@@ -14,6 +16,7 @@ from ._prompts import (
     get_skill_prompt,
 )
 from ._providers import (
+    create_llm,
     get_extraction_llm,
     get_llm,
     list_llm_providers,
@@ -28,7 +31,10 @@ __all__ = [
     "_get_llm_cache",
     "cached_invoke",
     "cached_retry_invoke",
+    "create_llm",
     "embed_documents_batched",
+    "escape_prompt_data",
+    "extract_visible_text",
     "get_combined_extraction_prompt",
     "get_contradiction_resolution_prompt",
     "get_entity_extraction_prompt",
@@ -39,6 +45,7 @@ __all__ = [
     "get_rag_prompt",
     "get_session_summary_prompt",
     "get_skill_prompt",
+    "invoke_llm_text",
     "list_llm_providers",
     "parse_llm_json",
     "register_llm_provider",

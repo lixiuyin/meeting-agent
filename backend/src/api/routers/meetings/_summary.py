@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import AsyncGenerator
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -10,13 +10,17 @@ from fastapi.responses import StreamingResponse
 from ....api.middleware import limiter
 from ....core import database as db
 from ....core.audit import audit_log
+from ....core.config import settings
+from ....core.exceptions import LLMEmptyResponseError, LLMTimeoutError
 from ....core.security import verify_api_key
 from ....models.schemas import MeetingStatus, SummaryResponse
 from ....models.schemas._common import FileType
 from ....models.schemas.meetings import PerFileSummary
 from ....services.chain._per_file_summary import generate_per_file_summary
 from ....services.chain._speaker_context import build_speaker_context as _build_speaker_context
+from ....services.llm import extract_visible_text, invoke_llm_text
 from ....services.stream_bus import serialize_event
+from ....services.traffic_control import get_traffic_controller
 from ._common import _ownership_filter, logger, router
 
 # Maximum input tokens before switching to map-reduce summarization
@@ -29,6 +33,48 @@ _UNBRACKETED_FILE_RE = re.compile(r"(?<!\[)\bfile:\s*(\d+)\b(?!\])")
 def _normalize_file_citations(text: str) -> str:
     """Ensure all file citations use the ``[file:N]`` bracket format."""
     return _UNBRACKETED_FILE_RE.sub(r"[file:\1]", text)
+
+
+async def _stream_llm_text(llm: Any, prompt: str):
+    """Yield visible provider text under the shared deadline and limiter."""
+
+    async def _iterate():
+        stream = llm.astream(prompt)
+        saw_text = False
+        try:
+            try:
+                async with asyncio.timeout(settings.LLM_GENERATION_TIMEOUT_S):
+                    async for event in stream:
+                        token = extract_visible_text(event)
+                        if token:
+                            saw_text = True
+                            yield token
+            except TimeoutError as exc:
+                raise LLMTimeoutError(
+                    "Generation deadline exhausted",
+                    timeout=settings.LLM_GENERATION_TIMEOUT_S,
+                    provider=settings.LLM_BINDING,
+                ) from exc
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(close(), timeout=5.0)
+        if not saw_text:
+            raise LLMEmptyResponseError(
+                "Provider completed without user-visible content",
+                provider=settings.LLM_BINDING,
+            )
+
+    controller = get_traffic_controller()
+    if controller is None:
+        async for token in _iterate():
+            yield token
+        return
+    async with controller:
+        async for token in _iterate():
+            yield token
+        controller.record_success()
 
 
 def _set_meeting_status(meeting_id: int, status: str) -> None:
@@ -307,15 +353,22 @@ async def generate_summary(
     if not acquire_summary_inflight(meeting_id):
         raise HTTPException(409, "Summary generation already in progress for this meeting")
 
-    m, files = await asyncio.to_thread(_load_meeting_and_transcript, meeting_id, user_id=user_id)
-    if not files:
-        release_summary_inflight(meeting_id)
-        raise HTTPException(400, "Meeting has no transcript")
+    try:
+        m, files = await asyncio.to_thread(
+            _load_meeting_and_transcript,
+            meeting_id,
+            user_id=user_id,
+        )
+        if not files:
+            raise HTTPException(400, "Meeting has no transcript")
 
-    # Push meeting to 'summarizing' so the badge reflects generation in progress.
-    # persist_meeting_summary (success path) will flip it to 'ready'.
-    await asyncio.to_thread(_set_meeting_status, meeting_id, "summarizing")
-    await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "pending")
+        # Push meeting to 'summarizing' so the badge reflects generation in progress.
+        # persist_meeting_summary (success path) will flip it to 'ready'.
+        await asyncio.to_thread(_set_meeting_status, meeting_id, "summarizing")
+        await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "pending")
+    except Exception:
+        release_summary_inflight(meeting_id)
+        raise
 
     try:
         from ....services.llm import get_llm
@@ -334,8 +387,7 @@ async def generate_summary(
         if count_tokens(composed) <= _SUMMARY_TOKEN_LIMIT:
             # Single-pass summarization
             prompt = _SUMMARY_PROMPT.format(title=m["title"], transcript=composed)
-            response = await llm.ainvoke(prompt)
-            summary = _normalize_file_citations(str(response.content))
+            summary = _normalize_file_citations(await invoke_llm_text(llm, prompt))
             tokens_used = count_tokens(prompt) + count_tokens(summary)
         else:
             # Map-reduce: summarize chunks, then merge
@@ -344,13 +396,18 @@ async def generate_summary(
 
             # Summarize each chunk in parallel
             chunk_prompts = [_CHUNK_SUMMARY_PROMPT.format(chunk=c) for c in chunks]
-            chunk_results = await asyncio.gather(*(llm.ainvoke(p) for p in chunk_prompts))
-            chunk_summaries = "\n\n---\n\n".join(str(r.content) for r in chunk_results)
+            semaphore = asyncio.Semaphore(8)
+
+            async def _summarize_chunk(prompt: str) -> str:
+                async with semaphore:
+                    return await invoke_llm_text(llm, prompt)
+
+            chunk_results = await asyncio.gather(*(_summarize_chunk(p) for p in chunk_prompts))
+            chunk_summaries = "\n\n---\n\n".join(chunk_results)
 
             # Merge chunk summaries
             merge_prompt = _MERGE_PROMPT.format(summaries=chunk_summaries)
-            merge_response = await llm.ainvoke(merge_prompt)
-            summary = _normalize_file_citations(str(merge_response.content))
+            summary = _normalize_file_citations(await invoke_llm_text(llm, merge_prompt))
             tokens_used = sum(count_tokens(p) for p in chunk_prompts) + count_tokens(merge_prompt)
             tokens_used += count_tokens(summary)
 
@@ -406,21 +463,28 @@ async def generate_summary_stream(
     if not acquire_summary_inflight(meeting_id):
         raise HTTPException(409, "Summary generation already in progress for this meeting")
 
-    m, files = await asyncio.to_thread(_load_meeting_and_transcript, meeting_id, user_id=user_id)
-    if not files:
+    try:
+        m, files = await asyncio.to_thread(
+            _load_meeting_and_transcript,
+            meeting_id,
+            user_id=user_id,
+        )
+        if not files:
+            raise HTTPException(400, "Meeting has no transcript")
+
+        # Push meeting to 'summarizing' so the badge reflects generation in progress.
+        # persist_meeting_summary (success path) will flip it to 'ready'.
+        await asyncio.to_thread(_set_meeting_status, meeting_id, "summarizing")
+        await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "pending")
+
+        per_file_summaries = await _ensure_per_file_summaries(files)
+        if not per_file_summaries:
+            await asyncio.to_thread(_set_meeting_status, meeting_id, "failed")
+            await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "failed")
+            raise HTTPException(400, "Meeting has no transcript")
+    except Exception:
         release_summary_inflight(meeting_id)
-        raise HTTPException(400, "Meeting has no transcript")
-
-    # Push meeting to 'summarizing' so the badge reflects generation in progress.
-    # persist_meeting_summary (success path) will flip it to 'ready'.
-    await asyncio.to_thread(_set_meeting_status, meeting_id, "summarizing")
-    await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "pending")
-
-    per_file_summaries = await _ensure_per_file_summaries(files)
-    if not per_file_summaries:
-        await asyncio.to_thread(_set_meeting_status, meeting_id, "failed")
-        await asyncio.to_thread(db.update_meeting_summary_status, meeting_id, "failed")
-        raise HTTPException(400, "Meeting has no transcript")
+        raise
     composed = _compose_file_summary_context(per_file_summaries)
     speaker_ctx2 = _build_speaker_context(files)
     if speaker_ctx2:
@@ -440,32 +504,17 @@ async def generate_summary_stream(
             if count_tokens(composed) <= _SUMMARY_TOKEN_LIMIT:
                 prompt = _SUMMARY_PROMPT.format(title=m["title"], transcript=composed)
                 yield serialize_event({"type": "step", "step": "generate", "status": "start"})
-                stream = llm.astream(prompt)
                 try:
-                    async for event in stream:
-                        token = str(getattr(event, "content", ""))
-                        if not token:
-                            continue
+                    async for token in _stream_llm_text(llm, prompt):
                         accumulated += token
                         yield serialize_event({"type": "token", "content": token})
                 except Exception:
-                    # Fallback for providers without streaming support.
-                    response = await llm.ainvoke(prompt)
-                    accumulated = str(response.content)
+                    if accumulated:
+                        raise
+                    # Fallback for providers without streaming support or with
+                    # an empty stream. It still uses the same limiter/deadline.
+                    accumulated = await invoke_llm_text(llm, prompt)
                     yield serialize_event({"type": "token", "content": accumulated})
-                finally:
-                    try:
-                        if isinstance(stream, AsyncGenerator):
-                            await asyncio.wait_for(stream.aclose(), timeout=5.0)
-                    except TimeoutError:
-                        logger.warning(
-                            "summary stream aclose timed out, forcing close",
-                            exc_info=True,
-                        )
-                        with contextlib.suppress(StopAsyncIteration, Exception):
-                            await stream.athrow(GeneratorExit)  # type: ignore[union-attr]
-                    except Exception:
-                        logger.debug("summary stream aclose raised", exc_info=True)
                 yield serialize_event({"type": "step", "step": "generate", "status": "done"})
                 tokens_used = count_tokens(prompt) + count_tokens(accumulated)
             else:
@@ -480,14 +529,7 @@ async def generate_summary_stream(
                 async def _process_chunk(idx: int, chunk: str) -> tuple[int, str]:
                     async with _chunk_semaphore:
                         chunk_prompt = _CHUNK_SUMMARY_PROMPT.format(chunk=chunk)
-                        try:
-                            chunk_resp = await llm.ainvoke(chunk_prompt)
-                            return idx, str(chunk_resp.content)
-                        except Exception:
-                            logger.warning(
-                                "Chunk %d/%d summarization failed", idx, len(chunks), exc_info=True
-                            )
-                            return idx, f"[Chunk {idx} unavailable]"
+                        return idx, await invoke_llm_text(llm, chunk_prompt)
 
                 results = await asyncio.gather(
                     *[_process_chunk(idx, chunk) for idx, chunk in enumerate(chunks, start=1)]
@@ -507,28 +549,15 @@ async def generate_summary_stream(
 
                 merge_prompt = _MERGE_PROMPT.format(summaries="\n\n---\n\n".join(chunk_summaries))
                 yield serialize_event({"type": "step", "step": "merge", "status": "start"})
-                merge_stream = llm.astream(merge_prompt)
                 try:
-                    async for event in merge_stream:
-                        token = str(getattr(event, "content", ""))
-                        if not token:
-                            continue
+                    async for token in _stream_llm_text(llm, merge_prompt):
                         accumulated += token
                         yield serialize_event({"type": "token", "content": token})
                 except Exception:
-                    merge_resp = await llm.ainvoke(merge_prompt)
-                    accumulated = str(merge_resp.content)
+                    if accumulated:
+                        raise
+                    accumulated = await invoke_llm_text(llm, merge_prompt)
                     yield serialize_event({"type": "token", "content": accumulated})
-                finally:
-                    try:
-                        if isinstance(merge_stream, AsyncGenerator):
-                            await asyncio.wait_for(merge_stream.aclose(), timeout=5.0)
-                    except TimeoutError:
-                        logger.warning("summary merge stream aclose timed out", exc_info=True)
-                        with contextlib.suppress(StopAsyncIteration, Exception):
-                            await merge_stream.athrow(GeneratorExit)  # type: ignore[union-attr]
-                    except Exception:
-                        logger.debug("summary merge stream aclose raised", exc_info=True)
                 yield serialize_event({"type": "step", "step": "merge", "status": "done"})
                 yield serialize_event({"type": "step", "step": "map_reduce", "status": "done"})
                 tokens_used = count_tokens(merge_prompt) + count_tokens(accumulated)
@@ -585,7 +614,18 @@ def _split_transcript(text: str, max_tokens: int) -> list[str]:
     """
     from ....services.tokenizer import count_tokens
 
-    paragraphs = text.split("\n\n")
+    max_tokens = max(1, max_tokens)
+    paragraphs: list[str] = []
+    for paragraph in text.split("\n\n"):
+        remainder = paragraph
+        while remainder and count_tokens(remainder) > max_tokens:
+            end = min(len(remainder), max(max_tokens * 3, 1))
+            while end > 1 and count_tokens(remainder[:end]) > max_tokens:
+                end = max(1, int(end * 0.85))
+            paragraphs.append(remainder[:end])
+            remainder = remainder[end:]
+        if remainder:
+            paragraphs.append(remainder)
     chunks: list[str] = []
     current: list[str] = []
     current_tokens = 0

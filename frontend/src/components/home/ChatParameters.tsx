@@ -1,6 +1,8 @@
-import { Button, InputNumber, Switch, Select, Input } from "antd";
+import { Button, Switch, Select, Input } from "antd";
 import { SettingOutlined, GlobalOutlined } from "@ant-design/icons";
 import { AnimatePresence, motion } from "framer-motion";
+import type { MemoryMode, RetrievalProfile } from "../../api/client-chat";
+import { useIntl } from "react-intl";
 
 const FILE_TYPE_OPTIONS = [
   { value: "video", label: "Video" },
@@ -17,8 +19,6 @@ const FILE_TYPE_OPTIONS = [
 interface ChatParametersProps {
   expanded: boolean;
   onToggle: () => void;
-  topK: number;
-  onTopKChange: (v: number) => void;
   useWebSearch: boolean;
   onUseWebSearchChange: (v: boolean) => void;
   selectedTypeFilters: string[];
@@ -27,16 +27,26 @@ interface ChatParametersProps {
   onDateFromChange: (v: string) => void;
   dateTo: string;
   onDateToChange: (v: string) => void;
-  ragMode: "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto";
-  onRagModeChange: (v: "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto") => void;
+  validAt: string;
+  onValidAtChange: (v: string) => void;
+  knownAt: string;
+  onKnownAtChange: (v: string) => void;
+  continuationMode: "latest" | "saved_scope" | "saved_snapshot";
+  onContinuationModeChange: (v: "latest" | "saved_scope" | "saved_snapshot") => void;
+  ragMode: "vector" | "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto";
+  onRagModeChange: (
+    v: "vector" | "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto",
+  ) => void;
+  retrievalProfile: RetrievalProfile;
+  onRetrievalProfileChange: (v: RetrievalProfile) => void;
+  memoryMode: MemoryMode;
+  onMemoryModeChange: (v: MemoryMode) => void;
   activeParamCount: number;
 }
 
 export default function ChatParameters({
   expanded,
   onToggle,
-  topK,
-  onTopKChange,
   useWebSearch,
   onUseWebSearchChange,
   selectedTypeFilters,
@@ -45,10 +55,21 @@ export default function ChatParameters({
   onDateFromChange,
   dateTo,
   onDateToChange,
+  validAt,
+  onValidAtChange,
+  knownAt,
+  onKnownAtChange,
+  continuationMode,
+  onContinuationModeChange,
   ragMode,
   onRagModeChange,
+  retrievalProfile,
+  onRetrievalProfileChange,
+  memoryMode,
+  onMemoryModeChange,
   activeParamCount,
 }: ChatParametersProps) {
+  const { formatMessage } = useIntl();
   return (
     <div
       style={{
@@ -65,7 +86,7 @@ export default function ChatParameters({
           fontSize: 13,
         }}
       >
-        Parameters
+        Modes & filters
         {activeParamCount > 0 && (
           <span
             style={{
@@ -110,14 +131,14 @@ export default function ChatParameters({
                     marginBottom: 6,
                   }}
                 >
-                  Retrieval mode
+                  Retrieval engine
                 </div>
                 <Select
                   value={ragMode}
                   onChange={onRagModeChange}
                   options={[
                     { value: "auto", label: "Auto" },
-                    { value: "native", label: "Native" },
+                    { value: "vector", label: "Vector" },
                     { value: "hybrid", label: "Hybrid" },
                     { value: "multimodal", label: "Multimodal" },
                     { value: "hybrid_multimodal", label: "Hybrid multimodal" },
@@ -135,13 +156,40 @@ export default function ChatParameters({
                     marginBottom: 6,
                   }}
                 >
-                  Top K retrievals
+                  RAG mode
                 </div>
-                <InputNumber
-                  min={1}
-                  max={50}
-                  value={topK}
-                  onChange={(v) => onTopKChange(typeof v === "number" ? v : 5)}
+                <Select
+                  value={retrievalProfile}
+                  onChange={onRetrievalProfileChange}
+                  options={[
+                    { value: "fast", label: "Fast — lowest latency" },
+                    { value: "balanced", label: "Balanced — recommended" },
+                    { value: "thorough", label: "Thorough — best recall" },
+                  ]}
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--color-text-secondary)",
+                    marginBottom: 6,
+                  }}
+                >
+                  Memory mode
+                </div>
+                <Select
+                  value={memoryMode}
+                  onChange={onMemoryModeChange}
+                  options={[
+                    { value: "off", label: "Off — no long-term memory" },
+                    { value: "focused", label: "Focused — low noise" },
+                    { value: "balanced", label: "Balanced — recommended" },
+                    { value: "deep", label: "Deep — multi-hop + graph" },
+                  ]}
                   style={{ width: "100%" }}
                 />
               </div>
@@ -169,6 +217,67 @@ export default function ChatParameters({
                     Include web results
                   </span>
                 </div>
+              </div>
+
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--color-text-secondary)",
+                    marginBottom: 6,
+                  }}
+                >
+                  {formatMessage({ id: "chat.parameters.memorySnapshot" })}
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <Input
+                    type="datetime-local"
+                    aria-label={formatMessage({ id: "chat.parameters.validAt" })}
+                    value={validAt}
+                    onChange={(e) => onValidAtChange(e.target.value)}
+                    placeholder={formatMessage({ id: "chat.parameters.validAt" })}
+                  />
+                  <Input
+                    type="datetime-local"
+                    aria-label={formatMessage({ id: "chat.parameters.knownAt" })}
+                    value={knownAt}
+                    onChange={(e) => onKnownAtChange(e.target.value)}
+                    placeholder={formatMessage({ id: "chat.parameters.knownAt" })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--color-text-secondary)",
+                    marginBottom: 6,
+                  }}
+                >
+                  {formatMessage({ id: "chat.parameters.continuation" })}
+                </div>
+                <Select
+                  value={continuationMode}
+                  onChange={onContinuationModeChange}
+                  options={[
+                    {
+                      value: "latest",
+                      label: formatMessage({ id: "chat.parameters.continuationLatest" }),
+                    },
+                    {
+                      value: "saved_scope",
+                      label: formatMessage({ id: "chat.parameters.continuationScope" }),
+                    },
+                    {
+                      value: "saved_snapshot",
+                      label: formatMessage({ id: "chat.parameters.continuationSaved" }),
+                    },
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
 
               <div>

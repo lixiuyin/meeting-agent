@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, App, Badge, Button, Form, Modal, Space, Spin, Tabs } from "antd";
+import { Alert, App, Badge, Button, Form, Select, Space, Spin, Tabs } from "antd";
 import {
   CloudUploadOutlined,
   DatabaseOutlined,
@@ -14,6 +14,7 @@ import {
 import { motion } from "framer-motion";
 import { useIntl } from "react-intl";
 import {
+  ApiError,
   formatApiErrorMessage,
   getAvailableBindings,
   getSettings,
@@ -31,6 +32,7 @@ import { RagTab } from "./settings/RagTab";
 import { SearchUploadTab } from "./settings/SearchUploadTab";
 import type { FormValues, SettingsBindings } from "./settings/types";
 import { SystemTab } from "./settings/SystemTab";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 
 export default function SettingsView() {
   const { formatMessage } = useIntl();
@@ -51,6 +53,7 @@ export default function SettingsView() {
     vision: [],
   });
   const [activeTab, setActiveTab] = useState("models");
+  const isNarrow = useMediaQuery("(max-width: 768px)");
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildingMultimodal, setRebuildingMultimodal] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -96,32 +99,8 @@ export default function SettingsView() {
     setHasChanges(!originalValues || !isDeepEqual(current, originalValues));
   }, [form, originalValues]);
 
-  const getChangedCategories = useCallback((): {
-    needsVectorRebuild: boolean;
-    needsMultimodalRebuild: boolean;
-  } => {
-    if (!originalValues) return { needsVectorRebuild: false, needsMultimodalRebuild: false };
-    const current = form.getFieldsValue();
-    const needsVectorRebuild =
-      current.embedding?.binding !== originalValues.embedding?.binding ||
-      current.embedding?.model !== originalValues.embedding?.model ||
-      current.embedding?.dimension !== originalValues.embedding?.dimension;
-    const multimodalFields = [
-      "raganything_enabled",
-      "raganything_fallback_to_native",
-      "raganything_working_dir",
-      "retriever_provider",
-      "index_image_captions",
-      "index_tables",
-    ] as const;
-    const needsMultimodalRebuild = multimodalFields.some(
-      (f) => current.rag?.[f] !== originalValues.rag?.[f],
-    );
-    return { needsVectorRebuild, needsMultimodalRebuild };
-  }, [form, originalValues]);
-
   const handleSave = async () => {
-    const submitSettings = async (confirmVectorRebuild = false) => {
+    const submitSettings = async () => {
       const values = await form.validateFields();
       const changed: Partial<SettingsResponse> = {};
       if (originalValues) {
@@ -150,62 +129,34 @@ export default function SettingsView() {
         if (!isDeepEqual(values.retention, originalValues.retention))
           changed.retention = { ...originalValues.retention, ...values.retention };
       }
-      await updateSettings({
-        ...changed,
-        confirm_vector_rebuild: confirmVectorRebuild,
-      });
+      await updateSettings(changed);
       setOriginalValues(values);
       setHasChanges(false);
     };
 
-    let showingRebuildModal = false;
     try {
       setSaving(true);
-      await submitSettings(false);
-      const { needsVectorRebuild, needsMultimodalRebuild } = getChangedCategories();
-      if (needsVectorRebuild) {
-        message.success(formatMessage({ id: "settings.savedWithRebuildHint" }));
-      } else if (needsMultimodalRebuild) {
-        message.success(formatMessage({ id: "settings.savedMultimodalHint" }));
-      } else {
-        message.success(formatMessage({ id: "settings.savedImmediate" }));
-      }
+      await submitSettings();
+      message.success(formatMessage({ id: "settings.savedImmediate" }));
     } catch (err) {
-      const msg = formatApiErrorMessage(err, formatMessage({ id: "settings.saveFailed" }));
       if (
-        msg.includes("confirm_vector_rebuild=true") ||
-        msg.includes("Embedding binding/model/dimension changed")
+        err instanceof ApiError &&
+        (err.code === "SETTINGS_REINDEX_REQUIRED" || err.code === "SETTINGS_RESTART_REQUIRED")
       ) {
-        showingRebuildModal = true;
-        Modal.confirm({
-          title: formatMessage({ id: "settings.embeddingRebuild.title" }),
-          content: formatMessage({ id: "settings.embeddingRebuild.content" }),
-          okText: formatMessage({ id: "settings.embeddingRebuild.okText" }),
-          cancelText: formatMessage({ id: "settings.reset" }),
-          onOk: async () => {
-            setSaving(true);
-            try {
-              await submitSettings(true);
-              message.success(formatMessage({ id: "settings.savedWithRebuildHint" }));
-            } catch (confirmErr) {
-              message.error(
-                formatApiErrorMessage(confirmErr, formatMessage({ id: "settings.saveFailed" })),
-              );
-            } finally {
-              setSaving(false);
-            }
-          },
-          onCancel: () => {
-            setSaving(false);
-          },
-        });
+        const details = err.details ?? {};
+        const fields = [
+          ...(Array.isArray(details.reindex_required) ? details.reindex_required : []),
+          ...(Array.isArray(details.restart_required) ? details.restart_required : []),
+        ].join(", ");
+        message.error(
+          formatMessage({ id: "settings.controlledActivationRequired" }, { fields: fields || "-" }),
+          8,
+        );
       } else {
-        message.error(msg);
+        message.error(formatApiErrorMessage(err, formatMessage({ id: "settings.saveFailed" })));
       }
     } finally {
-      if (!showingRebuildModal) {
-        setSaving(false);
-      }
+      setSaving(false);
     }
   };
 
@@ -338,83 +289,107 @@ export default function SettingsView() {
               </Space>
             </div>
 
-            <Tabs
-              activeKey={activeTab}
-              onChange={setActiveTab}
-              type="card"
-              style={{ marginBottom: 24 }}
-              items={[
-                {
-                  key: "models",
-                  label: (
-                    <span>
-                      <RobotOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.models" })}
-                    </span>
-                  ),
-                  children: <AiModelsTab bindings={bindings} />,
-                },
-                {
-                  key: "rag",
-                  label: (
-                    <span>
-                      <FileTextOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.rag" })}
-                    </span>
-                  ),
-                  children: <RagTab bindings={bindings} />,
-                },
-                {
-                  key: "ingestion",
-                  label: (
-                    <span>
-                      <ExperimentOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.ingestion" })}
-                    </span>
-                  ),
-                  children: <IngestionTab />,
-                },
-                {
-                  key: "memory",
-                  label: (
-                    <span>
-                      <DatabaseOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.memory" })}
-                    </span>
-                  ),
-                  children: <MemoryTab />,
-                },
-                {
-                  key: "search-upload",
-                  label: (
-                    <span>
-                      <CloudUploadOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.searchUpload" })}
-                    </span>
-                  ),
-                  children: <SearchUploadTab bindings={bindings} />,
-                },
-                {
-                  key: "system",
-                  label: (
-                    <span>
-                      <SettingOutlined style={{ marginRight: 8 }} />
-                      {formatMessage({ id: "settings.tab.system" })}
-                    </span>
-                  ),
-                  children: (
-                    <SystemTab
-                      rebuilding={rebuilding}
-                      rebuildingMultimodal={rebuildingMultimodal}
-                      reloading={reloading}
-                      onRebuildVectors={handleRebuildVectors}
-                      onRebuildMultimodal={handleRebuildMultimodal}
-                      onReloadConfig={handleReloadConfig}
-                    />
-                  ),
-                },
-              ]}
-            />
+            <div className={isNarrow ? "settings-narrow-tabs" : undefined}>
+              {isNarrow && (
+                <Select
+                  aria-label={formatMessage({ id: "settings.title" })}
+                  value={activeTab}
+                  onChange={setActiveTab}
+                  options={[
+                    { value: "models", label: formatMessage({ id: "settings.tab.models" }) },
+                    { value: "rag", label: formatMessage({ id: "settings.tab.rag" }) },
+                    {
+                      value: "ingestion",
+                      label: formatMessage({ id: "settings.tab.ingestion" }),
+                    },
+                    { value: "memory", label: formatMessage({ id: "settings.tab.memory" }) },
+                    {
+                      value: "search-upload",
+                      label: formatMessage({ id: "settings.tab.searchUpload" }),
+                    },
+                    { value: "system", label: formatMessage({ id: "settings.tab.system" }) },
+                  ]}
+                  style={{ width: "100%", marginBottom: 16 }}
+                />
+              )}
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                type="card"
+                style={{ marginBottom: 24 }}
+                items={[
+                  {
+                    key: "models",
+                    label: (
+                      <span>
+                        <RobotOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.models" })}
+                      </span>
+                    ),
+                    children: <AiModelsTab bindings={bindings} />,
+                  },
+                  {
+                    key: "rag",
+                    label: (
+                      <span>
+                        <FileTextOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.rag" })}
+                      </span>
+                    ),
+                    children: <RagTab bindings={bindings} />,
+                  },
+                  {
+                    key: "ingestion",
+                    label: (
+                      <span>
+                        <ExperimentOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.ingestion" })}
+                      </span>
+                    ),
+                    children: <IngestionTab />,
+                  },
+                  {
+                    key: "memory",
+                    label: (
+                      <span>
+                        <DatabaseOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.memory" })}
+                      </span>
+                    ),
+                    children: <MemoryTab />,
+                  },
+                  {
+                    key: "search-upload",
+                    label: (
+                      <span>
+                        <CloudUploadOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.searchUpload" })}
+                      </span>
+                    ),
+                    children: <SearchUploadTab bindings={bindings} />,
+                  },
+                  {
+                    key: "system",
+                    label: (
+                      <span>
+                        <SettingOutlined style={{ marginRight: 8 }} />
+                        {formatMessage({ id: "settings.tab.system" })}
+                      </span>
+                    ),
+                    children: (
+                      <SystemTab
+                        rebuilding={rebuilding}
+                        rebuildingMultimodal={rebuildingMultimodal}
+                        reloading={reloading}
+                        onRebuildVectors={handleRebuildVectors}
+                        onRebuildMultimodal={handleRebuildMultimodal}
+                        onReloadConfig={handleReloadConfig}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </div>
           </motion.div>
         )}
       </Form>

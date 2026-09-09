@@ -29,7 +29,7 @@ def parser():
 @pytest.fixture
 def text_pdf(tmp_path):
     """Create a simple text-only PDF."""
-    import fitz
+    import pymupdf as fitz
 
     path = tmp_path / "text.pdf"
     doc = fitz.open()
@@ -69,7 +69,7 @@ class TestLocalPDF:
         assert result.metadata["has_ocr"] is False
 
     def test_multi_page_pdf(self, tmp_path, parser):
-        import fitz
+        import pymupdf as fitz
 
         path = tmp_path / "multi.pdf"
         doc = fitz.open()
@@ -83,7 +83,7 @@ class TestLocalPDF:
         assert result.total_pages == 3
 
     def test_empty_pdf(self, tmp_path, parser):
-        import fitz
+        import pymupdf as fitz
 
         path = tmp_path / "empty.pdf"
         doc = fitz.open()
@@ -96,7 +96,7 @@ class TestLocalPDF:
         assert result.to_text() == ""
 
     def test_empty_pdf_renders_page_fallback_image(self, tmp_path, parser, monkeypatch):
-        import fitz
+        import pymupdf as fitz
 
         monkeypatch.setattr(settings, "RAG_INDEX_IMAGE_CAPTIONS", True)
         path = tmp_path / "empty_no_text.pdf"

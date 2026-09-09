@@ -199,6 +199,19 @@ class TestScoreNormalizationMixed:
         assert normed[0]["score"] == 1.0
         assert normed[1]["score"] == 0.5
 
+    def test_explicit_relevance_provenance_prevents_double_normalization(self) -> None:
+        docs = [
+            {
+                "content": "already normalized",
+                "metadata": {},
+                "score": 0.8,
+                "score_kind": "relevance",
+            }
+        ]
+        normed = normalize_scores(docs, lower_is_better=True)
+        assert normed[0]["score"] == 0.8
+        assert normed[0]["score_kind"] == "relevance"
+
     def test_empty_docs(self) -> None:
         assert normalize_scores([], lower_is_better=True) == []
 

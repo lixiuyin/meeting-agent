@@ -4,13 +4,14 @@
  * Prerequisites: Docker stack running at localhost:8307.
  * Run: npx playwright test stream-abort.spec.ts
  */
-import { test, expect } from "@playwright/test";
+import { deploymentAuthHeaders, test, expect } from "./fixtures";
 
-const BASE = "http://localhost:8307";
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:8307";
 
 test.describe("Stream Abort", () => {
   test("aborted stream does not block subsequent requests", async ({ request }) => {
     const headers = {
+      ...deploymentAuthHeaders(),
       "X-API-Key": process.env.VITE_API_KEY || "",
       "Content-Type": "application/json",
     };
@@ -34,13 +35,22 @@ test.describe("Stream Abort", () => {
     }
 
     // Verify the server still accepts new requests
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const healthResp = await request.get(`${BASE}/api/v1/health`, { headers });
-    expect(healthResp.status()).toBe(200);
+    // Readiness can briefly degrade while the preceding settings reload
+    // reopens native indexes. Require bounded recovery, including check details.
+    await expect
+      .poll(
+        async () => {
+          const healthResp = await request.get(`${BASE}/api/v1/health`, { headers });
+          return { status: healthResp.status(), body: await healthResp.json() };
+        },
+        { timeout: 30_000 },
+      )
+      .toMatchObject({ status: 200, body: { status: "ok" } });
   });
 
   test("chat stream returns SSE content-type", async ({ request }) => {
     const headers = {
+      ...deploymentAuthHeaders(),
       "X-API-Key": process.env.VITE_API_KEY || "",
       "Content-Type": "application/json",
     };

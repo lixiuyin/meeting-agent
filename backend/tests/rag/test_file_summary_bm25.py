@@ -43,6 +43,20 @@ class TestFileSummaryBM25CRUD:
         assert results[0]["file_id"] == 10
         assert results[0]["meeting_id"] == 1
 
+    def test_cjk_query_matches_unsegmented_summary(self, db_conn):
+        from src.core.database.bm25 import (
+            fts5_search_file_summaries,
+            upsert_file_summary_bm25,
+        )
+
+        upsert_file_summary_bm25(db_conn, 10, 1, "讨论长期记忆架构与冲突消解策略")
+        upsert_file_summary_bm25(db_conn, 20, 1, "季度市场预算复盘")
+        db_conn.commit()
+
+        results = fts5_search_file_summaries(db_conn, "记忆架构", limit=5)
+        assert results
+        assert results[0]["file_id"] == 10
+
     def test_delete(self, db_conn):
         from src.core.database.bm25 import (
             delete_file_summary_bm25,
@@ -108,6 +122,33 @@ class TestFileSummaryBM25CRUD:
 
         results = fts5_search_file_summaries(db_conn, "budget", meeting_ids=[1], limit=5)
         assert all(r["meeting_id"] == 1 for r in results)
+
+    def test_search_isolates_default_principal(self, db_conn):
+        from src.core.database.bm25 import (
+            fts5_search_file_summaries,
+            upsert_file_summary_bm25,
+        )
+
+        db_conn.execute(
+            "INSERT INTO meetings (id, title, status, user_id) "
+            "VALUES (2, 'private', 'ready', 'principal-b')"
+        )
+        db_conn.execute(
+            "INSERT INTO meeting_files "
+            "(id, meeting_id, file_name, file_path, file_type, status, user_id) "
+            "VALUES (30, 2, 'private.pdf', 'private.pdf', 'pdf', 'ready', 'principal-b')"
+        )
+        upsert_file_summary_bm25(db_conn, 10, 1, "shared keyword default document")
+        upsert_file_summary_bm25(db_conn, 30, 2, "shared keyword private document")
+        db_conn.commit()
+
+        results = fts5_search_file_summaries(
+            db_conn,
+            "shared keyword",
+            limit=10,
+            user_id="default",
+        )
+        assert [row["file_id"] for row in results] == [10]
 
 
 class TestRRFFusion:

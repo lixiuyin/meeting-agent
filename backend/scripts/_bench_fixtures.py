@@ -16,13 +16,20 @@ from src.services.processor import process_meeting_file
 FIXTURE_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "benchmark"
 
 
-def _ensure_meeting(conn, title: str, meeting_date: str) -> int:
+def _ensure_meeting(
+    conn,
+    title: str,
+    meeting_date: str,
+    *,
+    user_id: str = "benchmark",
+) -> int:
     """Create a meeting and return its ID."""
     return create_meeting(
         conn,
         title=title,
         description="Benchmark fixture",
         meeting_date=meeting_date,
+        user_id=user_id,
     )
 
 
@@ -30,6 +37,8 @@ async def _ingest_fixture_file(
     fixture_name: str,
     meeting_id: int | None = None,
     trace: TraceContext | None = None,
+    *,
+    user_id: str = "benchmark",
 ) -> tuple[int, TraceContext]:
     """Copy a fixture file into the upload dir and process it.
 
@@ -73,13 +82,19 @@ async def _ingest_fixture_file(
     with get_write_connection() as conn:
         mid = meeting_id
         if mid is None:
-            mid = _ensure_meeting(conn, f"Benchmark {fixture_name}", "2026-01-15")
+            mid = _ensure_meeting(
+                conn,
+                f"Benchmark {fixture_name}",
+                "2026-01-15",
+                user_id=user_id,
+            )
         file_id = create_meeting_file(
             conn,
             meeting_id=mid,
             file_name=fixture_name,
             file_path=str(dest_path),
             file_type=file_type,
+            user_id=user_id,
         )
 
     if trace is None:
@@ -89,18 +104,43 @@ async def _ingest_fixture_file(
     return file_id, trace_out
 
 
-async def ingest_all_fixtures() -> dict[str, tuple[int, int]]:
-    """Ingest all benchmark fixtures and return mapping.
+async def ingest_fixtures(
+    fixture_names: list[str],
+    *,
+    user_id: str = "benchmark",
+    meeting_title: str = "Benchmark Fixtures",
+) -> dict[str, tuple[int, int]]:
+    """Ingest the requested benchmark fixtures and return their IDs.
 
     Returns:
         Dict mapping fixture_name -> (meeting_id, file_id)
     """
     results: dict[str, tuple[int, int]] = {}
-    with get_write_connection() as conn:
-        meeting_id = _ensure_meeting(conn, "Benchmark Fixtures", "2026-01-15")
+    allowed = {"sample.pdf", "scanned.pdf", "sample.pptx"}
+    requested = list(dict.fromkeys(fixture_names))
+    unknown = sorted(set(requested) - allowed)
+    if unknown:
+        raise ValueError(f"Unknown benchmark fixtures: {unknown}")
 
-    for fixture in ["sample.pdf", "scanned.pdf", "sample.pptx"]:
-        file_id, _ = await _ingest_fixture_file(fixture, meeting_id=meeting_id)
+    with get_write_connection() as conn:
+        meeting_id = _ensure_meeting(
+            conn,
+            meeting_title,
+            "2026-01-15",
+            user_id=user_id,
+        )
+
+    for fixture in requested:
+        file_id, _ = await _ingest_fixture_file(
+            fixture,
+            meeting_id=meeting_id,
+            user_id=user_id,
+        )
         results[fixture] = (meeting_id, file_id)
 
     return results
+
+
+async def ingest_all_fixtures() -> dict[str, tuple[int, int]]:
+    """Ingest every benchmark fixture (used by ingestion coverage)."""
+    return await ingest_fixtures(["sample.pdf", "scanned.pdf", "sample.pptx"])

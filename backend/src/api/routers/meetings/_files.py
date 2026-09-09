@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path as FilePath
 from typing import cast
 
 from fastapi import Depends, HTTPException
@@ -8,24 +7,145 @@ from fastapi import Depends, HTTPException
 from ....core import database as db
 from ....core.audit import audit_log
 from ....core.config import settings
-from ....core.constants import UPLOAD_DIR
 from ....core.security import verify_api_key
 from ....models.schemas import MeetingStatus, MessageResponse
 from ....models.schemas.meetings import (
     CaptionsTimeline,
     FileTimelineResponse,
+    MeetingFileResponse,
+    MeetingFileSemanticEventResponse,
     PagesTimeline,
     SegmentsTimeline,
     TextTimeline,
     TimelineCaptionItem,
     TimelinePageItem,
     TimelineSegmentItem,
+    UpdateMeetingFileSemanticsRequest,
 )
 from ....services.files._kinds import resolve_kind_name
+from ....services.files._paths import resolve_upload_path
 from ....services.parser import parse_structured
-from ._common import _ownership_filter, logger, router
+from ._common import _build_meeting_file_response, _ownership_filter, logger, router
 from ._structured import normalize_page_image_assets, parse_structured_json
 from ._timestamps import _apply_speaker_mappings
+
+
+@router.patch(
+    "/{meeting_id}/files/{file_id}/semantics",
+    response_model=MeetingFileResponse,
+)
+async def update_meeting_file_semantics(
+    meeting_id: int,
+    file_id: int,
+    payload: UpdateMeetingFileSemanticsRequest,
+    principal: dict = Depends(verify_api_key),
+):
+    """Persist user-reviewed material semantics and rebuild retrieval metadata."""
+    user_id = _ownership_filter(principal)
+    supplied = payload.model_fields_set
+    if not supplied:
+        raise HTTPException(422, "At least one semantic field is required")
+
+    def _update() -> tuple[dict | None, list[str]]:
+        with db.get_write_connection() as conn:
+            current = db.get_meeting_file(conn, file_id, user_id=user_id)
+            if not current or current["meeting_id"] != meeting_id:
+                raise HTTPException(404, "File not found")
+            kwargs = {}
+            if "business_domain" in supplied:
+                kwargs["business_domain"] = payload.business_domain or "unspecified"
+            if "material_role" in supplied:
+                kwargs["material_role"] = payload.material_role
+            elif not current.get("material_role"):
+                from ....services.rag._contextual import infer_material_role
+
+                kwargs["material_role"] = infer_material_role(
+                    str(current["file_name"]), str(current["file_type"])
+                )
+            if "approval_status" in supplied:
+                kwargs["approval_status"] = payload.approval_status or "unreviewed"
+                if "approval_reason" not in supplied and payload.approval_status != "rejected":
+                    kwargs["approval_reason"] = None
+            if "approval_reason" in supplied:
+                kwargs["approval_reason"] = payload.approval_reason
+            resulting_status = kwargs.get("approval_status", current.get("approval_status"))
+            resulting_reason = kwargs.get("approval_reason", current.get("approval_reason"))
+            if resulting_status == "rejected" and not str(resulting_reason or "").strip():
+                raise HTTPException(422, "A rejection reason is required")
+            source_revision = db.update_meeting_file_semantics(
+                conn,
+                file_id,
+                user_id=principal["user_id"],
+                **kwargs,
+            )
+            if source_revision is None:
+                raise HTTPException(409, "Evidence semantics were not updated")
+            db.mark_native_index_building(conn, file_id=file_id, meeting_id=meeting_id)
+            db.enqueue_job(
+                conn,
+                kind="file_processing",
+                dedupe_key=f"file:{file_id}",
+                payload={
+                    "file_id": file_id,
+                    "force_meeting_summary": False,
+                    "force_native_reindex": True,
+                    "source_revision": source_revision,
+                },
+                max_attempts=3,
+            )
+            changed_memories = (
+                db.retract_memories_with_only_rejected_file_evidence(
+                    conn,
+                    user_id=principal["user_id"],
+                    file_id=file_id,
+                )
+                if payload.approval_status == "rejected"
+                else []
+            )
+            from ....services.memory.evidence_admission import requalify_file_memories
+
+            changed_memories.extend(requalify_file_memories(conn, principal["user_id"], file_id))
+            return db.get_meeting_file(conn, file_id, user_id=user_id), changed_memories
+
+    updated, changed_memories = await asyncio.to_thread(_update)
+    if updated is None:
+        raise HTTPException(404, "File not found")
+
+    from ....services.jobs import wake_durable_job_workers
+    from ....services.memory._service._index_sync import index_current_memory
+
+    wake_durable_job_workers()
+    for key in changed_memories:
+        await asyncio.to_thread(index_current_memory, principal["user_id"], key)
+    audit_log("update_semantics", "meeting_file", file_id)
+    return _build_meeting_file_response(updated)
+
+
+@router.get(
+    "/{meeting_id}/files/{file_id}/semantics/history",
+    response_model=list[MeetingFileSemanticEventResponse],
+)
+async def get_meeting_file_semantic_history(
+    meeting_id: int,
+    file_id: int,
+    principal: dict = Depends(verify_api_key),
+):
+    """Return the immutable role and approval review timeline."""
+    user_id = _ownership_filter(principal)
+
+    def _load() -> list[dict]:
+        with db.get_connection() as conn:
+            current = db.get_meeting_file(conn, file_id, user_id=user_id)
+            if not current or int(current["meeting_id"]) != meeting_id:
+                raise HTTPException(404, "File not found")
+            return db.list_meeting_file_semantic_events(
+                conn,
+                file_id,
+                user_id=None if user_id is None else principal["user_id"],
+            )
+
+    return await asyncio.to_thread(_load)
+
 
 # NOTE: GET /{meeting_id}/files/{file_id} is handled by the file_download
 # router (api/routers/file_download.py) which supports both header and
@@ -53,6 +173,11 @@ async def delete_meeting_file(
 
     f = await asyncio.to_thread(_fetch)
 
+    from ....services.jobs import cancel_durable_jobs
+
+    await cancel_durable_jobs(kind="file_processing", dedupe_prefix=f"file:{file_id}", exact=True)
+    await cancel_durable_jobs(kind="file_summary", dedupe_prefix=f"file:{file_id}", exact=True)
+
     # Clean up vectors first so DB row remains available for retry on failure.
     try:
         from ....services.rag import delete_meeting_chunks
@@ -62,29 +187,45 @@ async def delete_meeting_file(
         logger.error("Failed to clean up vectors for file %d", file_id, exc_info=True)
         raise HTTPException(500, "Failed to delete file vectors") from exc
 
-    # Clean up file on disk
-    file_path = FilePath(f["file_path"])
-    try:
-        file_path.unlink(missing_ok=True)
-    except Exception as exc:
-        logger.error("Failed to delete file %d from disk", file_id, exc_info=True)
-        raise HTTPException(500, "Failed to delete file from disk") from exc
-
-    def _delete_db() -> None:
+    def _delete_db() -> list[str]:
         with db.get_write_connection() as conn:
             current = db.get_meeting_file(conn, file_id, user_id=user_id)
             if not current or current["meeting_id"] != meeting_id:
                 raise HTTPException(404, "File not found")
-            db.delete_meeting_file(conn, file_id, user_id=user_id)
-            # Cascade: remove pending vector deletion entries matching this
-            # file's deterministic chunk ID pattern so the cleanup loop
-            # doesn't retry a non-existent file.
             conn.execute(
-                "DELETE FROM pending_vector_deletions WHERE embedding_id LIKE ?",
-                (f"meeting_{meeting_id}_chunk_%",),
+                "INSERT OR IGNORE INTO pending_vector_deletions (collection, embedding_id) "
+                "VALUES ('file', ?)",
+                (str(f["file_path"]),),
             )
+            conn.execute(
+                "INSERT OR IGNORE INTO pending_vector_deletions (collection, embedding_id) "
+                "VALUES ('directory', ?)",
+                (str(settings.UPLOAD_DIR / "meeting_assets" / str(meeting_id) / str(file_id)),),
+            )
+            changed_memories = db.detach_memory_file_evidence(
+                conn,
+                user_id=principal["user_id"],
+                file_id=file_id,
+            )
+            db.delete_meeting_file(conn, file_id, user_id=user_id)
+            return changed_memories
 
-    await asyncio.to_thread(_delete_db)
+    changed_memories = await asyncio.to_thread(_delete_db)
+
+    from ....services.memory._service._index_sync import index_current_memory
+
+    for key in changed_memories:
+        await asyncio.to_thread(index_current_memory, principal["user_id"], key)
+
+    from ....services.memory._service._crud import cleanup_pending_vector_deletions
+
+    try:
+        await asyncio.to_thread(
+            cleanup_pending_vector_deletions,
+            collections={"file", "directory"},
+        )
+    except Exception:
+        logger.warning("Immediate file resource cleanup failed; jobs remain queued", exc_info=True)
 
     # Invalidate meeting-level summary — the removed file may have been cited
     try:
@@ -262,10 +403,15 @@ async def _build_pages_timeline(file_id: int, file_name: str, file_record: dict)
         transcript = file_record.get("transcript") or ""
         pages = _split_transcript_into_pages(transcript)
         if len(pages) == 1 and pages[0]["page_num"] == 1 and file_record.get("file_path"):
-            parsed = await _parse_pages_from_source(file_record["file_path"])
+            parsed = await _parse_pages_from_source(
+                file_record["file_path"], expected_hash=file_record.get("content_hash")
+            )
             if parsed:
                 pages = parsed
 
+    from ....core.source_blocks import source_blocks
+
+    pages = source_blocks(pages, file_record.get("transcript") or "")
     return PagesTimeline(
         kind="pages",
         file_id=file_id,
@@ -318,11 +464,12 @@ def _extract_heading(text: str) -> str | None:
     return None
 
 
-async def _parse_pages_from_source(file_path: str) -> list[dict] | None:
-    p = FilePath(file_path)
-    if not p.exists():
-        p = UPLOAD_DIR / p.name
-    if not p.exists():
+async def _parse_pages_from_source(
+    file_path: str, *, expected_hash: str | None = None
+) -> list[dict] | None:
+    try:
+        p = await asyncio.to_thread(resolve_upload_path, file_path, expected_hash=expected_hash)
+    except (FileNotFoundError, ValueError):
         return None
     try:
         parsed = await asyncio.wait_for(

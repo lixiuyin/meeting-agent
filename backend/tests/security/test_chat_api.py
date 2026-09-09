@@ -1,5 +1,6 @@
 """Tests for chat API endpoints"""
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -68,6 +69,53 @@ class TestChatEndpoint:
         assert "results" in data
         assert "total" in data
 
+    @pytest.mark.asyncio
+    async def test_same_session_turns_are_serialized(self, client, auth_headers):
+        from src.services.chain import PipelineResult
+
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+        active = 0
+        max_active = 0
+
+        async def _ask(**kwargs):
+            nonlocal calls, active, max_active
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+            if kwargs["question"] == "first":
+                first_started.set()
+                await release_first.wait()
+            active -= 1
+            return PipelineResult(answer=kwargs["question"], sources=[], session_id="shared")
+
+        with patch("src.api.routers.chat.ask", _ask):
+            async with client as c:
+                first = asyncio.create_task(
+                    c.post(
+                        "/api/v1/chat",
+                        headers=auth_headers,
+                        json={"question": "first", "session_id": "shared"},
+                    )
+                )
+                await asyncio.wait_for(first_started.wait(), timeout=2)
+                second = asyncio.create_task(
+                    c.post(
+                        "/api/v1/chat",
+                        headers=auth_headers,
+                        json={"question": "second", "session_id": "shared"},
+                    )
+                )
+                await asyncio.sleep(0.05)
+                assert calls == 1
+                release_first.set()
+                responses = await asyncio.gather(first, second)
+
+        assert [response.status_code for response in responses] == [200, 200]
+        assert calls == 2
+        assert max_active == 1
+
 
 class TestChatValidation:
     @pytest.mark.asyncio
@@ -89,6 +137,19 @@ class TestChatValidation:
         assert req.use_web_search is True
         assert req.web_search_results == 5
 
+        req = ChatRequest(question="What was discussed?", web_search_mode="fallback")
+        assert req.web_search_mode == "fallback"
+
+        req = ChatRequest(
+            question="What was known then?",
+            valid_at="2025-03-01T10:00:00+08:00",
+            known_at="2025-03-02T10:00:00Z",
+        )
+        assert req.valid_at is not None and req.valid_at.utcoffset() is not None
+
+        with pytest.raises(ValueError):
+            ChatRequest(question="What was known then?", known_at="2025-03-02T10:00:00")
+
     @pytest.mark.asyncio
     async def test_chat_response_model(self):
         """Test ChatResponse model"""
@@ -104,6 +165,29 @@ class TestChatValidation:
         assert response.answer == "Test answer"
         assert len(response.sources) == 1
         assert response.session_id == "abc123"
+
+
+class TestChatErrorMapping:
+    @pytest.mark.parametrize(
+        ("exc", "expected_status", "expected_code"),
+        [
+            (TimeoutError("provider stalled"), 504, "LLM_ERROR"),
+            (RuntimeError("rate limit exceeded"), 429, "RATE_LIMITED"),
+            (RuntimeError("maximum context length exceeded"), 422, "VALIDATION_ERROR"),
+            (RuntimeError("unexpected provider failure"), 500, "INTERNAL_ERROR"),
+        ],
+    )
+    def test_non_stream_errors_use_stable_public_envelope(
+        self, exc, expected_status, expected_code
+    ):
+        from src.api.routers.chat import _mapped_error_response
+
+        response = _mapped_error_response(exc, "Chat request")
+
+        assert response.status_code == expected_status
+        assert response.detail["code"] == expected_code
+        assert "provider stalled" not in response.detail["error"]
+        assert response.detail["detail"].startswith("LLM")
 
 
 class TestChatStream:

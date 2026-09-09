@@ -17,7 +17,7 @@ Configure via environment / config/main.yaml:
 # console because MuPDF writes them from C code, bypassing Python logging.
 # Real failures still surface as exceptions through fitz's Python API.
 try:
-    import fitz  # type: ignore[import-not-found]
+    import pymupdf as fitz
 
     fitz.TOOLS.mupdf_display_errors(False)  # type: ignore[attr-defined]
 except Exception:

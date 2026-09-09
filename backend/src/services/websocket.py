@@ -72,10 +72,27 @@ class WebSocketManager:
                 logger.debug("Failed to deliver catch-up to %s", client_id, exc_info=True)
         return True
 
-    def disconnect(self, client_id: str) -> None:
-        """Remove a WebSocket connection by client_id."""
+    def disconnect(
+        self,
+        client_id: str,
+        *,
+        user_id: str | None = None,
+        websocket: WebSocket | None = None,
+    ) -> None:
+        """Remove only the intended connection.
+
+        ``websocket`` protects a freshly replaced connection from the stale
+        endpoint's eventual ``finally`` block. ``user_id`` prevents a client id
+        collision from disconnecting a different principal.
+        """
         with self._lock:
-            keys_to_remove = [k for k in self._connections if k[1] == client_id]
+            keys_to_remove = [
+                key
+                for key, current in self._connections.items()
+                if key[1] == client_id
+                and (user_id is None or key[0] == user_id)
+                and (websocket is None or current is websocket)
+            ]
             for key in keys_to_remove:
                 del self._connections[key]
             total = len(self._connections)
@@ -92,11 +109,21 @@ class WebSocketManager:
             if key in self._connections:
                 del self._connections[key]
 
-    async def send_message(self, client_id: str, message: dict[str, Any]) -> None:
-        """Send a message to a specific client (first match by client_id)."""
+    async def send_message(
+        self,
+        client_id: str,
+        message: dict[str, Any],
+        *,
+        user_id: str | None = None,
+    ) -> None:
+        """Send a message to a client, optionally scoped to its principal."""
         with self._lock:
             entry = next(
-                ((k, ws) for k, ws in self._connections.items() if k[1] == client_id),
+                (
+                    (k, ws)
+                    for k, ws in self._connections.items()
+                    if k[1] == client_id and (user_id is None or k[0] == user_id)
+                ),
                 None,
             )
         if entry is None:

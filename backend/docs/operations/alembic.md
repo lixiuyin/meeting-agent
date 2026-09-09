@@ -1,56 +1,71 @@
-# Alembic 数据库迁移工作流
+# Alembic database migration workflow
 
-> 本仓库在保留 **`_migrations.py` 遗留元组迁移** 的同时，引入 **Alembic** 作为可审查、可重复的 schema 演进方式。  
-> 启动路径：`backend/src/api/lifespan.py` → `_run_alembic_upgrade()` → `alembic upgrade head`。  
-> 基线 revision：`20260414_000001`（文件 `backend/alembic/versions/20260414_000001_baseline_schema.py`）。
+> While retaining **`_migrations.py` legacy tuple migration**, this repository introduces **Alembic** as a reviewable and repeatable schema evolution method.
+> Startup path: `backend/src/api/lifespan/` → `run_alembic_upgrade()` → `alembic upgrade head`.
+> Baseline revision: `20260414_000001` (file `backend/alembic/versions/20260414_000001_baseline_schema.py`).
+> Verified current head on 2026-09-09: `20260908_000003`.
 
-## 1. 当前机制说明
+## 1. Current mechanism description
 
-- **线上 / 本地 uvicorn**：优先执行 Alembic；基线的 `upgrade()` 会遍历 `_MIGRATIONS` 并写入 `schema_version`，与历史上仅调用 `init_db()` 的效果对齐。  
-- **`init_db()`**：仍保留；在「无 Alembic」或「缺少 `alembic.ini`」时由 `_run_alembic_upgrade` 回退调用，也可在脚本、测试中单独使用。  
-- **后续变更**：新表/新列应在 **Alembic revision** 中声明（并遵守团队 PR 审查）；若短期仍只改 `_MIGRATIONS`，须与维护者约定避免与 Alembic 分叉。
+- **Online/local uvicorn**: Alembic is executed first; the baseline `upgrade()` will traverse `_MIGRATIONS` and write `schema_version`, which is consistent with the historical effect of only calling `init_db()`.
+- **`init_db()`**: still retained; called by `run_alembic_upgrade` only as a
+  development fallback when Alembic or `alembic.ini` is unavailable. It can
+  also be used explicitly by tests and diagnostics.
+- **Subsequent changes**: `_MIGRATIONS` is frozen at v52. Every schema change
+  after that baseline must be a new Alembic revision; published revisions are
+  immutable.
 
-## 2. 已有数据库的一次性对齐（stamp）
+## 2. One-time alignment of existing database (stamp)
 
-若数据库在引入 Alembic **之前** 已由 `init_db()` 建全表，且 `schema_version` 已反映最新版本，可对齐 Alembic 头指针而**不重复执行**基线 SQL：
+If the database has been built with `init_db()` before Alembic is introduced, and `schema_version` has reflected the latest version, the Alembic head pointer can be aligned without repeatedly executing the baseline SQL:
 
 ```bash
 cd backend
 uv run alembic stamp 20260414_000001
 ```
 
-不确定时先**备份** `data/meetings.db`，再在测试环境验证。
+If you are not sure, first **backup** `data/meetings.db`, and then verify it in the test environment.
 
-## 3. 常用命令
+## 3. Common commands
 
 ```bash
 cd backend
 
-# 查看当前 heads
+# View current heads
 uv run alembic heads
 
-# 升级到最新
+# Upgrade to the latest
 uv run alembic upgrade head
 
-# 新建空 revision（手写 upgrade/downgrade）
+# Create a new empty revision (handwritten upgrade/downgrade)
 uv run alembic revision -m "describe schema change"
 
-# 自当前库自动生成差异 revision（需 sqlalchemy 元数据与模型对齐时使用）
+# Automatically generate a revision from the current library (used when sqlalchemy metadata is aligned with the model)
 # uv run alembic revision --autogenerate -m "sync models"
 ```
 
-## 4. 团队约定（建议）
+## 4. Migration rules
 
-1. 涉及 **schema 变更** 的 PR 应附带 **Alembic revision**（或经团队同意的 `_MIGRATIONS` 递增版本，二者勿混用未沟通）。  
-2. `upgrade()` / `downgrade()` 在可行时应成对实现；**生产环境**以前进升级为主，`downgrade()` 多用于开发回滚。  
-3. PR 描述中注明：迁移是否可逆、是否需数据回填、是否与 Chroma/索引重建有关。  
-4. 合并前在干净库与「接近生产体量的副本」上各执行一次 `alembic upgrade head`。
+1. Changes after the v52 baseline **must** include a new Alembic revision; do
+   not append to or rewrite `_MIGRATIONS`.
+2. `upgrade()` / `downgrade()` should be implemented in pairs when feasible; **production environment** is mainly for forward upgrades, and `downgrade()` is mostly used for development rollback.
+3. Indicate in the PR description: whether the migration is reversible, whether data backfilling is required, and whether it is related to Chroma/index rebuilding.
+4. Before merging, execute `alembic upgrade head` once on the clean library and the "copy close to production volume".
 
-## 5. 与日志的交互
+Container image promotion is not a database rollback. The release workflow can
+promote an earlier backend/frontend image only after the operator confirms that
+schema and application-data recovery are handled through a separately verified
+backup/restore plan. Never test an old image only against a fresh development
+database and treat that as proof that it is compatible with production data.
 
-`alembic.ini` 会通过 `fileConfig` 调整 logging。项目用例 `tests/test_logging.py` 约束：**加载 Alembic 配置后应用文件 handler 仍须可用**。若修改 `alembic/env.py`，请运行该测试。
+## 5. Interaction with logs
 
-## 6. 相关文档
+`alembic.ini` will adjust logging via `fileConfig`. Project use case `tests/config/test_logging.py` Constraints: **The application file handler must still be available after loading the Alembic configuration**. If you modify `alembic/env.py`, please run this test.
 
-- 表结构与 27 条遗留迁移摘要：[`../database.md`](../database.md)  
-- 启动顺序与运维：[`../lifespan-and-operations.md`](../lifespan-and-operations.md)
+## 6. Related documents
+
+- Table structure and 52 frozen legacy migration summaries: [`../database.md`](../database.md)
+- Startup sequence and operation and maintenance: [`../lifespan-and-operations.md`](../lifespan-and-operations.md)
+Published revisions are immutable. CI verifies their SHA-256 values from
+`alembic/immutable_revisions.json`; schema corrections must be made in a new
+forward revision, never by editing or deleting an existing file.

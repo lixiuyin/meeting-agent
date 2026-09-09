@@ -4,7 +4,8 @@ import logging
 import threading
 from typing import Any
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ...core.config import settings
 from ...core.metrics import (
@@ -16,8 +17,16 @@ from ...core.metrics import (
 logger = logging.getLogger(__name__)
 
 
+def _is_transient_rerank_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, httpx.TransportError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return False
+
+
 _rerank_retry = retry(
-    retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+    retry=retry_if_exception(_is_transient_rerank_error),
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,
@@ -32,9 +41,8 @@ _cohere_client: Any = None
 _cohere_client_lock = threading.Lock()
 _cohere_client_key: str | None = None
 
-# Shared async httpx client for Cohere HTTP reranking — avoids creating
-# a new client per call and uses the event loop's native I/O instead of
-# blocking a thread-pool thread.
+# The reranker runs in ``asyncio.to_thread()``, so a shared synchronous client
+# provides connection pooling without blocking the event loop.
 _reranker_http_client: Any = None
 _reranker_http_client_lock = threading.Lock()
 
@@ -47,6 +55,7 @@ def reset_reranker_state() -> None:
     Explicitly deletes the BGE model and frees GPU memory when possible.
     """
     global _reranker_model, _cohere_client, _cohere_client_key, _reranker_http_client
+    stale_http_client = None
     with _reranker_lock, _cohere_client_lock, _reranker_http_client_lock:
         if _reranker_model is not None:
             del _reranker_model
@@ -60,7 +69,13 @@ def reset_reranker_state() -> None:
                 pass  # torch is optional; cache cleanup is best-effort
         _cohere_client = None
         _cohere_client_key = None
+        stale_http_client = _reranker_http_client
         _reranker_http_client = None
+    if stale_http_client is not None:
+        try:
+            stale_http_client.close()
+        except Exception:
+            logger.debug("Failed to close stale reranker HTTP client", exc_info=True)
     logger.info("Reranker singleton state reset")
 
 
@@ -158,21 +173,39 @@ def rerank(
     binding = settings.RERANKER_BINDING.lower()
     if not binding or not docs:
         return [{**d, "reranked": False} for d in docs]
-    top_n = top_n or settings.RERANKER_TOP_N
+    effective_top_n = top_n if top_n is not None else settings.RERANKER_TOP_N
+    if effective_top_n is None:
+        effective_top_n = 16
     # Scale reranker output proportionally when the fetch multiplier pulled
     # many candidates.  Without this, wide-recall investment is wasted because
     # the reranker returns a fixed top_n regardless of candidate pool size.
-    oversample_ratio = len(docs) / max(top_n, 1)
+    oversample_ratio = len(docs) / max(effective_top_n, 1)
     if oversample_ratio >= 1.5:
-        scaled_top_n = min(len(docs), max(top_n, int(top_n * oversample_ratio * 0.5)))
+        scaled_top_n = min(
+            len(docs),
+            max(effective_top_n, int(effective_top_n * oversample_ratio * 0.5)),
+        )
     else:
-        scaled_top_n = top_n
+        scaled_top_n = effective_top_n
     # When per-file guarantee is requested, score every candidate so that no
     # file is silently dropped at the reranker boundary (Cohere/BGE truncate
     # to ``rerank_top_n`` by default, which would hide files that were not in
     # the top-N globally).
     rerank_pool_n = max(scaled_top_n, len(docs)) if min_per_file > 0 else scaled_top_n
-    if binding == "cohere":
+    if binding == "http":
+        RERANKER_REQUESTS_TOTAL.labels(backend="http").inc()
+        api_key = (
+            settings.RERANKER_API_KEY.get_secret_value() or settings.LLM_API_KEY.get_secret_value()
+        )
+        ranked = _rerank_http(
+            query,
+            docs,
+            rerank_pool_n,
+            api_key,
+            settings.RERANKER_BASE_URL,
+            settings.RERANKER_MODEL,
+        )
+    elif binding == "cohere":
         RERANKER_REQUESTS_TOTAL.labels(backend="cohere").inc()
         ranked = _rerank_cohere(query, docs, rerank_pool_n)
     elif binding == "bge":
@@ -197,7 +230,7 @@ def rerank(
             )
         # Guarantee at least top_n results even if all scores are below threshold
         if not filtered and ranked:
-            filtered = ranked[:top_n]
+            filtered = ranked[:effective_top_n]
             RERANKER_LOW_QUALITY_FALLBACK_TOTAL.labels(collection="default").inc()
             logger.info(
                 "Reranker low-quality fallback: all %d docs below min_score=%.2f",
@@ -208,7 +241,7 @@ def rerank(
 
     # Per-file guarantee: force-keep top-N per file, then fill by score
     if min_per_file > 0:
-        ranked = _apply_per_file_guarantee(ranked, top_n, min_per_file)
+        ranked = _apply_per_file_guarantee(ranked, effective_top_n, min_per_file)
 
     return ranked
 
@@ -291,7 +324,12 @@ def _rerank_cohere_batch(
 
         response = _call()
         return [
-            {**docs[r.index], "score": r.relevance_score, "reranked": True}
+            {
+                **docs[r.index],
+                "score": r.relevance_score,
+                "score_kind": "relevance",
+                "reranked": True,
+            }
             for r in response.results
         ]
     except Exception:
@@ -301,31 +339,32 @@ def _rerank_cohere_batch(
 
 
 def _get_reranker_http_client() -> Any:
-    """Get or create a shared async httpx client for reranker HTTP calls."""
+    """Get or create the thread-safe pooled client used by HTTP reranking."""
     global _reranker_http_client
     if _reranker_http_client is not None:
         return _reranker_http_client
     with _reranker_http_client_lock:
         if _reranker_http_client is not None:
             return _reranker_http_client
-        import httpx
-
-        _reranker_http_client = httpx.AsyncClient(
+        _reranker_http_client = httpx.Client(
             timeout=httpx.Timeout(settings.RERANKER_TIMEOUT_SECONDS),
             limits=httpx.Limits(max_keepalive_connections=2, max_connections=10),
+            trust_env=False,
         )
-        logger.debug("Reranker async HTTP client created")
+        logger.debug("Reranker HTTP connection pool created")
     return _reranker_http_client
 
 
 async def _close_reranker_http_client() -> None:
     """Close the shared reranker HTTP client (called during shutdown)."""
+    import asyncio
+
     global _reranker_http_client
     with _reranker_http_client_lock:
         client = _reranker_http_client
         _reranker_http_client = None
     if client is not None:
-        await client.aclose()
+        await asyncio.to_thread(client.close)
 
 
 def _rerank_cohere_http(
@@ -338,21 +377,18 @@ def _rerank_cohere_http(
 ) -> list[dict]:
     """Rerank using a custom base URL via direct HTTP (e.g., OpenRouter).
 
-    Uses sync ``httpx.post()`` because this function is always invoked from
-    within ``asyncio.to_thread()`` — the thread pool handles concurrency and
-    blocking on sync I/O is safe here.
+    Uses the shared synchronous client because this function is always invoked
+    from ``asyncio.to_thread()``. Connections are reused across requests.
 
     M-2: Retries transient HTTP errors with exponential backoff.
     """
-    import httpx
-
     url = base_url.rstrip("/") + "/rerank"
     documents = [doc["content"] for doc in docs]
     try:
 
         @_rerank_retry
         def _call():
-            resp = httpx.post(
+            resp = _get_reranker_http_client().post(
                 url,
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -364,21 +400,39 @@ def _rerank_cohere_http(
                     "documents": documents,
                     "top_n": top_n,
                 },
-                timeout=settings.RERANKER_TIMEOUT_SECONDS,
-                trust_env=False,
             )
             resp.raise_for_status()
             return resp.json()
 
         data = _call()
         return [
-            {**docs[r["index"]], "score": r["relevance_score"], "reranked": True}
+            {
+                **docs[r["index"]],
+                "score": r["relevance_score"],
+                "score_kind": "relevance",
+                "reranked": True,
+            }
             for r in data["results"]
         ]
     except Exception:
         RERANKER_FAILURE_TOTAL.labels(backend="cohere_http").inc()
         logger.error("Cohere rerank HTTP failed", exc_info=True)
-        return [{**d, "reranked": False} for d in docs]
+    return [{**d, "reranked": False} for d in docs]
+
+
+def _rerank_http(
+    query: str,
+    docs: list[dict],
+    top_n: int,
+    api_key: str,
+    base_url: str,
+    model: str,
+) -> list[dict]:
+    """Generic Cohere-compatible HTTP reranker transport."""
+    if not base_url:
+        logger.warning("HTTP reranker disabled: RERANKER_BASE_URL is empty")
+        return [{**doc, "reranked": False} for doc in docs]
+    return _rerank_cohere_http(query, docs, top_n, api_key, base_url, model)
 
 
 def _get_reranker_model() -> Any:
@@ -388,7 +442,9 @@ def _get_reranker_model() -> Any:
         with _reranker_lock:
             if _reranker_model is None:
                 try:
-                    from sentence_transformers import CrossEncoder
+                    from sentence_transformers import (  # pyright: ignore[reportMissingImports] - optional extra
+                        CrossEncoder,
+                    )
 
                     _reranker_model = CrossEncoder("BAAI/bge-reranker-v2-m3")
                     logger.info("BGE reranker model loaded")
@@ -410,4 +466,12 @@ def _rerank_bge(query: str, docs: list[dict], top_n: int) -> list[dict]:
     pairs = [(query, doc["content"]) for doc in docs]
     scores = model.predict(pairs)
     ranked = sorted(zip(scores, docs, strict=False), key=lambda x: x[0], reverse=True)
-    return [{**doc, "score": float(score), "reranked": True} for score, doc in ranked[:top_n]]
+    return [
+        {
+            **doc,
+            "score": float(score),
+            "score_kind": "relevance",
+            "reranked": True,
+        }
+        for score, doc in ranked[:top_n]
+    ]

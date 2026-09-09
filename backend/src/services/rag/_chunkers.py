@@ -32,14 +32,11 @@ _TOPIC_BREAK_PATTERNS = _re.compile(
 def _split_by_structure(
     text: str,
     max_chunk_size: int,
-    *,
-    heading_positions: list[int] | None = None,
 ) -> list[str]:
     """Split text into chunks at topic boundaries (HIGH-4: structure-aware).
 
-    Uses structural cues (headings, speaker changes, numbered items) plus
-    optional ``heading_positions`` from ``DocumentProfile`` to find natural
-    split points.
+    Uses structural cues such as headings, speaker changes, and numbered
+    items to find natural split points.
     """
     lines = text.split("\n")
     segments: list[str] = []

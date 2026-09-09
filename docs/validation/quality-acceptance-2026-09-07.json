@@ -1,0 +1,1608 @@
+{
+  "date": "2026-09-07",
+  "updated_at": "2026-09-07T04:15:34.310380+00:00",
+  "release_ready": false,
+  "production_data_modified": true,
+  "deployment_performed": false,
+  "scope": "single-instance; one authenticated trusted principal per shared API key",
+  "engineering": {
+    "backend": {
+      "passed": 2216,
+      "skipped": 1,
+      "seconds": 234.12,
+      "python": "3.12.12",
+      "coverage_percent": 72.48,
+      "skip_reason": "DATA_DIR is patched to temp directory for tests"
+    },
+    "frontend_unit": {
+      "passed": 178,
+      "files": 34,
+      "coverage_lines_percent": 57.11,
+      "coverage_lines_threshold": 50
+    },
+    "browser": {
+      "passed": 261,
+      "skipped": 0,
+      "engines": {
+        "chromium": 87,
+        "firefox": 87,
+        "webkit": 87
+      }
+    },
+    "pdf_cross_browser_subset": {
+      "passed": 33,
+      "included_in_browser_total": true
+    },
+    "production_auth_full_stack": {
+      "passed": 25,
+      "report": "backend/benchmark-results/acceptance-20260907/authenticated-full-stack-final.json"
+    },
+    "static_checks": "passed",
+    "frontend_production_build_and_bundle_budget": "passed",
+    "env_example": "passed",
+    "immutable_migrations": {
+      "passed": true,
+      "count": 14
+    },
+    "backend_py313": {
+      "passed": 2216,
+      "skipped": 1,
+      "warnings": 46,
+      "seconds": 245.16,
+      "python": "3.13.0",
+      "coverage_percent": 72.54,
+      "warning_boundary": "ResourceWarnings from test SQLite connections remain; test-data isolation fingerprints unchanged"
+    },
+    "contract_fuzz": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/contract-fuzz.json",
+      "passed": true,
+      "exit_code": 0,
+      "junit_suites": [
+        {
+          "name": "schemathesis",
+          "hostname": "Lis-MacBook-Air-10.local",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "70",
+          "time": "64.592617"
+        }
+      ],
+      "exclusion_regex": "^/api/v1/(chat(/.*)?|memory/(decay|search|entities/merge)|sessions/(search|.+/(summarize|search))|meetings/.+/summary(/.*)?|meetings/.+/files/.+/(reprocess|speakers)|settings/(rebuild-vectors|rebuild-multimodal|account)|skills/(match|invoke))$"
+    },
+    "pyright": {
+      "errors": 0,
+      "report": "backend/benchmark-results/acceptance-20260907/pyright.log"
+    },
+    "helm": {
+      "lint": "passed",
+      "kubernetes_resources_valid": 8,
+      "errors": 0,
+      "skipped": 0,
+      "missing_secrets_fail_closed": true,
+      "digest_rendering": true
+    }
+  },
+  "operational": {
+    "backup-restore": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/backup-restore.json",
+      "passed": true,
+      "checks": [
+        {
+          "name": "source_quiescent_during_copy",
+          "passed": true
+        },
+        {
+          "name": "full_backup_cli",
+          "passed": true
+        },
+        {
+          "name": "restore_cli",
+          "passed": true
+        },
+        {
+          "name": "previous_target_preserved",
+          "passed": true
+        },
+        {
+          "name": "uploads_byte_identity",
+          "passed": true
+        },
+        {
+          "name": "vectordb_byte_identity",
+          "passed": true
+        },
+        {
+          "name": "database_logical_identity",
+          "passed": true
+        },
+        {
+          "name": "integrity",
+          "passed": true
+        },
+        {
+          "name": "foreign_keys",
+          "passed": true
+        },
+        {
+          "name": "checksum_corruption_rejected",
+          "passed": true
+        },
+        {
+          "name": "traversal_rejected",
+          "passed": true
+        },
+        {
+          "name": "restored_application_ready",
+          "passed": true,
+          "seconds": 24.40721095900517
+        },
+        {
+          "name": "restored_migration_head",
+          "passed": true
+        },
+        {
+          "name": "original_corpus_unchanged",
+          "passed": true
+        }
+      ]
+    },
+    "inflight-crash-recovery": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/inflight-crash-recovery.json",
+      "passed": true,
+      "checks": [
+        {
+          "name": "observed_actual_running_file_job",
+          "passed": true
+        },
+        {
+          "name": "interrupted_file_became_ready",
+          "passed": true,
+          "seconds_since_crash": 72.3690646670002
+        },
+        {
+          "name": "same_job_completed",
+          "passed": true
+        },
+        {
+          "name": "indexed_chunks_exist_without_duplicates",
+          "passed": true,
+          "chunks": 9
+        },
+        {
+          "name": "no_dead_letter_jobs",
+          "passed": true
+        },
+        {
+          "name": "database_integrity",
+          "passed": true
+        },
+        {
+          "name": "recovered_index_supports_cited_answer",
+          "passed": true
+        }
+      ]
+    },
+    "soak-1h": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/soak-1h.json",
+      "workload": "synthetic_single_instance_api",
+      "concurrency": 2,
+      "requested_seconds": 3600.0,
+      "workload_seconds": 3646.2331434170046,
+      "initial_start_seconds": 11.287287958999514,
+      "crash_recovery_seconds": 22.831034208000347,
+      "operations": {
+        "memory_write": {
+          "evaluated": 950,
+          "errors": 0,
+          "p50_seconds": 4.2987764999998035,
+          "p95_seconds": 23.88813420799852,
+          "p99_seconds": 30.582395124998584
+        },
+        "facts_query": {
+          "evaluated": 950,
+          "errors": 0,
+          "p50_seconds": 0.006989166999119334,
+          "p95_seconds": 0.027737709002394695,
+          "p99_seconds": 0.10683425000024727
+        },
+        "upload_index_rag": {
+          "evaluated": 24,
+          "errors": 0,
+          "p50_seconds": 14.369981625000946,
+          "p95_seconds": 43.508602709000115,
+          "p99_seconds": 48.122819209005684
+        },
+        "chat": {
+          "evaluated": 24,
+          "errors": 0,
+          "p50_seconds": 4.589567041999544,
+          "p95_seconds": 34.345016040999326,
+          "p99_seconds": 40.950401082998724
+        }
+      },
+      "duration_gate_passed": true,
+      "chat_p95_gate_passed": false,
+      "errors": [],
+      "persisted_writes": 950,
+      "job_counts_after_recovery": {
+        "completed": 48,
+        "expired_running": 0,
+        "oldest_expired_seconds": 0
+      },
+      "jobs_recovered": true,
+      "job_drain_seconds": 289.0035484999971,
+      "integrity": "ok",
+      "backup_integrity": "ok",
+      "limitations": [
+        "synthetic data",
+        "bounded run; does not establish rolling 30-day SLO",
+        "no human quality labels",
+        "no multi-instance evaluation"
+      ]
+    },
+    "data-recovery-incident": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/data-recovery-incident.json",
+      "production_data_modified": true,
+      "incident": "A programmatic pytest launcher imported application settings before test isolation; cleanup targeted the application database",
+      "recovery_status": "core_records_restored_from_verified_backup",
+      "backup": "backups/pre-domain-review-20260906-2151.db",
+      "restored_counts": {
+        "meetings": 3,
+        "meeting_files": 14,
+        "user_memories": 207,
+        "memory_fact_versions": 227,
+        "chat_sessions": 1,
+        "chat_messages": 8,
+        "projects": 6
+      },
+      "integrity": "ok",
+      "foreign_key_violations": [],
+      "migration_head": "20260907_000001",
+      "corpus_sha256": "ad89fb5c850f31338639b2b115db33b5035b2c976e9d9f2a619ea28a0c235dae",
+      "corpus_matches_pre_incident_holdout": true,
+      "uploaded_files_present": 14,
+      "vector_corpus_ids_matched": 432,
+      "surviving_projects_preserved": 6,
+      "exact_pre_incident_database_equality_verified": false,
+      "limitations": [
+        "Backup predates this run; post-backup operational and audit state cannot be proven identical",
+        "Not a claim of byte-identical full database restoration"
+      ],
+      "test_isolation_guard_added": true,
+      "new_full_backup": "backups/acceptance-recovery-20260907/meeting-agent-20260907-115421.tar.gz",
+      "post_recovery_guarded_test_fingerprints_unchanged": true,
+      "fingerprint_scope": "SQLite logical dump and complete uploads/vectordb file tree",
+      "new_full_backup_sha256": "7bf84ea4210e3cfe002cd52f97309b1bbe50a25d99e0cef71da0a432635ade88",
+      "new_full_backup_bytes": 405021483
+    },
+    "post_recovery_data_integrity": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/post-recovery-data-integrity.json",
+      "unchanged_after_all_remaining_acceptance": true,
+      "checks": {
+        "database_logical_sha256": true,
+        "counts": true,
+        "uploads_sha256": true,
+        "vectordb_sha256": true
+      },
+      "counts": {
+        "meetings": 3,
+        "meeting_files": 14,
+        "user_memories": 207,
+        "memory_fact_versions": 227
+      },
+      "scope": "Post-recovery snapshot only; not proof of pre-incident full equality"
+    }
+  },
+  "benchmarks": {
+    "ingest": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/ingest_2026-09-07T02-19-22.256344_00-00.json",
+      "stats": {
+        "fetch_metadata": {
+          "label": "fetch_metadata",
+          "phase": "metadata",
+          "n": 9,
+          "p50": 0.4,
+          "p95": 1.3,
+          "p99": 1.46,
+          "mean": 0.56,
+          "stdev": 0.42,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "parse": {
+          "label": "parse",
+          "phase": "extract",
+          "n": 18,
+          "p50": 5078.5,
+          "p95": 7433.13,
+          "p99": 7434.63,
+          "mean": 5627.5,
+          "stdev": 1156.87,
+          "status_counts": {
+            "success": 18
+          }
+        },
+        "validate_content": {
+          "label": "validate_content",
+          "phase": "validate",
+          "n": 9,
+          "p50": 0.0,
+          "p95": 0.06,
+          "p99": 0.09,
+          "mean": 0.01,
+          "stdev": 0.03,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "index_meeting": {
+          "label": "index_meeting",
+          "phase": "index",
+          "n": 9,
+          "p50": 19.1,
+          "p95": 16060.42,
+          "p99": 21418.4,
+          "mean": 3393.58,
+          "stdev": 7527.41,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "chunk": {
+          "label": "chunk",
+          "phase": "index",
+          "n": 9,
+          "p50": 0.5,
+          "p95": 79.94,
+          "p99": 121.35,
+          "mean": 15.14,
+          "stdev": 43.71,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "embed": {
+          "label": "embed",
+          "phase": "index",
+          "n": 9,
+          "p50": 0.1,
+          "p95": 11728.22,
+          "p99": 14783.0,
+          "mean": 2576.06,
+          "stdev": 5251.92,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "vectorstore_upsert": {
+          "label": "vectorstore_upsert",
+          "phase": "index",
+          "n": 9,
+          "p50": 7.6,
+          "p95": 14.92,
+          "p99": 15.3,
+          "mean": 8.24,
+          "stdev": 4.09,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "db_persist": {
+          "label": "db_persist",
+          "phase": "persist",
+          "n": 9,
+          "p50": 0.6,
+          "p95": 1.1,
+          "p99": 1.1,
+          "mean": 0.68,
+          "stdev": 0.25,
+          "status_counts": {
+            "success": 9
+          }
+        },
+        "trace_total": {
+          "label": "trace_total",
+          "phase": "total",
+          "n": 9,
+          "p50": 8767.4,
+          "p95": 22387.42,
+          "p99": 26802.36,
+          "mean": 10075.48,
+          "stdev": 7472.02,
+          "status_counts": {
+            "success": 9
+          }
+        }
+      },
+      "iterations": 3
+    },
+    "chat": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/chat_2026-09-07T02-29-47.399257_00-00.json",
+      "stats": {
+        "classify_intent": {
+          "label": "classify_intent",
+          "phase": "routing",
+          "n": 100,
+          "p50": 0.0,
+          "p95": 0.1,
+          "p99": 0.1,
+          "mean": 0.01,
+          "stdev": 0.03,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "skill_match": {
+          "label": "skill_match",
+          "phase": "skill",
+          "n": 100,
+          "p50": 0.1,
+          "p95": 7140.26,
+          "p99": 15010.82,
+          "mean": 925.46,
+          "stdev": 3161.7,
+          "status_counts": {
+            "timeout": 3,
+            "success": 97
+          }
+        },
+        "ensure_session": {
+          "label": "ensure_session",
+          "phase": "session",
+          "n": 100,
+          "p50": 0.6,
+          "p95": 4.8,
+          "p99": 8.28,
+          "mean": 2.26,
+          "stdev": 12.48,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "preload_history_for_rewrite": {
+          "label": "preload_history_for_rewrite",
+          "phase": "history",
+          "n": 60,
+          "p50": 0.0,
+          "p95": 0.1,
+          "p99": 0.36,
+          "mean": 0.04,
+          "stdev": 0.09,
+          "status_counts": {
+            "success": 60
+          }
+        },
+        "rewrite_query": {
+          "label": "rewrite_query",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 3295.67,
+          "p99": 5401.55,
+          "mean": 573.32,
+          "stdev": 1491.36,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "prewarm_query_embedding": {
+          "label": "prewarm_query_embedding",
+          "phase": "embedding",
+          "n": 75,
+          "p50": 0.2,
+          "p95": 8653.94,
+          "p99": 26926.13,
+          "mean": 1530.66,
+          "stdev": 4950.66,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "pipeline": {
+          "label": "pipeline",
+          "phase": "pipeline",
+          "n": 100,
+          "p50": 3241.45,
+          "p95": 8847.19,
+          "p99": 9289.75,
+          "mean": 3614.27,
+          "stdev": 2854.9,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "retrieve": {
+          "label": "retrieve",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 17.0,
+          "p95": 82.53,
+          "p99": 365.89,
+          "mean": 38.39,
+          "stdev": 78.7,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "load_memories": {
+          "label": "load_memories",
+          "phase": "memory",
+          "n": 75,
+          "p50": 3.3,
+          "p95": 17.07,
+          "p99": 56.23,
+          "mean": 6.08,
+          "stdev": 10.03,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "load_session_context": {
+          "label": "load_session_context",
+          "phase": "session_context",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.0,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "load_entity_context": {
+          "label": "load_entity_context",
+          "phase": "memory",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.13,
+          "p99": 2.89,
+          "mean": 0.15,
+          "stdev": 1.12,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "load_history": {
+          "label": "load_history",
+          "phase": "history",
+          "n": 75,
+          "p50": 2.0,
+          "p95": 14.5,
+          "p99": 21.21,
+          "mean": 3.7,
+          "stdev": 4.68,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "anchor.read": {
+          "label": "anchor.read",
+          "phase": "anchor",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.0,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "funnel_narrow.wide": {
+          "label": "funnel_narrow.wide",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 4.6,
+          "p95": 39.43,
+          "p99": 86.54,
+          "mean": 11.0,
+          "stdev": 22.39,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "retriever_decision": {
+          "label": "retriever_decision",
+          "phase": "retrieve",
+          "n": 225,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.01,
+          "status_counts": {
+            "success": 225
+          }
+        },
+        "vector_search": {
+          "label": "vector_search",
+          "phase": "retrieve",
+          "n": 225,
+          "p50": 2.3,
+          "p95": 19.8,
+          "p99": 76.57,
+          "mean": 6.75,
+          "stdev": 16.19,
+          "status_counts": {
+            "success": 225
+          }
+        },
+        "bm25_search": {
+          "label": "bm25_search",
+          "phase": "retrieve",
+          "n": 225,
+          "p50": 3.1,
+          "p95": 11.96,
+          "p99": 31.64,
+          "mean": 5.21,
+          "stdev": 11.41,
+          "status_counts": {
+            "success": 225
+          }
+        },
+        "rrf_merge": {
+          "label": "rrf_merge",
+          "phase": "retrieve",
+          "n": 225,
+          "p50": 0.0,
+          "p95": 0.1,
+          "p99": 0.1,
+          "mean": 0.01,
+          "stdev": 0.03,
+          "status_counts": {
+            "success": 225
+          }
+        },
+        "funnel_narrow.aggregate": {
+          "label": "funnel_narrow.aggregate",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.08,
+          "mean": 0.0,
+          "stdev": 0.03,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "funnel_narrow.merge": {
+          "label": "funnel_narrow.merge",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.0,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "fair_retrieve": {
+          "label": "fair_retrieve",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 5.0,
+          "p95": 24.93,
+          "p99": 97.23,
+          "mean": 10.29,
+          "stdev": 18.32,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "filter.sibling_coretrieve": {
+          "label": "filter.sibling_coretrieve",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 1.7,
+          "p95": 9.98,
+          "p99": 29.58,
+          "mean": 3.65,
+          "stdev": 6.19,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "rerank": {
+          "label": "rerank",
+          "phase": "rerank",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.0,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "suppress_near_duplicates": {
+          "label": "suppress_near_duplicates",
+          "phase": "retrieve",
+          "n": 75,
+          "p50": 0.6,
+          "p95": 1.3,
+          "p99": 2.23,
+          "mean": 0.79,
+          "stdev": 0.4,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "build_context": {
+          "label": "build_context",
+          "phase": "assemble",
+          "n": 75,
+          "p50": 1.5,
+          "p95": 9.2,
+          "p99": 26.78,
+          "mean": 3.23,
+          "stdev": 7.21,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "generate_answer": {
+          "label": "generate_answer",
+          "phase": "generate",
+          "n": 75,
+          "p50": 4710.2,
+          "p95": 8605.77,
+          "p99": 9103.43,
+          "mean": 4536.34,
+          "stdev": 1900.4,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "llm_ttft": {
+          "label": "llm_ttft",
+          "phase": "generate",
+          "n": 75,
+          "p50": 3443.6,
+          "p95": 5486.92,
+          "p99": 8634.58,
+          "mean": 3571.37,
+          "stdev": 1254.87,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "llm_streaming": {
+          "label": "llm_streaming",
+          "phase": "generate",
+          "n": 75,
+          "p50": 428.6,
+          "p95": 2888.56,
+          "p99": 3530.69,
+          "mean": 964.8,
+          "stdev": 1086.97,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "save_messages": {
+          "label": "save_messages",
+          "phase": "persist",
+          "n": 100,
+          "p50": 3.0,
+          "p95": 9.97,
+          "p99": 19.22,
+          "mean": 3.87,
+          "stdev": 3.64,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "anchor.write": {
+          "label": "anchor.write",
+          "phase": "anchor",
+          "n": 75,
+          "p50": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mean": 0.0,
+          "stdev": 0.0,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "schedule_fact_extraction": {
+          "label": "schedule_fact_extraction",
+          "phase": "persist",
+          "n": 75,
+          "p50": 2.0,
+          "p95": 7.52,
+          "p99": 14.02,
+          "mean": 2.75,
+          "stdev": 2.66,
+          "status_counts": {
+            "success": 75
+          }
+        },
+        "chat_ttft": {
+          "label": "chat_ttft",
+          "phase": "client",
+          "n": 100,
+          "p50": 3362.76,
+          "p95": 14077.39,
+          "p99": 34036.26,
+          "mean": 4484.9,
+          "stdev": 6171.74,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "chat_total": {
+          "label": "chat_total",
+          "phase": "client",
+          "n": 100,
+          "p50": 3819.71,
+          "p95": 14147.6,
+          "p99": 34257.4,
+          "mean": 5217.59,
+          "stdev": 6475.56,
+          "status_counts": {
+            "success": 100
+          }
+        },
+        "trace_total": {
+          "label": "trace_total",
+          "phase": "total",
+          "n": 100,
+          "p50": 3818.55,
+          "p95": 14145.59,
+          "p99": 34249.48,
+          "mean": 5215.55,
+          "stdev": 6474.79,
+          "status_counts": {
+            "success": 100
+          }
+        }
+      },
+      "iterations": 5,
+      "queries_count": 20
+    },
+    "rag-retrieval": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/rag-retrieval_2026-09-07T02-28-36.014181_00-00.json",
+      "valid": true,
+      "complete": true,
+      "validity_errors": [],
+      "stats": {
+        "semantic-only@5": {
+          "recall": 0.7
+        },
+        "semantic-only@10": {
+          "recall": 0.7,
+          "mrr": 0.5833333333333333,
+          "ndcg": 0.6130929753571458
+        },
+        "hybrid@10": {
+          "recall": 0.7,
+          "mrr": 0.4333333333333333,
+          "ndcg": 0.502371901428583
+        },
+        "hybrid+rerank@10": {
+          "recall": null,
+          "mrr": null,
+          "ndcg": null,
+          "evaluated_queries": 0,
+          "skipped_queries": 10
+        },
+        "file-level@8": {
+          "precision": 0.5,
+          "recall": 1.0,
+          "queries_with_file_ground_truth": 10
+        }
+      },
+      "counts": {
+        "expected_cases": 10,
+        "observed_cases": 10
+      },
+      "evidence_quality": {
+        "grade": "diagnostic",
+        "release_ready": false,
+        "dataset_kind": "synthetic",
+        "observed_cases": 10,
+        "judge_repeats": null,
+        "reranker_evaluated_queries": 0,
+        "limitations": [
+          "dataset_is_not_a_production_holdout",
+          "fewer_than_30_cases",
+          "reranker_not_executed_for_every_query"
+        ]
+      }
+    },
+    "rag-answer": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/rag-answer_2026-09-07T02-43-23.747976_00-00.json",
+      "valid": true,
+      "complete": true,
+      "validity_errors": [],
+      "stats": {
+        "faithfulness": 0.9766666666666668,
+        "answer_relevance": 1.0,
+        "context_precision": 0.95,
+        "context_recall": 1.0,
+        "correctness": 1.0,
+        "citation_quality": 0.985,
+        "source_identity_recall": 1.0,
+        "corpus_isolation": 1.0,
+        "rouge_l_f1": 0.5221533055575845,
+        "answer_similarity": 0.8242522530454208,
+        "parse_failures": 0,
+        "judge_parse_retries": 0
+      },
+      "counts": {
+        "expected_cases": 10,
+        "observed_cases": 10,
+        "judge_repeats": 3
+      },
+      "evidence_quality": {
+        "grade": "diagnostic",
+        "release_ready": false,
+        "dataset_kind": "synthetic",
+        "observed_cases": 10,
+        "judge_repeats": 3,
+        "reranker_evaluated_queries": null,
+        "limitations": [
+          "dataset_is_not_a_production_holdout",
+          "fewer_than_30_cases"
+        ]
+      }
+    },
+    "rag-snapshot": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/rag-snapshot_2026-09-07T02-46-39.039966_00-00.json",
+      "stats": {
+        "diffs": 10
+      },
+      "snapshot_diffs": [
+        {
+          "query_id": "q001",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q002",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q003",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q004",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q005",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q006",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q007",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q008",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q009",
+          "diff": "no existing snapshot"
+        },
+        {
+          "query_id": "q010",
+          "diff": "no existing snapshot"
+        }
+      ]
+    },
+    "multi-turn": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/multi-turn_2026-09-07T02-52-31.776142_00-00.json",
+      "valid": true,
+      "validity_errors": [],
+      "stats": {
+        "faithfulness": 1.0,
+        "appropriateness": 1.0,
+        "naturalness": 0.9916666666666667,
+        "completeness": 1.0,
+        "evidence_recall": 1.0,
+        "session_continuity": 1.0,
+        "corpus_isolation": 1.0,
+        "parse_failures": 0,
+        "judge_parse_retries": 0
+      },
+      "evidence_quality": {
+        "grade": "diagnostic",
+        "release_ready": false,
+        "dataset_kind": "synthetic",
+        "observed_cases": 3,
+        "judge_repeats": 3,
+        "reranker_evaluated_queries": null,
+        "limitations": [
+          "dataset_is_not_a_production_holdout",
+          "fewer_than_30_cases"
+        ]
+      }
+    },
+    "memory": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/memory_2026-09-07T04-14-19.816320_00-00.json",
+      "valid": false,
+      "complete": false,
+      "validity_errors": [
+        "cjk_preference_update sequence=1: expected confirmed, persisted=False, statuses=[], retirement_observed=False",
+        "same_name_meeting_disambiguation sequence=4: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+        "temporal_validity_latest_policy sequence=2: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+        "temporal_validity_latest_policy sequence=25: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+        "duplicate_observation_is_idempotent sequence=2: expected no_change, persisted=True, statuses=['confirmed'], retirement_observed=False"
+      ],
+      "stats": {
+        "accurate_retrieval": 1.0,
+        "test_time_learning": 1.0,
+        "long_range_understanding": 1.0,
+        "selective_forgetting": 1.0,
+        "memory_gain": 0.9,
+        "distractor_control_margin": 0.8962962962962963,
+        "abstention_accuracy": 1.0,
+        "negation_update_accuracy": 1.0,
+        "entity_scope_disambiguation": 1.0,
+        "temporal_validity_accuracy": 1.0,
+        "parse_failures": 0,
+        "judge_parse_retries": 0,
+        "knowledge_graph_multihop": 1.0,
+        "knowledge_graph_context_recall": 1.0,
+        "knowledge_graph_gain": 1.0,
+        "knowledge_graph_case_count": 4,
+        "pipeline_write_recall": 0.85,
+        "pipeline_reference_key_agreement": null,
+        "pipeline_latest_value_accuracy": 0.85,
+        "pipeline_confirmed_evidence_rate": 0.9,
+        "pipeline_events_attempted": 22,
+        "pipeline_events_correct": 17,
+        "pipeline_events_persisted": 21
+      },
+      "evidence_quality": {
+        "grade": "diagnostic",
+        "release_ready": false,
+        "dataset_kind": "synthetic",
+        "observed_cases": 14,
+        "judge_repeats": 3,
+        "reranker_evaluated_queries": null,
+        "limitations": [
+          "dataset_is_not_a_production_holdout",
+          "fewer_than_30_cases"
+        ]
+      },
+      "reasoner_config": {
+        "binding": "openrouter",
+        "model": "z-ai/glm-5.3-flash",
+        "base_url_host": "openrouter.ai"
+      },
+      "judge_runtime_overrides": {
+        "max_tokens": 8192,
+        "response_format": {
+          "type": "json_object"
+        },
+        "acceptance_wrapper_sha256": "b1b00352633d33a0be688fae51ac8939a0342e136ec0804a0c26185bc0e86997",
+        "included_in_run_arguments": true,
+        "generator_configuration_changed": false
+      }
+    },
+    "process": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/process_2026-09-07T04-08-11.576611_00-00.json",
+      "valid": true,
+      "complete": true,
+      "validity_errors": [],
+      "stats": {
+        "step_accuracy": 1.0,
+        "first_error_accuracy": 1.0,
+        "error_type_accuracy": 1.0,
+        "artifact_coverage": 1.0,
+        "terminal_accuracy": 1.0,
+        "success_trace_count": 2,
+        "failure_trace_count": 7
+      }
+    },
+    "real_holdout": {
+      "execution": "completed",
+      "report": "backend/.private-benchmarks/acceptance-20260907/frozen-real-holdout.json",
+      "valid": false,
+      "stats": {
+        "file_recall_at_10": 1.0,
+        "file_hit_at_10": 1.0,
+        "file_mrr": 1.0,
+        "evidence_chunk_recall_at_10": 0.0,
+        "evidence_chunk_hit_at_10": 0.0,
+        "evidence_chunk_mrr": 0.0,
+        "faithfulness": 0.9722222222222222,
+        "answer_relevance": 1.0,
+        "context_precision": 0.789549167286169,
+        "context_recall": 1.0,
+        "correctness": 0.9922222222222222,
+        "citation_quality": 0.985
+      },
+      "evidence_quality": {
+        "grade": "candidate_requires_review",
+        "release_ready": false,
+        "dataset_kind": "production_holdout",
+        "observed_cases": 30,
+        "judge_repeats": 3,
+        "independent_judge": true,
+        "reranker_evaluated_queries": 29,
+        "limitations": [
+          "references_not_human_reviewed",
+          "domain_labels_not_reviewed",
+          "reranker_not_executed_for_every_query",
+          "quality_below_threshold:evidence_chunk_recall_at_10"
+        ]
+      },
+      "judge_parse_failures": 0,
+      "judge_runtime_overrides": {
+        "max_tokens": 8192,
+        "response_format": {
+          "type": "json_object"
+        },
+        "acceptance_wrapper_sha256": "a3f4e56c6742aade33151a3430edca1af92dd836678c2ffd94010a7046fa4c50",
+        "included_in_run_fingerprint": true,
+        "generator_configuration_changed": false
+      },
+      "interpretation": {
+        "original_report_preserved": true,
+        "evidence_chunk_metrics_evaluable": false,
+        "evidence_chunk_metrics": null,
+        "reason": "Public source schema omitted chunk IDs in that historical run",
+        "not_combined_with_post_fix_generation": true
+      }
+    },
+    "micro": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/micro_latest.json",
+      "baseline_comparison": false
+    },
+    "post_fix_retrieval": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/post-fix-retrieval-summary.json",
+      "complete": true,
+      "full_answer_quality_evaluation_completed": false,
+      "judge_evaluated_cases": 0,
+      "judge_skipped_cases": 30,
+      "reranker_evaluated_queries": 28,
+      "source_identity_evaluated_queries": 17,
+      "source_identity_skipped_queries": 13,
+      "stats": {
+        "file_recall_at_10": 1.0,
+        "evidence_chunk_recall_at_10": 1.0,
+        "evidence_chunk_hit_at_10": 1.0,
+        "evidence_chunk_mrr": 0.9215686274509803
+      },
+      "stats_scope": "Chunk metrics aggregate only the 17 queries with complete top-10 identities; not whole-set recall",
+      "limitations": [
+        "references not human reviewed",
+        "separate post-fix retrieval run; no independent answer judging",
+        "not combined with scores from previous generation"
+      ]
+    }
+  },
+  "security": {
+    "live-security": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/live-security.json",
+      "kind": "synthetic_live_api_stdio_mcp_multiturn",
+      "passed": true,
+      "checks": [
+        {
+          "name": "anonymous_http_rejected",
+          "passed": true
+        },
+        {
+          "name": "foreign_meeting_read_rejected",
+          "passed": true
+        },
+        {
+          "name": "stdio_tool_discovery",
+          "passed": true
+        },
+        {
+          "name": "tool_write_ignores_spoofed_principal",
+          "passed": true
+        },
+        {
+          "name": "tool_read_is_scoped",
+          "passed": true
+        },
+        {
+          "name": "tool_foreign_delete_is_noop",
+          "passed": true,
+          "contract": "idempotent HTTP 200; foreign rows must remain identical"
+        },
+        {
+          "name": "tool_search_foreign_scope_rejected",
+          "passed": true
+        },
+        {
+          "name": "multiturn_1_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_1_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_2_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_2_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_3_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_3_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "authorized_tool_delete_succeeds",
+          "passed": true
+        },
+        {
+          "name": "foreign_memory_unchanged",
+          "passed": true
+        },
+        {
+          "name": "attachment_not_persisted_as_owner",
+          "passed": true
+        },
+        {
+          "name": "database_integrity",
+          "passed": true
+        }
+      ],
+      "tool_authorization_evaluated": true,
+      "model_autonomous_tool_selection_evaluated": false,
+      "limitations": [
+        "bounded synthetic scenarios",
+        "shared API key identifies one trusted principal",
+        "MCP calls selected by test harness; no external autonomous MCP client tested"
+      ]
+    },
+    "live-security-meeting-domain": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/live-security-meeting-domain.json",
+      "kind": "approved_meeting_source_extraction_and_live_mcp_multiturn",
+      "passed": false,
+      "checks": [
+        {
+          "name": "anonymous_http_rejected",
+          "passed": true
+        },
+        {
+          "name": "foreign_meeting_read_rejected",
+          "passed": true
+        },
+        {
+          "name": "meeting_extraction_jobs_completed",
+          "passed": true,
+          "completed": 1
+        },
+        {
+          "name": "stdio_tool_discovery",
+          "passed": true
+        },
+        {
+          "name": "tool_write_ignores_spoofed_principal",
+          "passed": true
+        },
+        {
+          "name": "tool_read_is_scoped",
+          "passed": true
+        },
+        {
+          "name": "tool_foreign_delete_is_noop",
+          "passed": true,
+          "contract": "idempotent HTTP 200; foreign rows must remain identical"
+        },
+        {
+          "name": "tool_search_foreign_scope_rejected",
+          "passed": true
+        },
+        {
+          "name": "multiturn_1_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_1_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_2_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_2_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_3_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_3_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "authorized_tool_delete_succeeds",
+          "passed": true
+        },
+        {
+          "name": "foreign_memory_unchanged",
+          "passed": true
+        },
+        {
+          "name": "legitimate_alice_fact_was_extracted",
+          "passed": false
+        },
+        {
+          "name": "attachment_not_persisted_as_owner",
+          "passed": true
+        },
+        {
+          "name": "database_integrity",
+          "passed": true
+        }
+      ],
+      "tool_authorization_evaluated": true,
+      "model_autonomous_tool_selection_evaluated": false,
+      "limitations": [
+        "bounded synthetic scenarios",
+        "shared API key identifies one trusted principal",
+        "MCP calls selected by test harness; no external autonomous MCP client tested"
+      ]
+    },
+    "live-security-clean-meeting": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/live-security-clean-meeting.json",
+      "kind": "clean_approved_meeting_extraction_positive_control",
+      "passed": true,
+      "checks": [
+        {
+          "name": "anonymous_http_rejected",
+          "passed": true
+        },
+        {
+          "name": "foreign_meeting_read_rejected",
+          "passed": true
+        },
+        {
+          "name": "meeting_extraction_jobs_completed",
+          "passed": true,
+          "completed": 1
+        },
+        {
+          "name": "stdio_tool_discovery",
+          "passed": true
+        },
+        {
+          "name": "tool_write_ignores_spoofed_principal",
+          "passed": true
+        },
+        {
+          "name": "tool_read_is_scoped",
+          "passed": true
+        },
+        {
+          "name": "tool_foreign_delete_is_noop",
+          "passed": true,
+          "contract": "idempotent HTTP 200; foreign rows must remain identical"
+        },
+        {
+          "name": "tool_search_foreign_scope_rejected",
+          "passed": true
+        },
+        {
+          "name": "document_chunk_identity_survives_http",
+          "passed": true,
+          "source_count": 1
+        },
+        {
+          "name": "multiturn_1_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_1_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_2_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_2_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "multiturn_3_owner",
+          "passed": true,
+          "answer_recorded": true
+        },
+        {
+          "name": "multiturn_3_no_secret_or_marker",
+          "passed": true
+        },
+        {
+          "name": "authorized_tool_delete_succeeds",
+          "passed": true
+        },
+        {
+          "name": "foreign_memory_unchanged",
+          "passed": true
+        },
+        {
+          "name": "legitimate_alice_fact_was_extracted",
+          "passed": true
+        },
+        {
+          "name": "attachment_not_persisted_as_owner",
+          "passed": true
+        },
+        {
+          "name": "database_integrity",
+          "passed": true
+        }
+      ],
+      "tool_authorization_evaluated": true,
+      "model_autonomous_tool_selection_evaluated": false,
+      "limitations": [
+        "bounded synthetic scenarios",
+        "shared API key identifies one trusted principal",
+        "MCP calls selected by test harness; no external autonomous MCP client tested"
+      ]
+    },
+    "adversarial-prompts": {
+      "execution": "completed",
+      "report": "backend/benchmark-results/acceptance-20260907/adversarial-prompts.json",
+      "kind": "synthetic_adversarial_smoke",
+      "tool_authorization_evaluated": false
+    },
+    "npm_audit": {
+      "known_vulnerabilities": 0,
+      "report": "backend/benchmark-results/acceptance-20260907/npm-audit.json"
+    },
+    "bandit": {
+      "medium_high_findings": 0,
+      "report": "backend/benchmark-results/acceptance-20260907/bandit.json"
+    },
+    "codeql": {
+      "execution": "completed",
+      "raw_findings": 16,
+      "zero_findings_gate_passed": false,
+      "triage_report": "backend/benchmark-results/acceptance-20260907/codeql-triage.json",
+      "suppressions_added": false,
+      "rows": [
+        {
+          "language": "python",
+          "create_exit_code": 0,
+          "analyze_exit_code": 0,
+          "findings": 14,
+          "rule_ids": [
+            "py/clear-text-logging-sensitive-data",
+            "py/incomplete-url-substring-sanitization",
+            "py/path-injection",
+            "py/weak-sensitive-data-hashing"
+          ],
+          "seconds": 33.39909741700103,
+          "execution": "completed",
+          "passed": false
+        },
+        {
+          "language": "javascript",
+          "create_exit_code": 0,
+          "analyze_exit_code": 0,
+          "findings": 2,
+          "rule_ids": [
+            "js/insecure-randomness"
+          ],
+          "seconds": 31.137549999999464,
+          "execution": "completed",
+          "passed": false
+        }
+      ],
+      "scope": "non-ignored deliverable worktree snapshot; no remote publication"
+    },
+    "gitleaks": {
+      "history_findings": 0,
+      "worktree_findings": 0,
+      "history_commits_scanned": 4
+    },
+    "sbom": {
+      "backend": "backend/benchmark-results/acceptance-20260907/backend-sbom.json",
+      "frontend": "backend/benchmark-results/acceptance-20260907/frontend-sbom.json",
+      "frontend_peer_dependency_warning": "ESLint peer range reported by npm; tool used the CI ignore-npm-errors option"
+    }
+  },
+  "remaining_acceptance": [
+    {
+      "gate": "chat_p95_bounded",
+      "status": "failed",
+      "observed_seconds": 14.1476,
+      "target_seconds": 3.0
+    },
+    {
+      "gate": "reviewed_real_meeting_gold",
+      "status": "needs_human_review",
+      "candidate_questions": 30,
+      "available_material_collections": 3,
+      "recommended_meetings": 10,
+      "human_reviewed": false,
+      "business_domains_reviewed": false,
+      "same_generator_as_answer_model_bias": true,
+      "paired_before_after_comparison": false,
+      "review_packet": "backend/.private-benchmarks/acceptance-20260907/review-packet.md"
+    },
+    {
+      "gate": "retrieval_snapshot_comparison",
+      "status": "blocked_missing_baseline",
+      "queries_without_snapshot": 10,
+      "current_output_approved_as_baseline": false
+    },
+    {
+      "gate": "rolling_30_day_slo",
+      "status": "not_established"
+    },
+    {
+      "gate": "docker_build_and_nginx_container_e2e",
+      "status": "blocked",
+      "attempts": 2,
+      "reason": "Docker Hub pinned Python image manifest timeout",
+      "compose_config_valid": true,
+      "docker_daemon_available": true
+    },
+    {
+      "gate": "python_dependency_security",
+      "status": "existing_time_limited_mitigations",
+      "packages": 2,
+      "unique_advisories": 9,
+      "raw_advisory_entries": 11,
+      "allowlist_expiry": "2026-10-01",
+      "new_exceptions": 0
+    },
+    {
+      "gate": "exact_pre_incident_data_recovery",
+      "status": "not_proven",
+      "core_records_restored": true,
+      "details": "backend/benchmark-results/acceptance-20260907/data-recovery-incident.json"
+    }
+  ],
+  "execution_complete_semantics": "Every listed local attempt has terminated and a report exists; not equivalent to valid/complete protocol flags or release acceptance",
+  "execution_complete": true
+}

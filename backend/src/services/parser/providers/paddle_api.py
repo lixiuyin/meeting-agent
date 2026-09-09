@@ -223,7 +223,7 @@ class PaddleOCRAPIParser:
     ) -> ParsedDocument:
         """Parse a single image file."""
         logger.info("PaddleOCR parsing image: %s", file_path.name)
-        img_bytes = file_path.read_bytes()
+        img_bytes = await asyncio.to_thread(file_path.read_bytes)
         blocks = await self._call_layout_api(client, base_url, api_key, img_bytes)
         text, tables = self._blocks_to_text(blocks)
 
@@ -259,7 +259,7 @@ class PaddleOCRAPIParser:
         file_path: Path,
     ) -> ParsedDocument:
         """Parse a PDF — render each page to image and send to API."""
-        import fitz
+        import pymupdf as fitz
 
         logger.info("PaddleOCR parsing PDF (per-page): %s", file_path.name)
         scale = settings.OCR_DPI / 72.0

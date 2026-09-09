@@ -25,9 +25,17 @@ export function CreateSkillModal({
   };
 
   const handleOk = async () => {
-    const values = await form.validateFields();
-    await onSubmit(values);
-    form.resetFields();
+    try {
+      const values = await form.validateFields();
+      await onSubmit(values);
+      form.resetFields();
+    } catch (error) {
+      // Ant Design rejects validateFields for ordinary validation failures.
+      // The fields already display those errors; swallowing only that shape
+      // avoids an unhandled promise rejection in the browser console.
+      if (typeof error === "object" && error !== null && "errorFields" in error) return;
+      throw error;
+    }
   };
 
   return (
@@ -35,7 +43,7 @@ export function CreateSkillModal({
       title={formatMessage({ id: "generation.createModal.title" })}
       open={open}
       onCancel={handleCancel}
-      onOk={() => void handleOk()}
+      onOk={handleOk}
       okText={formatMessage({ id: "generation.createModal.okText" })}
       confirmLoading={confirmLoading}
     >

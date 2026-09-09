@@ -4,8 +4,8 @@ import { useEffect, type ReactNode } from "react";
 import PdfComparisonModal from "../components/materials/file-views/PdfComparisonModal";
 import type { PageItem } from "../components/materials/file-views/types";
 
-vi.mock("../api/client", () => ({
-  getMeetingFileUrl: vi.fn(() => "/api/v1/meetings/1/files/1"),
+vi.mock("../hooks/useMeetingFileUrl", () => ({
+  useMeetingFileUrl: vi.fn(() => "/api/v1/meetings/1/files/1"),
 }));
 
 vi.mock("react-virtualized-auto-sizer", () => ({
@@ -41,47 +41,8 @@ vi.mock("react-pdf", () => {
   };
 });
 
-type ObserverCallback = (
-  entries: IntersectionObserverEntry[],
-  observer: IntersectionObserver,
-) => void;
-
-class MockIntersectionObserver {
-  static instances: MockIntersectionObserver[] = [];
-
-  callback: ObserverCallback;
-  root: Element | null;
-  observed = new Set<Element>();
-  disconnect = vi.fn();
-  unobserve = vi.fn((target: Element) => this.observed.delete(target));
-  takeRecords = vi.fn(() => []);
-
-  constructor(callback: ObserverCallback, options?: IntersectionObserverInit) {
-    this.callback = callback;
-    this.root = (options?.root as Element | null) ?? null;
-    MockIntersectionObserver.instances.push(this);
-  }
-
-  observe = vi.fn((target: Element) => {
-    this.observed.add(target);
-  });
-}
-
-function triggerIntersection(target: Element, ratio: number) {
-  const instance = MockIntersectionObserver.instances.find((item) => item.observed.has(target));
-  if (!instance) {
-    throw new Error("No observer found for target");
-  }
-  const entry = {
-    target,
-    intersectionRatio: ratio,
-    isIntersecting: ratio > 0,
-    boundingClientRect: target.getBoundingClientRect(),
-    intersectionRect: target.getBoundingClientRect(),
-    rootBounds: null,
-    time: Date.now(),
-  } as IntersectionObserverEntry;
-  instance.callback([entry], instance as unknown as IntersectionObserver);
+function pane(source: "pdf" | "parsed") {
+  return document.querySelector<HTMLDivElement>(`[data-pdf-pane="${source}"]`)!;
 }
 
 const pages: PageItem[] = [
@@ -91,13 +52,26 @@ const pages: PageItem[] = [
 
 describe("PdfComparisonModal", () => {
   beforeEach(() => {
-    MockIntersectionObserver.instances = [];
-    window.IntersectionObserver =
-      MockIntersectionObserver as unknown as typeof IntersectionObserver;
+    vi.spyOn(Element.prototype, "clientWidth", "get").mockReturnValue(900);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.pdfPane ? 600 : 0;
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const container = this.closest<HTMLElement>("[data-pdf-pane]");
+      const height = container?.dataset.pdfPane === "pdf" ? 1000 : 2000;
+      const top = this.dataset.pageNum
+        ? (Number(this.dataset.pageNum) - 1) * height - (container?.scrollTop ?? 0)
+        : 0;
+      return new DOMRect(0, top, 800, this.dataset.pageNum ? height : 600);
+    });
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -116,11 +90,12 @@ describe("PdfComparisonModal", () => {
     expect(screen.getByText("PDF Comparison — slides.pdf")).toBeInTheDocument();
     expect(screen.getByText("Parsed Content (2 pages)")).toBeInTheDocument();
     expect(screen.getByText("second page")).toBeInTheDocument();
-    await screen.findByTestId("pdf-page-3");
+    await screen.findByTestId("pdf-page-1");
+    expect(pane("pdf").querySelector('[data-page-num="3"]')).toBeInTheDocument();
+    expect(screen.queryByTestId("pdf-page-3")).not.toBeInTheDocument();
   });
 
-  it("scrolls PDF pane when clicking parsed page card", async () => {
-    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+  it("aligns both panes only when the explicit page button is clicked", async () => {
     render(
       <PdfComparisonModal
         open
@@ -133,12 +108,15 @@ describe("PdfComparisonModal", () => {
     );
 
     await screen.findByTestId("pdf-page-1");
-    fireEvent.click(screen.getAllByText("Page 2")[0]);
-
-    expect(scrollSpy).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    expect(pane("pdf").scrollTop).toBe(1000);
+    expect(pane("parsed").scrollTop).toBe(2000);
+    fireEvent.click(screen.getByText("first page"));
+    expect(pane("pdf").scrollTop).toBe(1000);
+    expect(pane("parsed").scrollTop).toBe(2000);
   });
 
-  it("updates current page from parsed-pane intersection", async () => {
+  it("uses the top reading anchor even when a parsed page is taller than the viewport", async () => {
     render(
       <PdfComparisonModal
         open
@@ -151,20 +129,20 @@ describe("PdfComparisonModal", () => {
     );
 
     await screen.findByTestId("pdf-page-1");
-    const parsedPageTwo = Array.from(document.querySelectorAll("[data-page-num='2']")).find((el) =>
-      el.textContent?.includes("second page"),
-    );
-    expect(parsedPageTwo).toBeTruthy();
     act(() => {
-      triggerIntersection(parsedPageTwo!, 0.9);
+      fireEvent.wheel(pane("parsed"));
+      pane("parsed").scrollTop = 2500;
+      fireEvent.scroll(pane("parsed"));
     });
 
     await waitFor(() => {
       expect(screen.getByText("Page 2 / 3")).toBeInTheDocument();
+      expect(pane("pdf").scrollTop).toBe(1250);
+      expect(pane("parsed").scrollTop).toBe(2500);
     });
   });
 
-  it("prevents feedback loop while sync guard is active", async () => {
+  it("ignores follower echoes and immediately permits the other pane to take control", async () => {
     render(
       <PdfComparisonModal
         open
@@ -176,18 +154,21 @@ describe("PdfComparisonModal", () => {
       />,
     );
 
-    await screen.findByTestId("pdf-page-3");
-    fireEvent.click(screen.getAllByText("Page 2")[0]);
-
-    const pdfPageThree = Array.from(document.querySelectorAll("[data-page-num='3']")).find((el) =>
-      el.textContent?.includes("PDF Page 3"),
-    );
-    expect(pdfPageThree).toBeTruthy();
+    await screen.findByTestId("pdf-page-1");
+    fireEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
     act(() => {
-      triggerIntersection(pdfPageThree!, 0.95);
+      fireEvent.scroll(pane("pdf"));
+      fireEvent.scroll(pane("parsed"));
     });
-
     expect(screen.getByText("Page 2 / 3")).toBeInTheDocument();
+    act(() => {
+      fireEvent.wheel(pane("pdf"));
+      pane("pdf").scrollTop = 1600;
+      fireEvent.scroll(pane("pdf"));
+    });
+    await waitFor(() => expect(pane("parsed").scrollTop).toBe(3200));
+    fireEvent.scroll(pane("parsed"));
+    expect(pane("pdf").scrollTop).toBe(1600);
   });
 
   it("calls onClose when modal close button is clicked", async () => {

@@ -42,7 +42,13 @@ def upgrade() -> None:
         ")"
     )
 
+    # Freeze the baseline at the schema known when the Alembic bridge was
+    # finalized. Without an upper bound, adding a future legacy migration
+    # silently changes this historical revision and applies it before its own
+    # Alembic revision, making upgrade/downgrade ordering nondeterministic.
     for version, description, sql in _MIGRATIONS:
+        if version > 50:
+            continue
         _apply_migration(raw_conn, sql)
         raw_conn.execute(
             "INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)",

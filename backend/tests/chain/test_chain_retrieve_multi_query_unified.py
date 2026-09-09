@@ -25,6 +25,7 @@ def _make_ctx(
     session_id: str | None = None,
 ) -> MagicMock:
     ctx = MagicMock()
+    ctx.user_id = "multi-query-fixture"
     ctx.file_ids = file_ids
     ctx.meeting_ids = meeting_ids
     ctx.question = question
@@ -33,6 +34,12 @@ def _make_ctx(
     ctx.file_types = None
     ctx.date_from = None
     ctx.date_to = None
+    ctx.valid_at = None
+    ctx.known_at = None
+    ctx.query_plan = None
+    ctx.restored_project_ids = ()
+    ctx.memory_scope_override = None
+    ctx.known_speakers = []
     ctx.trace = TraceContext()
     ctx.rag_mode = None
     ctx.docs = []
@@ -60,7 +67,6 @@ _DEFAULT_SETTINGS = {
     "RAG_ANCHOR_BOOST_IN_BROAD_RECALL": True,
     "RAG_ANCHOR_QUOTA_RATIO": 0.5,
     "SUMMARY_INTENT_TOP_K": 20,
-    "RAG_HIERARCHICAL_ENABLED": False,
     "RAG_FILE_SCOPING_MODE": "router_and_funnel",
 }
 

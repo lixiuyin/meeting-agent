@@ -33,6 +33,9 @@ async def fair_retrieve_per_file(
     rag_mode: str | None = None,
     known_speakers: list[str] | None = None,
     cached_docs: dict[int, list[dict]] | None = None,
+    user_id: str | None = None,
+    analysis_query: str | None = None,
+    lexical_query: str | None = None,
 ) -> list[dict]:
     """Retrieve chunks across every file in *scope_file_ids*.
 
@@ -74,6 +77,9 @@ async def fair_retrieve_per_file(
                 trace=trace,
                 rag_mode=rag_mode,
                 known_speakers=known_speakers,
+                user_id=user_id,
+                analysis_query=analysis_query,
+                lexical_query=lexical_query,
             )
             return docs
 

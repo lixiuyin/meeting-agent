@@ -133,3 +133,31 @@ def test_root_logger_writes_to_app_log(tmp_path: Path, monkeypatch) -> None:
             if h not in original_handlers:
                 root.removeHandler(h)
                 h.close()
+
+
+def test_file_handler_redacts_websocket_query_tokens(tmp_path: Path, monkeypatch) -> None:
+    """Uvicorn handshake URLs must not persist bearer material in app.log."""
+    import src.core.logging as logging_module
+
+    monkeypatch.setattr(logging_module, "LOG_DIR", tmp_path)
+    handler = _make_file_handler()
+    try:
+        record = logging.LogRecord(
+            "uvicorn.error",
+            logging.INFO,
+            __file__,
+            1,
+            "WebSocket %s Authorization=%s",
+            ("/api/v1/ws?client_id=test&token=ws-secret&mode=live", "Bearer api-secret"),
+            None,
+        )
+        handler.handle(record)
+        handler.flush()
+    finally:
+        handler.close()
+
+    contents = (tmp_path / "app.log").read_text(encoding="utf-8")
+    assert "ws-secret" not in contents
+    assert "api-secret" not in contents
+    assert "token=<REDACTED>&mode=live" in contents
+    assert "Authorization=<REDACTED>" in contents

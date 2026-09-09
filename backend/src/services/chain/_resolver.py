@@ -25,7 +25,7 @@ from src.services.chain._steps_session import sanitize_history_messages
 from src.services.rag._query import _ANAPHORA_PATTERN, _is_simple_query
 
 from ...core.config import settings
-from ..llm import cached_retry_invoke, get_llm
+from ..llm import get_llm
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -125,7 +125,7 @@ def _l1_key(
 
     epoch = get_settings_epoch()
     history_sig = _history_signature(history or [])
-    invoke_sig = invoke_identity if invoke_identity is not None else id(cached_retry_invoke)
+    invoke_sig = invoke_identity if invoke_identity is not None else id(_invoke_resolver)
     # MD5 used for cache-key fingerprinting only, not security.
     question_hash = hashlib.md5(_normalize(question).encode(), usedforsecurity=False).hexdigest()
     return f"{session_id}:{epoch}:{question_hash}:{history_sig}:{invoke_sig}"
@@ -143,6 +143,11 @@ def _should_resolve(question: str, history: list[BaseMessage]) -> bool:
         return True
     short = len(question.split()) <= 6
     return not (short and not any(c.isalpha() for c in question if ord(c) > 0x2000))
+
+
+async def _invoke_resolver(llm, formatted):
+    """Use cancellable transport; cache successful resolutions at the caller."""
+    return await llm.ainvoke(formatted)
 
 
 async def resolve_query(
@@ -188,7 +193,7 @@ async def resolve_query(
         import asyncio
 
         response = await asyncio.wait_for(
-            asyncio.to_thread(cached_retry_invoke, llm, formatted),
+            _invoke_resolver(llm, formatted),
             timeout=timeout,
         )
         result = response.content if hasattr(response, "content") else str(response)

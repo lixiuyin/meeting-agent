@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Modal, Segmented, Spin, Tooltip } from "antd";
 import { ZoomInOutlined, ZoomOutOutlined, FilePdfOutlined } from "@ant-design/icons";
-import { Document, Page } from "react-pdf";
+import { Document } from "react-pdf";
+import VirtualPdfPage from "./VirtualPdfPage";
+import { usePdfPageDimensions } from "./usePdfPageDimensions";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
-import { AutoSizer } from "react-virtualized-auto-sizer";
+import LayoutAutoSizer from "./LayoutAutoSizer";
 import "../../../pdf-worker";
-import { getMeetingFileUrl } from "../../../api/client";
+import { useMeetingFileUrl } from "../../../hooks/useMeetingFileUrl";
 import PageLayoutView from "./PageLayoutView";
 import usePdfPageSync from "./usePdfPageSync";
 import type { PageItem } from "./types";
@@ -39,6 +41,7 @@ export default function PdfComparisonModal({
   onClose,
 }: PdfComparisonModalProps) {
   const [numPages, setNumPages] = useState(0);
+  const { ratios, loadDimensions } = usePdfPageDimensions();
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1.0);
   const [mobilePane, setMobilePane] = useState<"PDF" | "Parsed">("PDF");
@@ -68,10 +71,14 @@ export default function PdfComparisonModal({
     };
   }, [open]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages: n }: PDFDocumentProxy) => {
-    setNumPages(n);
-    setPdfError(null);
-  }, []);
+  const onDocumentLoadSuccess = useCallback(
+    (document: PDFDocumentProxy) => {
+      setNumPages(document.numPages);
+      setPdfError(null);
+      void loadDimensions(document);
+    },
+    [loadDimensions],
+  );
 
   const onDocumentLoadError = useCallback((error: Error) => {
     setPdfError(error.message || "Failed to load PDF");
@@ -80,7 +87,7 @@ export default function PdfComparisonModal({
   const zoomIn = useCallback(() => setZoom((z) => Math.min(z + ZOOM_STEP, MAX_ZOOM)), []);
   const zoomOut = useCallback(() => setZoom((z) => Math.max(z - ZOOM_STEP, MIN_ZOOM)), []);
 
-  const pdfUrl = useMemo(() => getMeetingFileUrl(meetingId, fileId), [meetingId, fileId]);
+  const pdfUrl = useMeetingFileUrl(meetingId, fileId);
 
   const handlePageClick = useCallback(
     (pageNum: number) => {
@@ -143,59 +150,44 @@ export default function PdfComparisonModal({
         </div>
       </div>
 
-      {pdfError ? (
+      {!pdfUrl ? (
+        <div style={{ textAlign: "center", padding: 40 }}>
+          <Spin />
+        </div>
+      ) : pdfError ? (
         <div style={{ padding: 24 }}>
           <Alert type="error" title="Failed to load PDF" description={pdfError} showIcon />
         </div>
       ) : (
         <div ref={sync.pdfContainerRef} style={{ flex: 1, overflow: "auto" }}>
-          <AutoSizer
-            style={{ width: "100%", height: "100%" }}
+          <LayoutAutoSizer
             renderProp={({ width }: { width?: number }) => {
               if (width === 0) return null;
               if (!width) return null;
               const scaledWidth = Math.floor(width * zoom);
               return (
-                <Document
-                  file={pdfUrl}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={onDocumentLoadError}
-                  loading={
-                    <div style={{ textAlign: "center", padding: 40 }}>
-                      <Spin />
-                    </div>
-                  }
-                >
-                  {pageNumbers.map((pageNum) => (
-                    <div
-                      key={pageNum}
-                      data-page-num={pageNum}
-                      style={{
-                        marginBottom: 8,
-                        boxShadow: "var(--shadow-sm)",
-                      }}
-                    >
-                      <Page
-                        pageNumber={pageNum}
+                <div style={{ paddingBottom: "var(--viewer-tail-space, 0px)" }}>
+                  <Document
+                    file={pdfUrl}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    loading={
+                      <div style={{ textAlign: "center", padding: 40 }}>
+                        <Spin />
+                      </div>
+                    }
+                  >
+                    {pageNumbers.map((pageNum) => (
+                      <VirtualPdfPage
+                        key={pageNum}
+                        number={pageNum}
                         width={scaledWidth}
-                        loading={
-                          <div
-                            style={{
-                              width: scaledWidth,
-                              height: scaledWidth * 1.414,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              background: "var(--color-bg-muted)",
-                            }}
-                          >
-                            <Spin />
-                          </div>
-                        }
+                        ratio={ratios[pageNum]}
+                        activePage={sync.currentPage}
                       />
-                    </div>
-                  ))}
-                </Document>
+                    ))}
+                  </Document>
+                </div>
               );
             }}
           />
@@ -206,12 +198,11 @@ export default function PdfComparisonModal({
 
   const renderParsedPane = () => (
     <div
-      ref={sync.parsedContainerRef}
       style={{
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        overflow: "auto",
+        overflow: "hidden",
         border: "1px solid var(--color-border)",
         borderRadius: 8,
         background: "var(--color-bg-elevated)",
@@ -230,92 +221,90 @@ export default function PdfComparisonModal({
         Parsed Content ({sortedPages.length} pages)
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: "center", padding: 40 }}>
-          <Spin />
-        </div>
-      ) : sortedPages.length === 0 ? (
-        <div
-          style={{
-            padding: 24,
-            color: "var(--color-text-muted)",
-            textAlign: "center",
-          }}
-        >
-          No parsed content available
-        </div>
-      ) : (
-        <div style={{ padding: 12 }}>
-          {sortedPages.map((page) => {
-            const isActive = page.page_num === sync.currentPage;
-            return (
-              <div
-                key={page.page_num}
-                data-page-num={page.page_num}
-                ref={(el) => sync.registerPageRef(page.page_num, el)}
-                role="button"
-                tabIndex={0}
-                style={{
-                  marginBottom: 12,
-                  borderLeft: isActive ? "3px solid var(--color-primary)" : "3px solid transparent",
-                  paddingLeft: 12,
-                  borderRadius: 4,
-                  transition: "border-left-color 0.2s",
-                  cursor: "pointer",
-                }}
-                onClick={() => handlePageClick(page.page_num)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    handlePageClick(page.page_num);
-                  }
-                }}
-              >
+      <div ref={sync.parsedContainerRef} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <Spin />
+          </div>
+        ) : sortedPages.length === 0 ? (
+          <div
+            style={{
+              padding: 24,
+              color: "var(--color-text-muted)",
+              textAlign: "center",
+            }}
+          >
+            No parsed content available
+          </div>
+        ) : (
+          <div style={{ padding: "12px 12px var(--viewer-tail-space, 0px)" }}>
+            {sortedPages.map((page) => {
+              const isActive = page.page_num === sync.currentPage;
+              return (
                 <div
+                  key={page.page_num}
+                  data-page-num={page.page_num}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginBottom: 8,
+                    marginBottom: 12,
+                    borderLeft: isActive
+                      ? "3px solid var(--color-primary)"
+                      : "3px solid transparent",
+                    paddingLeft: 12,
+                    borderRadius: 4,
+                    transition: "border-left-color 0.2s",
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "var(--color-primary)",
-                      background: "var(--color-bg-muted)",
-                      padding: "2px 8px",
-                      borderRadius: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 8,
                     }}
                   >
-                    Page {page.page_num}
-                  </span>
-                  {page.heading && (
-                    <span
+                    <button
+                      type="button"
+                      aria-label={`Go to page ${page.page_num}`}
+                      onClick={() => handlePageClick(page.page_num)}
                       style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: "var(--color-text-primary)",
+                        border: 0,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: "var(--color-primary)",
+                        background: "var(--color-bg-muted)",
+                        padding: "2px 8px",
+                        borderRadius: 10,
                       }}
                     >
-                      {page.heading.replace(/^#{1,6}\s*/, "")}
-                    </span>
-                  )}
+                      Page {page.page_num}
+                    </button>
+                    {page.heading && (
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        {page.heading.replace(/^#{1,6}\s*/, "")}
+                      </span>
+                    )}
+                  </div>
+                  <PageLayoutView
+                    pageNum={page.page_num}
+                    heading={page.heading}
+                    text={page.text}
+                    imageAssets={page.image_assets ?? []}
+                    label="Page"
+                    variant="modal"
+                  />
                 </div>
-                <PageLayoutView
-                  pageNum={page.page_num}
-                  heading={page.heading}
-                  text={page.text}
-                  imageAssets={page.image_assets ?? []}
-                  label="Page"
-                  variant="modal"
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 

@@ -14,18 +14,33 @@ class TestLifespanStartupFailure:
         source = inspect.getsource(lifespan_mod.lifespan)
         assert "try:" in source, "lifespan should have try block for startup"
         assert "run_critical_startup" in source
-        # The except block catches failures from critical startup to ensure
-        # yield is always reached (C-C2 fix).
+        # The except block records failures so dev can expose degraded status;
+        # non-dev environments re-raise and fail closed.
         assert "except Exception:" in source or "except" in source
 
-    def test_shutdown_module_uses_all_tasks(self):
-        """Shutdown module uses asyncio.all_tasks() for cleanup (CONC-10)."""
+    @pytest.mark.asyncio
+    async def test_critical_startup_failure_is_fatal_outside_dev(self, monkeypatch):
+        from fastapi import FastAPI
+
+        import src.api.lifespan as lifespan_mod
+
+        def fail_migration():
+            raise RuntimeError("migration failed")
+
+        monkeypatch.setattr(lifespan_mod.settings, "ENVIRONMENT", "production")
+        monkeypatch.setattr(lifespan_mod, "run_alembic_upgrade", fail_migration)
+
+        with pytest.raises(RuntimeError, match="migration failed"):
+            async with lifespan_mod.lifespan(FastAPI()):
+                pass
+
+    def test_shutdown_does_not_cancel_foreign_loop_tasks(self):
+        """Shutdown only cancels tasks owned by this application."""
         import src.api.lifespan._shutdown as shutdown_mod
 
         source = inspect.getsource(shutdown_mod.graceful_shutdown)
-        assert "asyncio.all_tasks" in source, (
-            "graceful_shutdown should use asyncio.all_tasks() for cleanup"
-        )
+        assert "asyncio.all_tasks" not in source
+        assert "cancel_all" in source
 
     def test_lifespan_has_shutdown_path(self):
         """Verify yield and shutdown code exist."""
@@ -41,4 +56,4 @@ class TestLifespanStartupFailure:
 
         source = inspect.getsource(shutdown_mod.graceful_shutdown)
         assert "close_all_connections" in source
-        assert "cancel_background_tasks" in source
+        assert "cancel_all" in source

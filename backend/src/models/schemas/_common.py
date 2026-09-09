@@ -68,6 +68,12 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] | None = Field(None, description="Additional error context")
 
 
+class RequestValidationErrorResponse(BaseModel):
+    """FastAPI request-validation errors retain the standard detail array."""
+
+    detail: list[dict[str, Any]]
+
+
 class PaginationParams(BaseModel):
     """Standard pagination parameters for list endpoints.
 

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _GRACE_PERIOD_MINUTES = 30
 
 
-def recover_stale_meetings() -> int:
+def recover_stale_meetings(*, active_file_ids: set[int] | None = None) -> int:
     """Reset meetings and files stuck in 'processing' state (e.g. after crash).
 
     Only recovers records that have been stuck for longer than the grace period
@@ -28,20 +28,34 @@ def recover_stale_meetings() -> int:
 
     try:
         with get_write_connection() as conn:
-            return _do_recover(conn, grace_expr)
+            return _do_recover(conn, grace_expr, active_file_ids or set())
     except Exception as exc:
         logger.warning("Recovery failed: %s", exc, exc_info=True)
         return 0
 
 
-def _do_recover(conn: sqlite3.Connection, grace_expr: str) -> int:
+def _do_recover(
+    conn: sqlite3.Connection,
+    grace_expr: str,
+    active_file_ids: set[int] | None = None,
+) -> int:
+    active_file_ids = active_file_ids or set()
+    excluded = tuple(sorted(active_file_ids))
+    excluded_placeholders = ",".join("?" for _ in excluded)
+    file_exclusion = f" AND id NOT IN ({excluded_placeholders})" if excluded else ""
+    meeting_exclusion = (
+        f" AND id NOT IN (SELECT meeting_id FROM meeting_files WHERE id IN "
+        f"({excluded_placeholders}))"
+        if excluded
+        else ""
+    )
     # Reset stuck files (only those stuck longer than grace period)
     cursor = conn.execute(
         "UPDATE meeting_files SET status='error', error_message='Processing interrupted', "
         "processing_started_at=NULL, updated_at=CURRENT_TIMESTAMP "
         "WHERE status='processing' "
-        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)",
-        (grace_expr,),
+        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)" + file_exclusion,
+        (grace_expr, *excluded),
     )
     file_count = cursor.rowcount
     if file_count:
@@ -52,8 +66,8 @@ def _do_recover(conn: sqlite3.Connection, grace_expr: str) -> int:
         "UPDATE meetings SET status='failed', processing_started_at=NULL, "
         "updated_at=CURRENT_TIMESTAMP "
         "WHERE status='processing' "
-        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)",
-        (grace_expr,),
+        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)" + meeting_exclusion,
+        (grace_expr, *excluded),
     )
     meeting_count = cursor.rowcount
     if meeting_count:
@@ -77,36 +91,9 @@ def _do_recover(conn: sqlite3.Connection, grace_expr: str) -> int:
             summarizing_file_count,
         )
 
-    # Reset summary_status stuck on 'pending'.
-    # Use double the grace period (60 min) because summary generation is a
-    # post-processing step that only starts after the main processing completes.
-    double_grace = f"-{_GRACE_PERIOD_MINUTES * 2} minutes"
-    cursor = conn.execute(
-        "UPDATE meetings SET summary_status='failed', "
-        "updated_at=CURRENT_TIMESTAMP "
-        "WHERE summary_status='pending' "
-        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)",
-        (double_grace,),
-    )
-    pending_count = cursor.rowcount
-    if pending_count:
-        logger.warning(
-            "Reset summary_status to 'failed' for %d meetings stuck on 'pending'",
-            pending_count,
-        )
-
-    cursor = conn.execute(
-        "UPDATE meeting_files SET summary_status='failed', "
-        "updated_at=CURRENT_TIMESTAMP "
-        "WHERE summary_status='pending' "
-        "AND COALESCE(processing_started_at, updated_at) < datetime('now', ?)",
-        (double_grace,),
-    )
-    file_pending_count = cursor.rowcount
-    if file_pending_count:
-        logger.warning(
-            "Reset summary_status to 'failed' for %d files stuck on 'pending'",
-            file_pending_count,
-        )
+    # ``pending`` is a durable, non-error summary state. It is expected to
+    # remain indefinitely when automatic summaries are disabled, and startup
+    # recovery requeues it when they are enabled. Age alone must therefore not
+    # turn a valid pending summary into a terminal failure.
 
     return meeting_count

@@ -2,7 +2,7 @@
 
 import pytest
 
-from scripts.benchmark import _embedding_cosine
+from scripts.benchmark import _embedding_cosine, _embedding_cosine_diagnostic
 
 
 def test_embedding_cosine_identity(monkeypatch):
@@ -43,3 +43,6 @@ def test_embedding_cosine_returns_none_on_exception(monkeypatch):
     monkeypatch.setattr("src.services.embedder.get_embeddings", lambda: _FakeEmbeddings())
     result = _embedding_cosine("a", "b")
     assert result is None
+    score, error = _embedding_cosine_diagnostic("a", "b")
+    assert score is None
+    assert error == "RuntimeError"

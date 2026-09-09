@@ -10,20 +10,37 @@ const MOBILE_BREAKPOINT = 768;
 export default function SlidesViewer({
   meetingId,
   fileId,
+  page,
 }: {
   meetingId: number;
   fileId: number;
   fileName: string;
+  page?: number;
 }) {
-  return <SlidesViewerInner key={`${meetingId}:${fileId}`} meetingId={meetingId} fileId={fileId} />;
+  return (
+    <SlidesViewerInner
+      key={`${meetingId}:${fileId}:${page ?? 1}`}
+      meetingId={meetingId}
+      fileId={fileId}
+      page={page}
+    />
+  );
 }
 
-function SlidesViewerInner({ meetingId, fileId }: { meetingId: number; fileId: number }) {
+function SlidesViewerInner({
+  meetingId,
+  fileId,
+  page,
+}: {
+  meetingId: number;
+  fileId: number;
+  page?: number;
+}) {
   const [parsedPages, setParsedPages] = useState<PageItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPage, setSelectedPage] = useState(0);
+  const [selectedPageOverride, setSelectedPage] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [mobilePane, setMobilePane] = useState<"Slides" | "Content">("Slides");
+  const [mobilePane, setMobilePane] = useState<"Slides" | "Content">(page ? "Content" : "Slides");
 
   useEffect(() => {
     let rafId: number;
@@ -68,6 +85,12 @@ function SlidesViewerInner({ meetingId, fileId }: { meetingId: number; fileId: n
         .sort((a, b) => a.page_num - b.page_num),
     [parsedPages],
   );
+  const selectedPage =
+    selectedPageOverride ??
+    Math.max(
+      0,
+      sortedPages.findIndex((item) => item.page_num === page),
+    );
 
   // --- Left pane: Slide thumbnail grid ---
   const renderSlidesPane = () => (

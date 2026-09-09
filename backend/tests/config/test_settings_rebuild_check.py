@@ -1,7 +1,16 @@
 """Tests for settings rebuild requirement detection."""
 
+from uuid import uuid4
+
+import pytest
+
+from src.api.routers.settings._common import (
+    _release_db_advisory_lock,
+    _try_acquire_db_advisory_lock,
+)
 from src.api.routers.settings._get import _get_current_settings
 from src.api.routers.settings._update import _rebuild_required
+from src.core import database as db
 from src.core.config import settings
 from src.models.schemas.settings import (
     EmbeddingSettings,
@@ -65,7 +74,8 @@ class TestEmbeddingRebuild:
 class TestRagRebuild:
     def test_chunk_size_change(self) -> None:
         current = _current_rag()
-        rag = current.model_copy(update={"chunk_size": 99999})
+        changed_size = 2048 if current.chunk_size != 2048 else 1024
+        rag = current.model_copy(update={"chunk_size": changed_size})
         req = _make_request(rag=rag)
         needs_rebuild, reason = _rebuild_required(req)
         assert needs_rebuild is True
@@ -121,6 +131,22 @@ class TestRagRebuild:
         assert needs_rebuild is True
         assert "non_text_chunking_strategy" in reason
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "parent_child_enabled",
+            "semantic_chunking_enabled",
+            "index_tables",
+            "index_image_captions",
+        ],
+    )
+    def test_index_shape_switches_require_rebuild(self, field: str) -> None:
+        current = _current_rag()
+        rag = current.model_copy(update={field: not getattr(current, field)})
+        needs_rebuild, reason = _rebuild_required(_make_request(rag=rag))
+        assert needs_rebuild is True
+        assert field in reason
+
     def test_top_k_no_rebuild(self) -> None:
         """Changing top_k (retrieval-only) should NOT require rebuild."""
         current = _current_rag()
@@ -128,6 +154,20 @@ class TestRagRebuild:
         req = _make_request(rag=rag)
         needs_rebuild, reason = _rebuild_required(req)
         assert needs_rebuild is False
+
+    def test_hybrid_search_toggle_no_rebuild(self) -> None:
+        """The BM25 mirror is always maintained, so this is retrieval-only."""
+        current = _current_rag()
+        provider = "vector" if current.hybrid_search_enabled else "hybrid"
+        rag = current.model_copy(
+            update={
+                "hybrid_search_enabled": not current.hybrid_search_enabled,
+                "retriever_provider": provider,
+            }
+        )
+        needs_rebuild, reason = _rebuild_required(_make_request(rag=rag))
+        assert needs_rebuild is False
+        assert reason == ""
 
     def test_reranker_no_rebuild(self) -> None:
         """Changing reranker settings should NOT require rebuild."""
@@ -150,3 +190,31 @@ class TestNoChanges:
         needs_rebuild, reason = _rebuild_required(req)
         assert needs_rebuild is False
         assert reason == ""
+
+
+def test_rebuild_advisory_lock_is_atomic_and_releasable() -> None:
+    lock_name = f"test_rebuild_{uuid4().hex}"
+    try:
+        assert _try_acquire_db_advisory_lock(lock_name) is True
+        assert _try_acquire_db_advisory_lock(lock_name) is False
+        _release_db_advisory_lock(lock_name)
+        assert _try_acquire_db_advisory_lock(lock_name) is True
+    finally:
+        _release_db_advisory_lock(lock_name)
+
+
+def test_rebuild_advisory_lock_renews_only_for_current_owner() -> None:
+    from src.api.routers.settings._common import renew_rebuild_advisory_lock
+
+    lock_name = f"test_rebuild_renew_{uuid4().hex}"
+    try:
+        assert _try_acquire_db_advisory_lock(lock_name)
+        assert renew_rebuild_advisory_lock(lock_name)
+        with db.get_write_connection() as conn:
+            conn.execute(
+                "UPDATE kv_state SET value='another-owner' WHERE key=?",
+                (f"{lock_name}_owner",),
+            )
+        assert not renew_rebuild_advisory_lock(lock_name)
+    finally:
+        _release_db_advisory_lock(lock_name)

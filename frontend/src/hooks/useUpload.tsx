@@ -202,7 +202,12 @@ export function useUpload({ mode, meetings, onSuccess }: UseUploadOptions) {
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           if (abortController.signal.aborted) break;
           try {
-            await uploadMeeting(file, { meetingId, signal: abortController.signal });
+            await uploadMeeting(file, {
+              meetingId,
+              signal: abortController.signal,
+              businessDomain: form.getFieldValue("businessDomain") ?? "unspecified",
+              materialRole: form.getFieldValue("materialRole"),
+            });
             break;
           } catch (err) {
             if (abortController.signal.aborted) break;

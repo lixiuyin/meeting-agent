@@ -21,18 +21,29 @@ from ._vector import _vector_score_lower_is_better, normalize_score
 logger = logging.getLogger(__name__)
 
 
-def _build_filter(meeting_ids: list[int] | None) -> dict[str, Any] | None:
-    if not meeting_ids:
+def _build_filter(
+    meeting_ids: list[int] | None,
+    user_id: str | None,
+) -> dict[str, Any] | None:
+    clauses: list[dict[str, Any]] = []
+    if user_id is not None:
+        clauses.append({"user_id": user_id})
+    if meeting_ids and len(meeting_ids) == 1:
+        clauses.append({"meeting_id": int(meeting_ids[0])})
+    elif meeting_ids:
+        clauses.append({"meeting_id": {"$in": [int(m) for m in meeting_ids]}})
+    if not clauses:
         return None
-    if len(meeting_ids) == 1:
-        return {"meeting_id": int(meeting_ids[0])}
-    return {"meeting_id": {"$in": [int(m) for m in meeting_ids]}}
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
 
 
 def _bm25_file_search(
     query: str,
     meeting_ids: list[int] | None,
     top_k: int,
+    user_id: str | None,
 ) -> list[dict] | None:
     """Run file-level BM25 search on summary FTS5 index.
 
@@ -43,7 +54,13 @@ def _bm25_file_search(
         from ...core.database.bm25 import fts5_search_file_summaries
 
         with get_connection() as conn:
-            return fts5_search_file_summaries(conn, query, meeting_ids=meeting_ids, limit=top_k * 2)
+            return fts5_search_file_summaries(
+                conn,
+                query,
+                meeting_ids=meeting_ids,
+                limit=top_k * 2,
+                user_id=user_id,
+            )
     except Exception:
         logger.debug("File summary BM25 search failed", exc_info=True)
         return None
@@ -116,6 +133,7 @@ def route_files_by_summary(
     *,
     top_k: int | None = None,
     min_score: float | None = None,
+    user_id: str | None = None,
 ) -> list[int] | None:
     """Return file_ids ranked by summary similarity to *query*.
 
@@ -158,7 +176,7 @@ def route_files_by_summary(
     except Exception:
         logger.debug("Summary collection count check failed", exc_info=True)
 
-    where = _build_filter(meeting_ids)
+    where = _build_filter(meeting_ids, user_id)
     fetch_k = max(requested_top_k, requested_top_k * 2)
 
     # --- Vector search ---
@@ -188,7 +206,7 @@ def route_files_by_summary(
     # --- BM25 search (hybrid mode) ---
     hybrid_enabled = getattr(settings, "RAG_SUMMARY_ROUTER_HYBRID_ENABLED", False)
     if hybrid_enabled:
-        bm25_results = _bm25_file_search(query, meeting_ids, requested_top_k)
+        bm25_results = _bm25_file_search(query, meeting_ids, requested_top_k, user_id)
         alpha = getattr(settings, "RAG_SUMMARY_ROUTER_HYBRID_ALPHA", 0.6)
 
         if bm25_results is not None:
@@ -225,6 +243,7 @@ def route_files_with_scores(
     meeting_ids: list[int] | None = None,
     *,
     top_k: int | None = None,
+    user_id: str | None = None,
 ) -> list[tuple[int, float]] | None:
     """Variant of :func:`route_files_by_summary` returning scores too.
 
@@ -247,7 +266,7 @@ def route_files_with_scores(
     except Exception:
         return None
 
-    where = _build_filter(meeting_ids)
+    where = _build_filter(meeting_ids, user_id)
     fetch_k = max(requested_top_k, requested_top_k * 2)
 
     # --- Vector search ---
@@ -266,19 +285,16 @@ def route_files_with_scores(
         file_id = meta.get("file_id")
         if not isinstance(file_id, int) or file_id in seen:
             continue
-        score_f = float(score)
-        if threshold > 0:
-            if lower_is_better and score_f > threshold:
-                continue
-            if not lower_is_better and score_f < threshold:
-                continue
+        score_f = normalize_score(float(score), lower_is_better)
+        if threshold > 0 and score_f < threshold:
+            continue
         vector_ranked.append((file_id, score_f))
         seen.add(file_id)
 
     # --- BM25 search (hybrid mode) ---
     hybrid_enabled = getattr(settings, "RAG_SUMMARY_ROUTER_HYBRID_ENABLED", False)
     if hybrid_enabled:
-        bm25_results = _bm25_file_search(query, meeting_ids, requested_top_k)
+        bm25_results = _bm25_file_search(query, meeting_ids, requested_top_k, user_id)
         alpha = getattr(settings, "RAG_SUMMARY_ROUTER_HYBRID_ALPHA", 0.6)
 
         if bm25_results is not None:
@@ -287,5 +303,5 @@ def route_files_with_scores(
                 return fused
 
     # --- Vector-only fallback ---
-    vector_ranked.sort(key=lambda x: x[1], reverse=not lower_is_better)
+    vector_ranked.sort(key=lambda x: x[1], reverse=True)
     return vector_ranked[:requested_top_k]

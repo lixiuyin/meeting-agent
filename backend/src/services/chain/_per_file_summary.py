@@ -1,7 +1,5 @@
 """Per-file summary generation with kind-aware prompts."""
 
-from typing import Any
-
 from ...core.config import settings
 from .. import llm as llm_service
 from ..tokenizer import count_tokens
@@ -164,6 +162,5 @@ async def generate_per_file_summary(
         "Follow the output structure specified above.\n\n"
         f"Content:\n{capped_text}\n\n### File Summary"
     )
-    response: Any = await llm.ainvoke(prompt)
-    summary = str(response.content).strip()
+    summary = await llm_service.invoke_llm_text(llm, prompt)
     return summary, _extract_key_points(summary)

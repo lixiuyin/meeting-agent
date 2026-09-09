@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { Input, Button, Alert, Tooltip, message } from "antd";
-import { SendOutlined, CopyOutlined } from "@ant-design/icons";
+import { SendOutlined, CopyOutlined, StopOutlined } from "@ant-design/icons";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIntl } from "react-intl";
+import { sourceToViewerRequest } from "../utils/sourceLocation";
 import { useViewer } from "../contexts/ViewerContext";
 import WelcomeScreen from "../components/home/WelcomeScreen";
 import ChatMessageBubble from "../components/home/ChatMessageBubble";
@@ -12,7 +13,6 @@ import HomeRestoringView from "../components/home/HomeRestoringView";
 import { useChatSession } from "../contexts/ChatContext";
 import { MessageActionsProvider } from "../contexts/MessageActionsContext";
 import type { SourceItem } from "../api/client";
-import { getKindCapabilities } from "../types/fileKinds";
 import { useChatSummaryModal } from "../hooks/useChatSummaryModal";
 import { useHomeShortcuts } from "../hooks/useHomeShortcuts";
 import SummaryModal from "../components/materials/SummaryModal";
@@ -24,16 +24,21 @@ export default function HomePage() {
     input,
     setInput,
     restoring,
+    hasOlderMessages,
+    loadingOlder,
+    loadOlderMessages,
+    pendingRun,
+    resumePendingRun,
     restoreError,
     setRestoreError,
+    retryRestore,
     inputFocused,
     setInputFocused,
     copiedId,
+    editingMessage,
     // Chat options
     paramsExpanded,
     setParamsExpanded,
-    topK,
-    setTopK,
     useWebSearch,
     setUseWebSearch,
     selectedTypeFilters,
@@ -42,8 +47,18 @@ export default function HomePage() {
     setDateFrom,
     dateTo,
     setDateTo,
+    validAt,
+    setValidAt,
+    knownAt,
+    setKnownAt,
+    continuationMode,
+    setContinuationMode,
     ragMode,
     setRagMode,
+    retrievalProfile,
+    setRetrievalProfile,
+    memoryMode,
+    setMemoryMode,
     activeParamCount,
     // Session selection
     selectedMeetingIds,
@@ -77,6 +92,10 @@ export default function HomePage() {
     // Handlers
     handleSend,
     handleRegenerate,
+    handleEditUserMessage,
+    cancelEditing,
+    handleStop,
+    handleWithdrawCurrent,
     handleCopy,
     handleCopyRequestId,
     handleCopySourceSnippet,
@@ -109,24 +128,13 @@ export default function HomePage() {
         // Avoid silent no-op clicks: chunks should always carry file_id, but
         // if metadata was lost upstream the user still gets a clear signal
         // rather than a dead button.
-        message.warning("Source is missing file information; cannot open viewer");
+        message.warning(formatMessage({ id: "chat.sourceFileInfoMissing" }));
         return;
       }
-      const caps = getKindCapabilities(source.file_type);
-      const supportsSeek = caps.hasTimeline;
-      const seekTo =
-        supportsSeek && source.timestamp_start != null ? source.timestamp_start : undefined;
-      openViewer({
-        meetingId: source.meeting_id,
-        fileId: source.file_id,
-        fileName: source.file_name ?? source.meeting_title,
-        fileType: source.file_type ?? "unknown",
-        seekTo,
-        page: source.page_number ?? undefined,
-        meetingTitle: source.meeting_title,
-      });
+      const request = sourceToViewerRequest(source);
+      if (request) openViewer(request);
     },
-    [openViewer],
+    [formatMessage, openViewer],
   );
 
   const openSummaryFileViewer = useCallback(
@@ -148,6 +156,7 @@ export default function HomePage() {
       copiedId,
       onCopy: handleCopy,
       onRegenerate: handleRegenerate,
+      onEditUserMessage: handleEditUserMessage,
       onOpenViewer: openSourceViewer,
       onOpenMeetingSummary: (meetingId: number, fallbackContent?: string) =>
         summaryModal.openSummary(meetingId, undefined, true, fallbackContent),
@@ -162,6 +171,7 @@ export default function HomePage() {
       handleCopy,
       handleCopySourceSnippet,
       handleRegenerate,
+      handleEditUserMessage,
     ],
   );
 
@@ -210,8 +220,6 @@ export default function HomePage() {
       <ChatParameters
         expanded={paramsExpanded}
         onToggle={() => setParamsExpanded((v) => !v)}
-        topK={topK}
-        onTopKChange={(v) => setTopK(v)}
         useWebSearch={useWebSearch}
         onUseWebSearchChange={setUseWebSearch}
         selectedTypeFilters={selectedTypeFilters}
@@ -220,8 +228,18 @@ export default function HomePage() {
         onDateFromChange={(v) => setDateFrom(v)}
         dateTo={dateTo}
         onDateToChange={(v) => setDateTo(v)}
+        validAt={validAt}
+        onValidAtChange={setValidAt}
+        knownAt={knownAt}
+        onKnownAtChange={setKnownAt}
+        continuationMode={continuationMode}
+        onContinuationModeChange={setContinuationMode}
         ragMode={ragMode}
         onRagModeChange={setRagMode}
+        retrievalProfile={retrievalProfile}
+        onRetrievalProfileChange={setRetrievalProfile}
+        memoryMode={memoryMode}
+        onMemoryModeChange={setMemoryMode}
         activeParamCount={activeParamCount}
       />
 
@@ -279,7 +297,7 @@ export default function HomePage() {
                       }}
                     >
                       <span style={{ color: "var(--color-text-muted)" }}>
-                        Request ID: {streamRequestId}
+                        {formatMessage({ id: "chat.requestId" })}: {streamRequestId}
                       </span>
                       <Button
                         type="text"
@@ -288,13 +306,20 @@ export default function HomePage() {
                         onClick={() => handleCopyRequestId(streamRequestId!)}
                         style={{ paddingInline: 6, height: 24 }}
                       >
-                        Copy
+                        {formatMessage({ id: "chat.copy" })}
                       </Button>
                     </div>
                   )}
                 </div>
               }
               closable
+              action={
+                restoreError ? (
+                  <Button size="small" onClick={retryRestore}>
+                    {formatMessage({ id: "home.restoreRetry" })}
+                  </Button>
+                ) : undefined
+              }
               onClose={() => {
                 setRestoreError(null);
                 setStreamError(null);
@@ -317,11 +342,24 @@ export default function HomePage() {
             />
           </motion.div>
         )}
+        {pendingRun && !isStreaming && (
+          <Alert
+            type="info"
+            showIcon
+            title="An earlier response can be recovered without sending the question again."
+            action={<Button onClick={() => void resumePendingRun()}>Recover response</Button>}
+          />
+        )}
         {messages.length === 0 ? (
           <WelcomeScreen onQuickQuestion={(q) => handleSend(q)} />
         ) : (
           <MessageActionsProvider value={messageActions}>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {hasOlderMessages && (
+                <Button loading={loadingOlder} onClick={() => void loadOlderMessages()}>
+                  {formatMessage({ id: "home.loadOlder", defaultMessage: "Load older messages" })}
+                </Button>
+              )}
               <AnimatePresence initial={false}>
                 {messages.map((msg, idx) => (
                   <ChatMessageBubble
@@ -348,6 +386,27 @@ export default function HomePage() {
           borderTop: "1px solid var(--color-border)",
         }}
       >
+        {editingMessage && (
+          <Alert
+            type="info"
+            showIcon
+            title={formatMessage({ id: "chat.editingBranch" })}
+            description={formatMessage({ id: "chat.editingBranchDescription" })}
+            action={
+              <Button size="small" onClick={cancelEditing}>
+                {formatMessage({ id: "common.cancel" })}
+              </Button>
+            }
+            style={{ marginBottom: 8 }}
+          />
+        )}
+        {isStreaming && pendingRun?.id && (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <Button danger size="small" onClick={() => void handleWithdrawCurrent()}>
+              {formatMessage({ id: "chat.withdrawCurrent" })}
+            </Button>
+          </div>
+        )}
         <div
           style={{
             display: "flex",
@@ -382,16 +441,15 @@ export default function HomePage() {
               lineHeight: 1.5,
             }}
           />
-          <Tooltip title="Send message">
+          <Tooltip title={formatMessage({ id: isStreaming ? "chat.stopGenerating" : "chat.send" })}>
             <Button
               type="primary"
               shape="circle"
               size="large"
-              icon={<SendOutlined />}
-              onClick={() => handleSend()}
-              loading={isStreaming}
-              disabled={!input.trim()}
-              aria-label="Send message"
+              icon={isStreaming ? <StopOutlined /> : <SendOutlined />}
+              onClick={isStreaming ? () => void handleStop() : () => handleSend()}
+              disabled={!isStreaming && !input.trim()}
+              aria-label={formatMessage({ id: isStreaming ? "chat.stopGenerating" : "chat.send" })}
               style={{
                 background: "var(--gradient-primary)",
                 border: "none",
@@ -443,7 +501,9 @@ export default function HomePage() {
         data={summaryModal.data}
         streaming={summaryModal.streaming}
         files={summaryModal.files}
-        title={summaryModal.targetFileId != null ? "File Summary" : "Meeting Summary"}
+        title={formatMessage({
+          id: summaryModal.targetFileId != null ? "chat.fileSummary" : "chat.meetingSummary",
+        })}
         focusFileId={summaryModal.targetFileId}
         onCopy={summaryModal.copy}
         onDownload={summaryModal.download}

@@ -1,38 +1,26 @@
 """MemoryService CRUD mixin."""
 
 import threading
-
-from cachetools import LRUCache
+import uuid
+from contextlib import ExitStack
+from typing import Any
 
 from ....core import database as db
 from ....core.audit import audit_log
 from ....core.database import get_write_connection
-from ....core.metrics import MEMORY_EVICT_TOTAL
-from .._common import (
-    _INITIAL_IMPORTANCE,
-    _MAX_IMPORTANCE,
-    _MAX_MEMORIES_PER_USER,
-    _MIN_IMPORTANCE,
-    logger,
-)
+from .._common import logger
 from .._vectorstore import get_memory_vectorstore
+from . import settings
 
-# Per-key locks serialize concurrent set() calls for the same user+key
-# to prevent interleaved Step 2/Step 3 that orphans vectors (HIGH-11).
-# Capped with an LRU so multi-tenant deployments don't leak memory.
-# Eviction is safe: the only invariant "serialises set() for this key"
-# cannot break when no thread is holding the evicted lock.
-_key_locks = LRUCache(maxsize=4096)
-_key_locks_guard = threading.Lock()
+# Fixed striped locks serialize every mutation of a user+key without an
+# unbounded registry or unsafe eviction of a lock that is still held.
+_KEY_LOCK_STRIPES = 4096
+_key_locks = tuple(threading.RLock() for _ in range(_KEY_LOCK_STRIPES))
 
 
-def _get_key_lock(user_id: str, key: str) -> threading.Lock:
-    """Return (creating if needed) a lock for serializing writes to a memory key."""
-    k = (user_id, key)
-    with _key_locks_guard:
-        if k not in _key_locks:
-            _key_locks[k] = threading.Lock()
-        return _key_locks[k]
+def _get_key_lock(user_id: str, key: str) -> Any:
+    """Return a stable striped lock for serializing all writes to a memory key."""
+    return _key_locks[hash((user_id, key)) % _KEY_LOCK_STRIPES]
 
 
 def _union_ids(a: list[int] | None, b: list[int] | None) -> list[int] | None:
@@ -137,10 +125,18 @@ class _MemoryCrudMixin:
                 with get_write_connection() as conn:
                     cursor = conn.execute(
                         "UPDATE user_memories "
-                        "SET importance = MIN(importance + ?, ?) "
+                        "SET importance = MIN(importance + ?, ?), "
+                        "salience = MIN(salience + ?, ?) "
                         "WHERE user_id = ? AND key = ? "
-                        "RETURNING importance",
-                        (boost, _MAX_IMPORTANCE, user_id, entry.key),
+                        "RETURNING importance, embedding_id",
+                        (
+                            boost,
+                            settings.MEMORY_MAX_IMPORTANCE,
+                            boost,
+                            settings.MEMORY_MAX_IMPORTANCE,
+                            user_id,
+                            entry.key,
+                        ),
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -150,15 +146,29 @@ class _MemoryCrudMixin:
                     vs = get_memory_vectorstore()
                     # Metadata-only update — the document text and embedding
                     # are unchanged when only the importance score is bumped.
-                    vs.bump_importance(
+                    synced = vs.bump_importance(
                         user_id,
                         entry.key,
                         new_importance,
+                        embedding_id=row["embedding_id"],
                         category=entry.category,
                         meeting_ids=entry.meeting_ids,
                         file_ids=entry.file_ids,
                     )
+                    if not synced:
+                        with get_write_connection() as conn:
+                            conn.execute(
+                                "UPDATE user_memories SET vector_state='pending' "
+                                "WHERE user_id=? AND key=? AND embedding_id IS ?",
+                                (user_id, entry.key, row["embedding_id"]),
+                            )
                 except Exception:
+                    with get_write_connection() as conn:
+                        conn.execute(
+                            "UPDATE user_memories SET vector_state='pending' "
+                            "WHERE user_id=? AND key=? AND embedding_id IS ?",
+                            (user_id, entry.key, row["embedding_id"]),
+                        )
                     logger.warning(
                         "Failed to bump memory importance for key %s",
                         entry.key,
@@ -190,10 +200,18 @@ class _MemoryCrudMixin:
                 with get_write_connection() as conn:
                     cursor = conn.execute(
                         "UPDATE user_memories "
-                        "SET importance = MIN(importance + ?, ?) "
+                        "SET importance = MIN(importance + ?, ?), "
+                        "salience = MIN(salience + ?, ?) "
                         "WHERE user_id = ? AND key = ? "
-                        "RETURNING id, importance, value, category",
-                        (boost, _MAX_IMPORTANCE, user_id, key),
+                        "RETURNING id, importance, value, category, embedding_id",
+                        (
+                            boost,
+                            settings.MEMORY_MAX_IMPORTANCE,
+                            boost,
+                            settings.MEMORY_MAX_IMPORTANCE,
+                            user_id,
+                            key,
+                        ),
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -205,15 +223,29 @@ class _MemoryCrudMixin:
                 try:
                     vs = get_memory_vectorstore()
                     # Metadata-only update — see bump_importance() docstring.
-                    vs.bump_importance(
+                    synced = vs.bump_importance(
                         user_id,
                         key,
                         new_importance,
+                        embedding_id=row["embedding_id"],
                         category=row["category"],
                         meeting_ids=meeting_ids or None,
                         file_ids=file_ids or None,
                     )
+                    if not synced:
+                        with get_write_connection() as conn:
+                            conn.execute(
+                                "UPDATE user_memories SET vector_state='pending' "
+                                "WHERE user_id=? AND key=? AND embedding_id IS ?",
+                                (user_id, key, row["embedding_id"]),
+                            )
                 except Exception:
+                    with get_write_connection() as conn:
+                        conn.execute(
+                            "UPDATE user_memories SET vector_state='pending' "
+                            "WHERE user_id=? AND key=? AND embedding_id IS ?",
+                            (user_id, key, row["embedding_id"]),
+                        )
                     logger.warning(
                         "Failed to bump memory importance for key %s", key, exc_info=True
                     )
@@ -221,10 +253,38 @@ class _MemoryCrudMixin:
             except Exception:
                 logger.warning("Failed to boost memory %s", key, exc_info=True)
 
-    def get(self, user_id: str, key: str) -> str | None:
+    def get(
+        self,
+        user_id: str,
+        key: str,
+        *,
+        excluded_session_ids: set[str] | None = None,
+    ) -> str | None:
         """Get a single memory value."""
-        with db.get_connection() as conn:
-            value = db.get_memory(conn, user_id=user_id, key=key)
+        from ....core.memory_policy import is_active_memory
+
+        with db.get_connection() as conn, conn:
+            if key == "__profile__":
+                if not conn.in_transaction:
+                    conn.execute("BEGIN")
+                from ....core.database.memory_lifecycle import profile_sources, valid_profile
+                from ..evidence_admission import admissible_memories
+
+                profile = valid_profile(
+                    conn,
+                    user_id,
+                    excluded_session_ids=excluded_session_ids,
+                )
+                if not profile:
+                    return None
+                sources = profile_sources(conn, user_id)
+                return (
+                    profile
+                    if sources and len(admissible_memories(conn, sources, user_id)) == len(sources)
+                    else None
+                )
+            row = db.get_memory_full(conn, user_id=user_id, key=key)
+        value = row["value"] if row and is_active_memory(row) else None
         if value is not None:
             # Queue touch for batch flush instead of per-get write-lock
             # contention (H-MEM-2). The batch is flushed periodically by
@@ -238,13 +298,31 @@ class _MemoryCrudMixin:
         key: str,
         value: str,
         source: str = "manual",
-        importance: float = _INITIAL_IMPORTANCE,
+        importance: float | None = None,
         expires_at: str | None = None,
         category: str | None = None,
         session_id: str | None = None,
         turn_index: int | None = None,
         meeting_ids: list[int] | None = None,
         file_ids: list[int] | None = None,
+        confidence: float | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        evidence_message_ids: list[int] | None = None,
+        evidence_excerpt: str | None = None,
+        evidence_refs: list[dict[str, Any]] | None = None,
+        conflicts_with: list[str] | None = None,
+        supersedes: list[str] | None = None,
+        fact_type: str = "fact",
+        assertion_status: str = "confirmed",
+        project_id: str | None = None,
+        subject: str | None = None,
+        predicate: str | None = None,
+        object_value: str | None = None,
+        action_status: str | None = None,
+        assignee: str | None = None,
+        due_at: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Store a memory with importance, TTL, category, and provenance.
 
@@ -252,25 +330,56 @@ class _MemoryCrudMixin:
         so scoped chat queries can filter out unrelated context. When omitted,
         the memory is treated as global / unscoped.
         """
-        importance = max(_MIN_IMPORTANCE, min(_MAX_IMPORTANCE, importance))
+        resolved_importance = float(
+            settings.MEMORY_INITIAL_IMPORTANCE if importance is None else importance
+        )
+        resolved_importance = max(
+            float(settings.MEMORY_MIN_IMPORTANCE),
+            min(float(settings.MEMORY_MAX_IMPORTANCE), resolved_importance),
+        )
 
         # HIGH-11: Serialize writes to the same key so two concurrent set()
         # calls cannot interleave their Step 2 (SQL) / Step 3 (vector)
         # sequences and leave orphaned vectors.
-        key_lock = _get_key_lock(user_id, key)
-        with key_lock:
+        mutation_locks = {
+            id(lock): lock
+            for lock in (
+                _get_key_lock(user_id, candidate) for candidate in [key, *(supersedes or [])]
+            )
+        }
+        with ExitStack() as stack:
+            for lock_id in sorted(mutation_locks):
+                stack.enter_context(mutation_locks[lock_id])
             self._set_locked(
                 user_id,
                 key,
                 value,
                 source,
-                importance,
+                resolved_importance,
                 expires_at,
                 category,
                 session_id,
                 turn_index,
                 meeting_ids,
                 file_ids,
+                1.0 if confidence is None else confidence,
+                valid_from,
+                valid_to,
+                evidence_message_ids,
+                evidence_excerpt,
+                evidence_refs,
+                conflicts_with,
+                supersedes,
+                fact_type,
+                assertion_status,
+                project_id,
+                subject,
+                predicate,
+                object_value,
+                action_status,
+                assignee,
+                due_at,
+                expected_revision,
             )
 
     def _set_locked(
@@ -286,6 +395,24 @@ class _MemoryCrudMixin:
         turn_index: int | None,
         meeting_ids: list[int] | None,
         file_ids: list[int] | None,
+        confidence: float,
+        valid_from: str | None,
+        valid_to: str | None,
+        evidence_message_ids: list[int] | None,
+        evidence_excerpt: str | None,
+        evidence_refs: list[dict[str, Any]] | None,
+        conflicts_with: list[str] | None,
+        supersedes: list[str] | None,
+        fact_type: str,
+        assertion_status: str,
+        project_id: str | None,
+        subject: str | None,
+        predicate: str | None,
+        object_value: str | None,
+        action_status: str | None,
+        assignee: str | None,
+        due_at: str | None,
+        expected_revision: int | None,
     ) -> None:
         """Internal: execute the actual set() logic under per-key lock.
 
@@ -307,74 +434,49 @@ class _MemoryCrudMixin:
                 embedding_id=None,
                 meeting_ids=meeting_ids,
                 file_ids=file_ids,
+                confidence=confidence,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                evidence_message_ids=evidence_message_ids,
+                evidence_excerpt=evidence_excerpt,
+                evidence_refs=evidence_refs,
+                conflicts_with=conflicts_with,
+                fact_type=fact_type,
+                assertion_status=assertion_status,
+                project_id=project_id,
+                subject=subject,
+                predicate=predicate,
+                object_value=object_value or value,
+                action_status=action_status,
+                assignee=assignee,
+                due_at=due_at,
+                expected_revision=expected_revision,
             )
             if session_id is not None:
                 conn.execute(
                     "UPDATE user_memories SET session_id=?, turn_index=? WHERE user_id=? AND key=?",
                     (session_id, turn_index, user_id, key),
                 )
+            # The SQL fact and its derived-index state commit atomically. A
+            # crash after this transaction is therefore discoverable by the
+            # startup reconciler instead of leaving an unmarked stale vector.
+            conn.execute(
+                "UPDATE user_memories SET vector_state=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND key=?",
+                ("pending" if assertion_status == "confirmed" else "inactive", user_id, key),
+            )
+            for old_key in dict.fromkeys(supersedes or []):
+                if old_key != key:
+                    db.mark_memory_superseded(
+                        conn,
+                        user_id=user_id,
+                        key=old_key,
+                        superseded_by=key,
+                    )
 
-        # Step 3: Vector upsert outside lock, then backfill embedding_id.
-        # Mark vector_state='pending' with updated_at touched so the startup
-        # reconciler can gauge staleness (M-MEM-1).
-        try:
-            with get_write_connection() as conn:
-                conn.execute(
-                    "UPDATE user_memories SET vector_state='pending', "
-                    "updated_at = CURRENT_TIMESTAMP "
-                    "WHERE user_id=? AND key=?",
-                    (user_id, key),
-                )
-        except Exception:
-            pass  # best-effort state mark; upsert will proceed regardless
+        from ._index_sync import index_current_memory
 
-        embedding_id = None
-        for attempt in range(3):
-            try:
-                vs = get_memory_vectorstore()
-                embedding_id = vs.upsert(
-                    user_id,
-                    key,
-                    value,
-                    importance,
-                    category,
-                    meeting_ids=meeting_ids,
-                    file_ids=file_ids,
-                )
-                break
-            except Exception as e:
-                if attempt < 2:
-                    logger.debug(
-                        "Vector store upsert attempt %d failed, retrying: %s",
-                        attempt + 1,
-                        e,
-                    )
-                else:
-                    logger.warning(
-                        "Failed to index memory vector for key %s after 3 attempts",
-                        key,
-                        exc_info=True,
-                    )
-        if embedding_id is not None:
-            try:
-                with get_write_connection() as conn:
-                    conn.execute(
-                        "UPDATE user_memories SET embedding_id=?, vector_state='synced' "
-                        "WHERE user_id=? AND key=?",
-                        (embedding_id, user_id, key),
-                    )
-            except Exception:
-                logger.warning("Failed to backfill embedding_id for %s", key, exc_info=True)
-        else:
-            # Vector upsert failed after 3 retries — mark for later reconciliation.
-            try:
-                with get_write_connection() as conn:
-                    conn.execute(
-                        "UPDATE user_memories SET vector_state='failed' WHERE user_id=? AND key=?",
-                        (user_id, key),
-                    )
-            except Exception:
-                pass  # best-effort failure marking; reconciliation will catch it later
+        index_current_memory(user_id, key)
 
         self._enforce_memory_cap(user_id)
         audit_log(
@@ -401,23 +503,64 @@ class _MemoryCrudMixin:
         If the vector store deletion fails, the embedding_id is recorded
         in ``pending_vector_deletions`` for cleanup on the next startup.
         """
-        embedding_id: str | None = None
-        with get_write_connection() as conn:
-            embedding_id = db.delete_memory(conn, user_id=user_id, key=key)
+        with _get_key_lock(user_id, key):
+            embedding_id: str | None = None
+            with get_write_connection() as conn:
+                embedding_id = db.delete_memory(conn, user_id=user_id, key=key)
+                if embedding_id:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO pending_vector_deletions "
+                        "(collection, embedding_id) VALUES ('memory', ?)",
+                        (embedding_id,),
+                    )
 
-        if embedding_id:
-            try:
-                vs = get_memory_vectorstore()
-                vs.delete(embedding_id)
-            except Exception as e:
-                logger.warning(
-                    "Failed to delete memory vector %s — queued for deferred cleanup: %s",
-                    embedding_id,
-                    e,
-                    exc_info=True,
-                )
-                self._queue_pending_vector_deletion("memory", embedding_id)
+            if embedding_id:
+                # The outbox row was committed atomically with the primary delete.
+                # Keep the key lock until the immediate cleanup attempt finishes so
+                # a concurrent set cannot have its new vector removed by this delete.
+                try:
+                    cleanup_pending_vector_deletions(collections={"memory"})
+                except Exception:
+                    logger.warning(
+                        "Immediate memory vector cleanup failed; durable job remains queued",
+                        exc_info=True,
+                    )
         audit_log("memory.delete", "memory", key, user_id=user_id)
+
+    def delete_many(self, user_id: str, keys: list[str]) -> tuple[list[str], list[str]]:
+        """Delete several memories atomically and enqueue their vector cleanup work."""
+        unique_keys = list(dict.fromkeys(keys))
+        deleted: list[str] = []
+        locks = sorted({_get_key_lock(user_id, key) for key in unique_keys}, key=id)
+        with ExitStack() as stack:
+            for lock in locks:
+                stack.enter_context(lock)
+            with get_write_connection() as conn:
+                existing = db.get_memories_batch(conn, user_id=user_id, keys=unique_keys)
+                for key in unique_keys:
+                    if key not in existing:
+                        continue
+                    embedding_id = db.delete_memory(conn, user_id=user_id, key=key)
+                    if embedding_id:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO pending_vector_deletions "
+                            "(collection, embedding_id) VALUES ('memory', ?)",
+                            (embedding_id,),
+                        )
+                    deleted.append(key)
+
+            if deleted:
+                try:
+                    cleanup_pending_vector_deletions(collections={"memory"})
+                except Exception:
+                    logger.warning(
+                        "Immediate batch memory vector cleanup failed; durable jobs remain queued",
+                        exc_info=True,
+                    )
+                for key in deleted:
+                    audit_log("memory.delete", "memory", key, user_id=user_id)
+        missing = [key for key in unique_keys if key not in existing]
+        return deleted, missing
 
     @staticmethod
     def _queue_pending_vector_deletion(collection: str, embedding_id: str) -> None:
@@ -425,7 +568,8 @@ class _MemoryCrudMixin:
         try:
             with get_write_connection() as conn:
                 conn.execute(
-                    "INSERT INTO pending_vector_deletions (collection, embedding_id) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO pending_vector_deletions "
+                    "(collection, embedding_id) VALUES (?, ?)",
                     (collection, embedding_id),
                 )
         except Exception:
@@ -437,60 +581,17 @@ class _MemoryCrudMixin:
             )
 
     def _enforce_memory_cap(self, user_id: str) -> None:
-        """Prune lowest-importance memories when per-user cap is exceeded."""
-        # C-6: Count + select + delete in same write transaction to prevent TOCTOU race.
-        to_prune: list[dict] = []
+        """Bound active recall without deleting the business/history ledger."""
+        from ....core.database.memory_lifecycle import archive_memories
+
         with get_write_connection() as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) as cnt FROM user_memories WHERE user_id=?",
-                (user_id,),
-            ).fetchone()["cnt"]
-            if count <= _MAX_MEMORIES_PER_USER:
-                return
-            excess = count - _MAX_MEMORIES_PER_USER
-            to_prune = conn.execute(
-                """SELECT key, embedding_id FROM user_memories
-                   WHERE user_id=? ORDER BY
-                   (importance + EXP(
-                       -(JULIANDAY('now') - JULIANDAY(
-                           COALESCE(created_at, '2000-01-01'))) / 30.0
-                   )) ASC
-                   LIMIT ?""",
-                (user_id, excess),
+            rows = conn.execute(
+                "SELECT id,embedding_id FROM user_memories "
+                "WHERE user_id=? AND archived_at IS NULL AND key!='__profile__' "
+                "ORDER BY salience DESC, created_at DESC, id DESC LIMIT -1 OFFSET ?",
+                (user_id, settings.MEMORY_MAX_PER_USER),
             ).fetchall()
-
-            if to_prune:
-                keys = [r["key"] for r in to_prune]
-                placeholders = ",".join("?" * len(keys))
-                conn.execute(
-                    f"DELETE FROM user_memories WHERE user_id=? AND key IN ({placeholders})",
-                    [user_id, *keys],
-                )
-
-        if not to_prune:
-            return
-
-        # Vector delete outside the write transaction (best-effort, non-blocking)
-        embedding_ids = [r["embedding_id"] for r in to_prune if r.get("embedding_id")]
-        if embedding_ids:
-            try:
-                vs = get_memory_vectorstore()
-                for eid in embedding_ids:
-                    vs.delete(eid)
-            except Exception:
-                logger.warning(
-                    "Failed to batch-delete memory vectors for user %s",
-                    user_id,
-                    exc_info=True,
-                )
-
-        logger.info(
-            "Pruned %d memories for user %s (cap: %d)",
-            len(to_prune),
-            user_id,
-            _MAX_MEMORIES_PER_USER,
-        )
-        MEMORY_EVICT_TOTAL.inc(len(to_prune))
+            archive_memories(conn, rows, reason="recall_capacity")
 
     def list_all(
         self,
@@ -512,7 +613,32 @@ class _MemoryCrudMixin:
             )
 
 
-def cleanup_pending_vector_deletions() -> int:
+def purge_expired_memories_durable() -> int:
+    """Delete expired memories while durably scheduling vector cleanup."""
+    with get_write_connection() as conn:
+        expired = db.get_expired_memory_ids(conn)
+        conn.executemany(
+            "INSERT OR IGNORE INTO pending_vector_deletions "
+            "(collection, embedding_id) VALUES ('memory', ?)",
+            [(row["embedding_id"],) for row in expired if row.get("embedding_id")],
+        )
+        deleted = db.delete_expired_memories(conn)
+    if expired:
+        try:
+            cleanup_pending_vector_deletions(collections={"memory"})
+        except Exception:
+            logger.warning(
+                "Immediate expired-memory vector cleanup failed; durable jobs remain queued",
+                exc_info=True,
+            )
+    return deleted
+
+
+def cleanup_pending_vector_deletions(
+    *,
+    collections: set[str] | None = None,
+    deletion_batch_id: str | None = None,
+) -> int:
     """Process any deferred vector deletions that failed previously.
 
     Called during startup.  Returns the number of vectors successfully deleted.
@@ -523,20 +649,48 @@ def cleanup_pending_vector_deletions() -> int:
 
     max_attempts = settings.VECTOR_DELETION_MAX_ATTEMPTS
 
+    query = (
+        "SELECT id, collection, embedding_id, COALESCE(attempts, 0) AS attempts "
+        "FROM pending_vector_deletions WHERE COALESCE(status, 'pending') = 'pending' "
+        "AND (lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)"
+    )
+    params: list[str] = []
+    if collections:
+        ordered_collections = tuple(sorted(collections))
+        placeholders = ",".join("?" for _ in ordered_collections)
+        query += f" AND collection IN ({placeholders})"
+        params.extend(ordered_collections)
+    if deletion_batch_id is not None:
+        query += " AND deletion_batch_id = ?"
+        params.append(deletion_batch_id)
+
+    lease_owner = uuid.uuid4().hex
     with get_write_connection() as conn:
-        rows = conn.execute(
-            "SELECT id, collection, embedding_id, "
-            "COALESCE(attempts, 0) AS attempts "
-            "FROM pending_vector_deletions"
-        ).fetchall()
+        rows = conn.execute(query, tuple(params)).fetchall()
+        if rows:
+            row_ids = [int(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in row_ids)
+            conn.execute(
+                "UPDATE pending_vector_deletions SET lease_owner=?, "
+                "lease_expires_at=datetime('now', '+30 minutes'), "
+                "updated_at=CURRENT_TIMESTAMP "
+                f"WHERE id IN ({placeholders}) "
+                "AND (lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)",
+                (lease_owner, *row_ids),
+            )
+            claimed = conn.execute(
+                "SELECT id, collection, embedding_id, COALESCE(attempts, 0) AS attempts "
+                "FROM pending_vector_deletions WHERE lease_owner=?",
+                (lease_owner,),
+            ).fetchall()
+            rows = claimed
 
     if not rows:
         return 0
 
     cleaned = 0
     dead_ids: list[int] = []
-    bumped_ids: list[int] = []
-    remaining_ids: list[int] = []
+    failures: dict[int, str] = {}
     for row in rows:
         row_id = row["id"]
         attempts = row["attempts"]
@@ -563,37 +717,43 @@ def cleanup_pending_vector_deletions() -> int:
 
                 vs = get_entity_vectorstore()
                 vs.delete(embedding_id)
+            elif collection == "session_summary":
+                from .._summary_vectorstore import get_summary_vectorstore
+
+                vs = get_summary_vectorstore()
+                vs.delete(embedding_id)
+            elif collection == "file":
+                from pathlib import Path
+
+                from ....core.config import settings
+
+                target = Path(embedding_id).resolve()
+                upload_root = settings.UPLOAD_DIR.resolve()
+                if not target.is_relative_to(upload_root) or target == upload_root:
+                    raise ValueError(f"Unsafe pending file deletion path: {target}")
+                target.unlink(missing_ok=True)
+            elif collection == "directory":
+                import shutil
+                from pathlib import Path
+
+                from ....core.config import settings
+
+                target = Path(embedding_id).resolve()
+                upload_root = settings.UPLOAD_DIR.resolve()
+                if not target.is_relative_to(upload_root) or target == upload_root:
+                    raise ValueError(f"Unsafe pending directory deletion path: {target}")
+                if target.exists():
+                    shutil.rmtree(target)
             elif collection == "meeting":
-                from ...rag import delete_meeting_chunks
+                from ...rag._indexer_store import retry_pending_index_deletion
 
-                delete_meeting_chunks(int(embedding_id))
-            elif collection == "raganything":
-                from ...rag._indexer_store import _remove_from_raganything
+                retry_pending_index_deletion(collection, f"meeting_{int(embedding_id)}")
+            elif collection in {"chroma", "bm25", "summary", "raganything"}:
+                from ...rag._indexer_store import retry_pending_index_deletion
 
-                _remove_from_raganything(
-                    meeting_id=0,
-                    file_id=None,
-                )
-                try:
-                    from ...rag._raganything import _get_raganything, _run_async
-
-                    rag = _get_raganything()
-                    eid = embedding_id
-
-                    async def _del(ra=rag, doc_id=eid):
-                        await ra.lightrag.adelete_by_doc_id(doc_id)
-
-                    _run_async(_del())
-                except Exception:
-                    logger.debug(
-                        "RAGAnything reconciler delete failed for %s",
-                        eid,
-                        exc_info=True,
-                    )
+                retry_pending_index_deletion(collection, embedding_id)
             else:
-                logger.warning("Unknown collection in pending deletions: %s", collection)
-                remaining_ids.append(row_id)
-                continue
+                raise ValueError(f"Unknown pending deletion collection: {collection!r}")
             cleaned += 1
         except Exception as exc:
             type_name = type(exc).__name__
@@ -612,37 +772,48 @@ def cleanup_pending_vector_deletions() -> int:
                 attempts + 1,
                 exc_info=True,
             )
-            bumped_ids.append(row_id)
-            remaining_ids.append(row_id)
+            failures[row_id] = f"{type_name}: {exc}"[:1000]
 
-    # Single write transaction: remove processed + dead-letter rows, bump attempts
-    to_delete = [row["id"] for row in rows if row["id"] not in remaining_ids]
-    to_delete.extend(dead_ids)
-    if to_delete or bumped_ids:
+    # Single write transaction: remove successful rows, retain failures, and
+    # preserve exhausted entries as inspectable dead letters.
+    to_delete = [
+        row["id"] for row in rows if row["id"] not in failures and row["id"] not in dead_ids
+    ]
+    if to_delete or failures or dead_ids:
         with get_write_connection() as conn:
             if to_delete:
                 placeholders = ",".join("?" for _ in to_delete)
                 conn.execute(
-                    f"DELETE FROM pending_vector_deletions WHERE id IN ({placeholders})",
-                    to_delete,
+                    f"DELETE FROM pending_vector_deletions WHERE id IN ({placeholders}) "
+                    "AND lease_owner=?",
+                    (*to_delete, lease_owner),
                 )
-            if bumped_ids:
-                placeholders = ",".join("?" for _ in bumped_ids)
+            for row_id, last_error in failures.items():
                 conn.execute(
-                    "UPDATE pending_vector_deletions "
-                    f"SET attempts = attempts + 1 WHERE id IN ({placeholders})",
-                    bumped_ids,
+                    "UPDATE pending_vector_deletions SET attempts = attempts + 1, "
+                    "last_error = ?, updated_at = CURRENT_TIMESTAMP, "
+                    "lease_owner=NULL, lease_expires_at=NULL "
+                    "WHERE id = ? AND lease_owner = ?",
+                    (last_error, row_id, lease_owner),
+                )
+            if dead_ids:
+                placeholders = ",".join("?" for _ in dead_ids)
+                conn.execute(
+                    "UPDATE pending_vector_deletions SET status = 'dead_letter', "
+                    "updated_at = CURRENT_TIMESTAMP, lease_owner=NULL, lease_expires_at=NULL "
+                    f"WHERE id IN ({placeholders}) AND lease_owner=?",
+                    (*dead_ids, lease_owner),
                 )
 
     if cleaned:
         logger.info("Cleaned up %d pending vector deletions", cleaned)
-        from ....core.metrics import VECTORSTORE_ORPHAN_TOTAL
+        from ....core.metrics import VECTOR_DELETION_CLEANED_TOTAL
 
-        VECTORSTORE_ORPHAN_TOTAL.labels(collection="all").inc(cleaned)
+        VECTOR_DELETION_CLEANED_TOTAL.labels(collection="all").inc(cleaned)
 
     if dead_ids:
         logger.warning(
-            "Removed %d permanently stuck vector deletions (exceeded %d attempts)",
+            "Moved %d permanently stuck vector deletions to dead letter (exceeded %d attempts)",
             len(dead_ids),
             max_attempts,
         )
@@ -654,79 +825,7 @@ def cleanup_pending_vector_deletions() -> int:
 
 
 def requeue_pending_memory_vectors() -> int:
-    """Re-queue memory vectors stuck in vector_state='pending' after a crash.
+    """Recover committed pending facts without rewriting scope or revision."""
+    from ._index_sync import reconcile_memory_vectors
 
-    Scans for rows that have been in 'pending' for longer than 5 minutes
-    and re-triggers the vector upsert pipeline. Called during startup.
-
-    Rows stuck >30 minutes are hard-failed to prevent indefinite retry (M-MEM-1).
-
-    Returns count of re-queued vectors.
-    """
-    # M-MEM-1: Hard-fail rows stuck for >30 minutes.
-    _hard_fail_sql = (
-        "UPDATE user_memories SET vector_state = 'failed' "
-        "WHERE vector_state = 'pending' "
-        "AND updated_at < datetime('now', '-30 minutes')"
-    )
-    with get_write_connection() as conn:
-        cursor = conn.execute(_hard_fail_sql)
-        hard_failed = cursor.rowcount
-    if hard_failed:
-        logger.warning("Hard-failed %d memory vectors stuck in pending >30 minutes", hard_failed)
-
-    cutoff_sql = (
-        "SELECT id, user_id, key, value, importance, category "
-        "FROM user_memories "
-        "WHERE vector_state = 'pending' "
-        "AND updated_at < datetime('now', '-5 minutes')"
-    )
-    with db.get_connection() as conn:
-        rows = conn.execute(cutoff_sql).fetchall()
-
-    if not rows:
-        return 0
-
-    requeued = 0
-    for row in rows:
-        user_id = row["user_id"]
-        key = row["key"]
-        try:
-            vs = get_memory_vectorstore()
-            embedding_id = vs.upsert(
-                user_id,
-                key,
-                row["value"],
-                row["importance"],
-                row["category"],
-            )
-            if embedding_id is not None:
-                with get_write_connection() as conn:
-                    conn.execute(
-                        "UPDATE user_memories SET embedding_id=?, vector_state='synced' "
-                        "WHERE user_id=? AND key=?",
-                        (embedding_id, user_id, key),
-                    )
-                requeued += 1
-            else:
-                with get_write_connection() as conn:
-                    conn.execute(
-                        "UPDATE user_memories SET vector_state='failed' WHERE user_id=? AND key=?",
-                        (user_id, key),
-                    )
-        except Exception:
-            logger.warning(
-                "Failed to requeue pending memory vector for %s/%s",
-                user_id,
-                key,
-                exc_info=True,
-            )
-            with get_write_connection() as conn:
-                conn.execute(
-                    "UPDATE user_memories SET vector_state='failed' WHERE user_id=? AND key=?",
-                    (user_id, key),
-                )
-
-    if requeued:
-        logger.info("Re-queued %d pending memory vectors", requeued)
-    return requeued
+    return reconcile_memory_vectors()

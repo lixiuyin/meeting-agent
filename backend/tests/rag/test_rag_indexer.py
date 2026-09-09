@@ -37,6 +37,42 @@ class TestChunkIdPrefix:
     def test_prefix_with_zero_file_id(self):
         assert _chunk_id_prefix(5, 0) == "meeting_5_file_0"
 
+    def test_prefix_separates_auxiliary_source_kind(self):
+        assert _chunk_id_prefix(5, 7, "image") == "meeting_5_file_7_source_image"
+        assert _chunk_id_prefix(5, 7) != _chunk_id_prefix(5, 7, "image")
+
+    def test_prefix_separates_shadow_generation(self):
+        assert (
+            _chunk_id_prefix(5, 7, "image", "A1-B2")
+            == "meeting_5_file_7_source_image_generation_a1_b2"
+        )
+
+    def test_index_generation_produces_shadow_ids(self):
+        mock_vs = MagicMock()
+        captured_ids: list[str] = []
+
+        def capture_upsert(ids, **kwargs):
+            captured_ids.extend(ids)
+
+        mock_vs._collection.upsert = capture_upsert
+        with (
+            patch("src.services.rag._indexer.get_vectorstore", return_value=mock_vs),
+            patch("src.services.rag._indexer_store.get_embeddings") as mock_embed,
+            patch("src.services.rag._indexer.settings") as mock_settings,
+        ):
+            mock_settings.CHUNK_SIZE = 500
+            mock_settings.CHUNK_OVERLAP = 50
+            mock_settings.SEMANTIC_CHUNKING_ENABLED = False
+            mock_embed.return_value.embed_documents.return_value = [[0.1] * 10]
+            _index_flat(
+                1,
+                "Hello world",
+                {"file_id": 42, "index_generation": "new-generation"},
+                _SEPARATORS,
+            )
+
+        assert captured_ids == ["meeting_1_file_42_generation_new_generation_chunk_0"]
+
 
 class TestIndexMeetingPagesChunkIds:
     """Verify index_meeting_pages generates unique IDs per file."""

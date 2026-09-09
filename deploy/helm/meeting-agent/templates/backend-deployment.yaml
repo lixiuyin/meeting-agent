@@ -7,6 +7,8 @@ metadata:
     {{- include "meeting-agent.labels" . | nindent 4 }}
     component: backend
 spec:
+  strategy:
+    type: Recreate
   replicas: {{ .Values.backend.replicaCount }}
   selector:
     matchLabels:
@@ -14,15 +16,19 @@ spec:
       component: backend
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         {{- include "meeting-agent.selectorLabels" . | nindent 8 }}
         component: backend
     spec:
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.backend.podSecurityContext | nindent 8 }}
       containers:
         - name: backend
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          image: {{ include "meeting-agent.image" (dict "image" .Values.backend.image "root" .) | quote }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.backend.service.port }}

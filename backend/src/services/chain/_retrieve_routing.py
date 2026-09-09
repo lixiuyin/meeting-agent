@@ -7,6 +7,8 @@ scope enumeration helpers live in :mod:`src.services.rag._routing`;
 import them from there directly.
 """
 
+import math
+
 from ...core.config import settings
 from ...core.database import get_connection
 from ._common import logger
@@ -21,12 +23,19 @@ __all__ = [
 
 # Pre-built SQL templates -- only ``?`` placeholders are dynamic.
 _SPEAKERS_BY_MEETINGS_SQL = (
-    "SELECT DISTINCT speaker_name FROM speaker_mappings WHERE meeting_id IN ({})"
+    "SELECT DISTINCT sm.speaker_name FROM speaker_mappings sm "
+    "JOIN meetings m ON m.id=sm.meeting_id WHERE sm.meeting_id IN ({})"
 )
-_SPEAKERS_ALL_SQL = "SELECT DISTINCT speaker_name FROM speaker_mappings"
+_SPEAKERS_ALL_SQL = (
+    "SELECT DISTINCT sm.speaker_name FROM speaker_mappings sm JOIN meetings m ON m.id=sm.meeting_id"
+)
 
 
-def _load_known_speakers(meeting_ids: list[int] | None) -> list[str]:
+def _load_known_speakers(
+    meeting_ids: list[int] | None,
+    *,
+    user_id: str | None = None,
+) -> list[str]:
     """Load human-readable speaker names from speaker_mappings.
 
     When meeting_ids is None (no meeting selected), loads speakers from ALL
@@ -41,9 +50,14 @@ def _load_known_speakers(meeting_ids: list[int] | None) -> list[str]:
             if meeting_ids:
                 placeholders = ",".join("?" for _ in meeting_ids)
                 sql = _SPEAKERS_BY_MEETINGS_SQL.format(placeholders)
-                rows = conn.execute(sql, meeting_ids).fetchall()
+                params: list[object] = list(meeting_ids)
             else:
-                rows = conn.execute(_SPEAKERS_ALL_SQL).fetchall()
+                sql = _SPEAKERS_ALL_SQL
+                params = []
+            if user_id is not None:
+                sql += " AND m.user_id=?" if meeting_ids else " WHERE m.user_id=?"
+                params.append(user_id)
+            rows = conn.execute(sql, params).fetchall()
             names: list[str] = []
             seen: set[str] = set()
             for row in rows:
@@ -94,11 +108,37 @@ def _compute_adaptive_chunks(
     if total_weight <= 0:
         return max(min_per_file, -(-total_budget // max(len(scope_file_ids), 1)))
 
-    allocation: dict[int, int] = {}
-    for fid in scope_file_ids:
-        share = weights[fid] / total_weight
-        budget = max(min_per_file, min(max_per_file, round(share * total_budget)))
-        allocation[fid] = budget
+    # Largest-remainder apportionment: unlike independent round(), this has an
+    # exact, inspectable total while respecting per-file bounds.
+    file_count = len(scope_file_ids)
+    effective_total = min(
+        file_count * max_per_file,
+        max(total_budget, file_count * min_per_file),
+    )
+    allocation = dict.fromkeys(scope_file_ids, min_per_file)
+    remaining = effective_total - sum(allocation.values())
+    while remaining > 0:
+        eligible = [fid for fid in scope_file_ids if allocation[fid] < max_per_file]
+        if not eligible:
+            break
+        eligible_weight = sum(weights[fid] for fid in eligible)
+        raw = {fid: remaining * weights[fid] / max(eligible_weight, 1e-12) for fid in eligible}
+        grants = {
+            fid: min(max_per_file - allocation[fid], math.floor(raw[fid])) for fid in eligible
+        }
+        granted = sum(grants.values())
+        if granted:
+            for fid, grant in grants.items():
+                allocation[fid] += grant
+            remaining -= granted
+            continue
+        ranked = sorted(
+            eligible,
+            key=lambda fid: (-(raw[fid] - math.floor(raw[fid])), -weights[fid], fid),
+        )
+        for fid in ranked[:remaining]:
+            allocation[fid] += 1
+        remaining = 0
 
     return allocation
 
@@ -131,30 +171,29 @@ def compute_chunk_budget(
 ) -> int | dict[int, int]:
     """Resolve the per-file (per-variant) chunk budget for fair retrieval.
 
-    Composes the two prior steps:
-      1. ``_compute_adaptive_chunks`` distributes ``target_total`` across
+    Divides the request budget across query variants first, then
+    ``_compute_adaptive_chunks`` distributes that exact feasible total across
          ``scope_file_ids`` weighted by ``file_scores`` and (optionally)
          ``file_metadata`` size signals.
-      2. ``_scale_chunks_per_file`` divides each file's budget by the
-         number of multi-query variants, with a floor of 2 chunks per
-         file per variant.
 
     When ``uniform_for_single_meeting`` is True, forces uniform allocation
     (each file gets the same budget) regardless of file_scores, ensuring
     balanced coverage across all files in a user-pinned meeting.
     """
+    per_variant_total = math.ceil(target_total / max(n_variants, 1))
+    per_variant_min = max(min_per_file, 2 if n_variants > 1 else min_per_file)
     if uniform_for_single_meeting:
         per_file = max(
-            target_total // max(len(scope_file_ids), 1),
-            min_per_file * 2,
+            math.ceil(per_variant_total / max(len(scope_file_ids), 1)),
+            per_variant_min,
         )
+        return min(per_file, max_per_file)
     else:
-        per_file = _compute_adaptive_chunks(
+        return _compute_adaptive_chunks(
             scope_file_ids,
             file_scores,
             file_metadata,
-            target_total,
-            min_per_file=min_per_file,
+            per_variant_total,
+            min_per_file=per_variant_min,
             max_per_file=max_per_file,
         )
-    return _scale_chunks_per_file(per_file, n_variants)

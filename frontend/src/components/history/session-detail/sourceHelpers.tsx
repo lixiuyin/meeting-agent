@@ -1,13 +1,13 @@
 import type { SourceItem } from "../../../api/client";
-import { getMeetingAssetUrl, getMeetingFileUrl } from "../../../api/client";
+import { getMeetingAssetUrl } from "../../../api/client";
 import type { ViewerRequest } from "../../../contexts/ViewerContext";
 import {
   sourcePrimaryImageUrl as resolveSourcePrimaryImageUrl,
   sourcePreviewImageUrl as resolveSourcePreviewImageUrl,
 } from "../../common/sourcePreview";
-import type { SessionMessage } from "./types";
+import { isAgentRole, type SessionMessage } from "./types";
 import { openExternalInNewTab } from "../../../utils/url";
-import { getKindCapabilities } from "../../../types/fileKinds";
+import { sourceToViewerRequest } from "../../../utils/sourceLocation";
 
 export const preprocessCitations = (content: string) =>
   content.replace(/\[(\d+)\](?!\()/g, "[$1](#cite-$1)");
@@ -35,38 +35,20 @@ export const sourcePreviewImageUrl = (source: SourceItem): string | null =>
 export const canOpenSource = (source: SourceItem) =>
   (source.file_id != null && source.meeting_id != null) || sourcePrimaryImageUrl(source) != null;
 
-export const openSourceFromCitation = (
+export const openSourceFromCitation = async (
   openViewer: (args: ViewerRequest) => void,
   source: SourceItem,
 ) => {
+  const request = sourceToViewerRequest(source);
+  if (request) {
+    openViewer(request);
+    return;
+  }
   const imageUrl = isImageDerivedSource(source) ? sourcePrimaryImageUrl(source) : null;
   if (imageUrl) {
     openExternalInNewTab(imageUrl);
     return;
   }
-  if (!isAvSource(source) && source.meeting_id != null && source.file_id != null) {
-    const fileUrl = getMeetingFileUrl(source.meeting_id, source.file_id);
-    const targetUrl =
-      source.file_type === "pdf" && source.page_number != null
-        ? `${fileUrl}#page=${source.page_number}`
-        : fileUrl;
-    openExternalInNewTab(targetUrl);
-    return;
-  }
-  if (source.file_id == null) return;
-  // Only audio/video have a seekable timeline.  For other types a stray
-  // ``timestamp_start`` (e.g. derived from a video frame) must NOT route to
-  // the TranscriptViewer, otherwise the user sees an empty timeline pane.
-  const supportsSeek = getKindCapabilities(source.file_type).hasTimeline;
-  openViewer({
-    meetingId: source.meeting_id,
-    fileId: source.file_id,
-    fileName: source.file_name ?? source.meeting_title,
-    fileType: source.file_type ?? "unknown",
-    seekTo: supportsSeek ? (source.timestamp_start ?? undefined) : undefined,
-    page: source.page_number ?? undefined,
-    meetingTitle: source.meeting_title,
-  });
 };
 
 export function formatTime(seconds: number): string {
@@ -91,7 +73,7 @@ export function formatSourceLocation(s: SourceItem): string {
 export const collectSummarySources = (messages: SessionMessage[]): SourceItem[] => {
   const deduped = new Map<string, SourceItem>();
   for (const msg of messages) {
-    if (msg.role !== "agent") continue;
+    if (!isAgentRole(msg.role)) continue;
     for (const source of msg.sources ?? []) {
       const key = [
         source.meeting_id,

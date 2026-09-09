@@ -198,6 +198,12 @@ class StreamingThinkingFilter:
 
     def flush(self) -> str | None:
         """Return any remaining buffered content."""
+        # Never expose an unterminated reasoning block.  A provider/network
+        # truncation inside <think>/<thinking> is an incomplete response, not
+        # user-visible answer text.
+        if self._in_thinking:
+            self._buffer = ""
+            return None
         if self._buffer:
             text = self._buffer
             self._buffer = ""
@@ -218,8 +224,8 @@ def strip_thinking_blocks(text: str) -> str:
     - ### Thinking: ... ### Response:
     """
     # 1. Strip XML-style thinking tags
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    cleaned = re.sub(r"<thinking>.*?</thinking>", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"<(think|thinking)>.*?(?:</\1>|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"</(?:think|thinking)>", "", cleaned, flags=re.IGNORECASE)
 
     # 2. Strip markdown-style thinking sections
     cleaned = re.sub(r"###\s*Thinking:.*?###\s*Response:", "", cleaned, flags=re.DOTALL)
@@ -228,6 +234,36 @@ def strip_thinking_blocks(text: str) -> str:
     # 3. Collapse excessive blank lines left behind
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned.strip())
     return cleaned.strip()
+
+
+def extract_visible_text(value: Any) -> str:
+    """Normalize provider message/chunk content into user-visible text."""
+    content = (
+        value if isinstance(value, (str, dict, list, tuple)) else getattr(value, "content", "")
+    )
+    if isinstance(content, str):
+        return strip_thinking_blocks(content).strip()
+    if isinstance(content, dict):
+        if content.get("type") in {"reasoning", "thinking", "reasoning_content"}:
+            return ""
+        nested = content.get("text", content.get("content", ""))
+        return extract_visible_text(nested)
+    if isinstance(content, (list, tuple)):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if isinstance(block, dict):
+                if block.get("type") in {"reasoning", "thinking", "reasoning_content"}:
+                    continue
+                text = block.get("text", block.get("content", ""))
+            else:
+                text = getattr(block, "text", "")
+            if isinstance(text, str):
+                parts.append(text)
+        return strip_thinking_blocks("".join(parts)).strip()
+    return ""
 
 
 def parse_llm_json(raw: str) -> Any:

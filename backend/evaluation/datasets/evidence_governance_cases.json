@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "rejected_evidence_excluded",
+      "policy": "authority",
+      "query": "What decision was approved?",
+      "approval_status": "rejected",
+      "expected_included": false
+    },
+    {
+      "id": "rejected_evidence_auditable",
+      "policy": "authority",
+      "query": "Why was this decision rejected?",
+      "approval_status": "rejected",
+      "expected_included": true
+    },
+    {
+      "id": "approved_evidence_included",
+      "policy": "authority",
+      "query": "What decision was approved?",
+      "approval_status": "approved",
+      "expected_included": true
+    },
+    {
+      "id": "explicit_time_range_empty",
+      "policy": "temporal",
+      "range_seconds": [0, 30],
+      "chunk_seconds": [200, 210],
+      "meeting_duration": 300,
+      "expected_included": false
+    },
+    {
+      "id": "explicit_time_range_overlap",
+      "policy": "temporal",
+      "range_seconds": [0, 30],
+      "chunk_seconds": [20, 40],
+      "meeting_duration": 300,
+      "expected_included": true
+    },
+    {
+      "id": "matching_source_revision",
+      "policy": "revision",
+      "current_revision": 8,
+      "expected_revision": "r:8",
+      "expected_included": true
+    },
+    {
+      "id": "superseded_source_revision",
+      "policy": "revision",
+      "current_revision": 9,
+      "expected_revision": "r:8",
+      "expected_included": false
+    },
+    {
+      "id": "authority_labels_visible_to_generator",
+      "policy": "formatting",
+      "material_role": "agenda",
+      "approval_status": "draft",
+      "expected_included": true
+    }
+  ]
+}

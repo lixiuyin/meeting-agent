@@ -3,10 +3,12 @@
 import asyncio
 import logging
 import math
+import re
 
 from ...core import database as db
 from ...core.config import settings
 from ...core.database import get_write_connection
+from ..assertion_validation import current_supporting_clauses, normalize_assertion_text
 from ._vectorstore import get_entity_vectorstore
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,109 @@ RELATION_PREDICATES = frozenset(
         "mentions",
     }
 )
+
+_RELATION_EVIDENCE_PATTERNS = {
+    "works_on": r"\b(?:works?|worked|working)\s+on\b|负责|参与",
+    "uses": r"\b(?:uses?|used|using)\b|使用|采用",
+    "prefers": r"\b(?:prefers?|preferred)\b|偏好|首选",
+    "member_of": r"\b(?:member\s+of|belongs?\s+to|joined)\b|成员|加入",
+    "leads": r"\b(?:leads?|led|owns?|owner|responsible\s+for)\b|负责|负责人",
+    "decided": r"\b(?:decided|approved|rejected|resolved)\b|决定|批准|拒绝|决议",
+    "related_to": (
+        r"\b(?:related\s+to|associated\s+with|depends?\s+on|blocked\s+by)\b|相关|依赖|阻塞"
+    ),
+    "discussed_in": r"\b(?:discussed\s+in|covered\s+in)\b|在.+讨论|见于",
+    "mentions": r"\b(?:mentions?|mentioned)\b|提到|谈及",
+}
+
+_DIRECT_RELATION_CUES = {
+    "works_on": r"(?:works?|worked|working)\s+on|负责|参与",
+    "uses": r"uses?|used|using|使用|采用",
+    "prefers": r"prefers?|preferred|偏好|首选",
+    "member_of": r"(?:is\s+)?(?:a\s+)?member\s+of|belongs?\s+to|joined|属于|成员|加入",
+    "decided": r"decided|approved|rejected|resolved|决定|批准|拒绝|决议",
+    "mentions": r"mentions?|mentioned|提到|谈及",
+    "discussed_in": r"discussed\s+in|covered\s+in|在.+讨论|见于",
+    "related_to": (
+        r"(?:is\s+)?related\s+to|associated\s+with|depends?\s+on|"
+        r"(?:was\s+)?blocked\s+by|相关|依赖|阻塞"
+    ),
+}
+
+_LEAD_RELATION_PATTERNS = (
+    re.compile(
+        r"\b(?P<owner>[A-Z][\w-]*(?:\s+[A-Z][\w-]*)?)\s+"
+        r"(?:now\s+|currently\s+)?(?:owns?|leads?|is\s+responsible\s+for)\s+"
+        r"(?:the\s+)?(?P<target>[^.;]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?P<owner>[A-Z][\w-]*(?:\s+[A-Z][\w-]*)?)\s+replaced\s+.+?\s+"
+        r"as\s+(?:the\s+)?owner\s+of\s+(?:the\s+)?(?P<target>[^.;]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[\s\uFF0C\u3002\uFF1B;])"
+        r"(?P<owner>[\u3400-\u9fffA-Za-z0-9_-]{2,20})"
+        r"(?:现在|当前)?负责(?P<target>[^\uFF0C\u3002\uFF1B;]+)"
+    ),
+)
+
+
+def _normalized_relation_text(value: object) -> str:
+    return normalize_assertion_text(value)
+
+
+def _entity_pattern(value: object) -> str:
+    return r"\s+".join(re.escape(part) for part in str(value).strip().split())
+
+
+def _direct_relation_is_supported(rel: dict, clause: str, predicate: str) -> bool:
+    """Require a local subject → predicate → object assertion."""
+    cue = _DIRECT_RELATION_CUES.get(predicate)
+    if not cue:
+        return False
+    subject = _entity_pattern(rel.get("subject"))
+    obj = _entity_pattern(rel.get("object"))
+    # Tight adjacency prevents a relation from borrowing another subject's
+    # object later in the same sentence ("Alice uses X and Bob uses Y").
+    pattern = (
+        rf"(?<!\w){subject}(?!\w)\s*"
+        rf"(?:(?:now|currently)\s+)?(?:{cue})\s*"
+        rf"(?:(?:the|a|an)\s+)?(?<!\w){obj}(?!\w)"
+    )
+    return re.search(pattern, clause, re.IGNORECASE) is not None
+
+
+def _relation_is_supported(rel: dict, evidence_text: str | None) -> bool:
+    """Require both endpoints and a supported relation cue in source evidence."""
+    if not evidence_text:
+        return False
+    subject = _normalized_relation_text(rel.get("subject"))
+    obj = _normalized_relation_text(rel.get("object"))
+    if not subject or not obj:
+        return False
+    predicate = str(rel.get("predicate") or "related_to").lower().strip()
+    pattern = _RELATION_EVIDENCE_PATTERNS.get(predicate)
+    clauses = current_supporting_clauses(
+        evidence_text,
+        terms=(rel.get("subject"), rel.get("object")),
+        cue_pattern=pattern,
+    )
+    if not clauses:
+        return False
+    if predicate == "leads":
+        parsed = [
+            (match.group("owner"), match.group("target"))
+            for relation_pattern in _LEAD_RELATION_PATTERNS
+            for clause in clauses
+            for match in relation_pattern.finditer(clause)
+        ]
+        return any(
+            subject == _normalized_relation_text(owner) and obj == _normalized_relation_text(target)
+            for owner, target in parsed
+        )
+    return any(_direct_relation_is_supported(rel, clause, predicate) for clause in clauses)
 
 
 # Cosine-similarity-style threshold above which two entity surface forms are
@@ -330,7 +435,7 @@ async def _store_entities(
                     try:
                         with get_write_connection() as conn:
                             conn.execute(
-                                "INSERT INTO pending_vector_deletions "
+                                "INSERT OR IGNORE INTO pending_vector_deletions "
                                 "(collection, embedding_id) VALUES ('entity', ?)",
                                 (old_embedding_id,),
                             )
@@ -410,8 +515,11 @@ async def _store_relations(
     user_id: str,
     relations: list[dict],
     session_id: str | None,
+    evidence_message_ids: list[int] | None = None,
+    evidence_text: str | None = None,
 ) -> int:
     added = 0
+    failures: list[str] = []
     for rel in relations:
         subject = (rel.get("subject") or "").strip().lower()
         predicate = (rel.get("predicate") or "related_to").lower().strip()
@@ -421,6 +529,14 @@ async def _store_relations(
             continue
         if predicate not in RELATION_PREDICATES:
             predicate = "related_to"
+        if not _relation_is_supported({**rel, "predicate": predicate}, evidence_text):
+            logger.info(
+                "Skipping relation without local evidence: %s -> %s -> %s",
+                subject,
+                predicate,
+                obj,
+            )
+            continue
 
         try:
             with db.get_connection() as conn:
@@ -439,8 +555,13 @@ async def _store_relations(
                     predicate=predicate,
                     object_id=obj_row["id"],
                     source_session=session_id,
+                    confidence=float(rel.get("confidence", 0.75)),
+                    evidence_message_ids=evidence_message_ids,
                 )
             added += 1
         except Exception:
+            failures.append(f"{subject}:{predicate}:{obj}")
             logger.warning("Failed to store relation '%s' -> '%s'", subject, obj, exc_info=True)
+    if failures:
+        raise RuntimeError("failed to persist relations: " + ", ".join(failures))
     return added

@@ -4,7 +4,7 @@
  */
 import { Spin, Tag } from "antd";
 import AudioPlayer from "../../AudioPlayer";
-import { getMeetingFileUrl } from "../../../api/client";
+import { useMeetingFileUrl } from "../../../hooks/useMeetingFileUrl";
 
 interface Segment {
   start: number;
@@ -51,7 +51,8 @@ export default function AVFileView({
   onSeek,
   onActiveSegmentChange,
 }: AVFileViewProps) {
-  if (loading) {
+  const mediaUrl = useMeetingFileUrl(meetingId, fileId);
+  if (loading || !mediaUrl) {
     return (
       <div style={{ textAlign: "center", padding: 40 }}>
         <Spin />
@@ -87,7 +88,7 @@ export default function AVFileView({
         }}
       >
         <AudioPlayer
-          src={getMeetingFileUrl(meetingId, fileId)}
+          src={mediaUrl}
           meetingId={meetingId}
           fileId={fileId}
           mediaType={fileType === "video" ? "video" : "audio"}

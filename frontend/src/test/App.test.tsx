@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "../App";
+import { I18nProvider } from "../i18n/I18nProvider";
 
 vi.mock("../hooks/useHealthCheck", () => ({
   useHealthCheck: () => true,
@@ -33,17 +34,20 @@ vi.mock("../views/SettingsView", () => ({
 
 function renderWithRouter(initialEntry = "/") {
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <App />
-    </MemoryRouter>,
+    <I18nProvider>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <App />
+      </MemoryRouter>
+    </I18nProvider>,
   );
 }
 
 describe("App", () => {
   it("renders the header", async () => {
     renderWithRouter();
-    await screen.findByText("New Chat");
-    expect(screen.getByText("Meeting Agent")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Meeting Agent" }),
+    ).toBeInTheDocument();
   });
 
   it("renders all navigation tabs", async () => {

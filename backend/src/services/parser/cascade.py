@@ -15,6 +15,7 @@ import logging
 import time
 from pathlib import Path
 
+from src.core._config_snapshot import submit_with_context
 from src.core.config import settings
 from src.core.trace import TraceContext
 
@@ -188,7 +189,7 @@ def _dispatch_cascade(
 
     if loop and loop.is_running():
         # Called from inside FastAPI's event loop — offload to the shared executor
-        future = _PARSER_LOOP_EXECUTOR.submit(asyncio.run, _run_with_cleanup())
+        future = submit_with_context(_PARSER_LOOP_EXECUTOR, asyncio.run, _run_with_cleanup())
         return future.result(timeout=settings.PARSE_TIMEOUT_SECONDS)
     else:
         return asyncio.run(_run_with_cleanup())
@@ -288,7 +289,7 @@ async def _cascade_async(
         # failure, consistent with project documentation.
         if original_suffix == ".pdf":
             try:
-                import fitz
+                import pymupdf as fitz
 
                 text_parts: list[str] = []
                 with fitz.open(str(file_path)) as doc:
@@ -401,7 +402,7 @@ def _estimate_page_count(file_path: Path, suffix: str) -> int:
     """Best-effort page/slide count for parser limits."""
     if suffix == ".pdf":
         try:
-            import fitz
+            import pymupdf as fitz
 
             with fitz.open(str(file_path)) as doc:
                 return len(doc)

@@ -3,7 +3,9 @@
 import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
+
+from ...core.operating_modes import MemoryMode, RetrievalProfile
 
 
 class SourceResponse(BaseModel):
@@ -11,6 +13,16 @@ class SourceResponse(BaseModel):
 
     meeting_id: int
     meeting_title: str
+    document_revision: str | None = None
+    chunk_id: str | None = None
+    source_id: str | None = Field(
+        None, description="Original chunk ID or a separately namespaced derived-summary identity"
+    )
+    memory_key: str | None = None
+    window_start: int | None = None
+    window_end: int | None = None
+    evidence_excerpt: str | None = None
+    alternate_sources: list[dict[str, Any]] = Field(default_factory=list)
     content: str = Field(description="Preview of the matching content")
     score: float = Field(description="Similarity score")
     file_id: int | None = Field(None, description="File ID within the meeting")
@@ -52,7 +64,7 @@ class SourceResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=10_000)
     meeting_ids: list[int] | None = Field(
         None,
         max_length=50,
@@ -67,12 +79,27 @@ class ChatRequest(BaseModel):
         None, description="Session ID for conversation continuity; creates new session if omitted"
     )
     top_k: int | None = Field(None, ge=1, le=50)
-    use_web_search: bool = Field(False, description="Enable web search augmentation")
+    use_web_search: bool = Field(
+        False,
+        description=(
+            "Backward-compatible web augmentation switch. true maps to web_search_mode='always'."
+        ),
+    )
+    web_search_mode: Literal["off", "fallback", "always"] | None = Field(
+        None,
+        description=(
+            "Web-search policy. 'always' augments every retrieval answer; 'fallback' searches "
+            "unless a calibrated local-confidence signal is available and sufficient; 'off' "
+            "disables web search. Overrides use_web_search when provided."
+        ),
+    )
     web_search_results: int | None = Field(
         None, ge=1, le=20, description="Number of web search results"
     )
     file_types: list[str] | None = Field(
-        None, description="Filter by file types (e.g. ['pdf', 'video'])"
+        None,
+        max_length=20,
+        description="Filter by file types (e.g. ['pdf', 'video'])",
     )
     date_from: datetime.date | None = Field(
         None, description="ISO date — only meetings on or after this date"
@@ -80,9 +107,34 @@ class ChatRequest(BaseModel):
     date_to: datetime.date | None = Field(
         None, description="ISO date — only meetings on or before this date"
     )
-    rag_mode: Literal["native", "hybrid", "multimodal", "hybrid_multimodal", "auto"] | None = Field(
+    valid_at: AwareDatetime | None = Field(
+        None,
+        description="Business-time snapshot used for long-term memory facts",
+    )
+    known_at: AwareDatetime | None = Field(
+        None,
+        description="System-time cutoff: only facts recorded by this instant are visible",
+    )
+    rag_mode: (
+        Literal["vector", "native", "hybrid", "multimodal", "hybrid_multimodal", "auto"] | None
+    ) = Field(
         None,
         description="Per-request retrieval mode override",
+    )
+    retrieval_profile: RetrievalProfile = Field(
+        "balanced",
+        description="Retrieval cost/quality preset; explicit top_k still wins",
+    )
+    memory_mode: MemoryMode = Field(
+        "balanced",
+        description="Long-term memory operating mode",
+    )
+    continuation_mode: Literal["latest", "saved_scope", "saved_snapshot"] = Field(
+        "latest",
+        description=(
+            "Resume with current state, restore only the prior scope, or replay "
+            "the prior turn's saved evidence"
+        ),
     )
 
 
@@ -106,6 +158,14 @@ class PastSessionRef(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    degraded: bool = Field(
+        False,
+        description="True when the answer used a bounded degraded-generation fallback",
+    )
+    degradation_reason: str | None = Field(
+        None,
+        description="Machine-readable reason for a degraded answer",
+    )
     sources: list[SourceResponse] = Field(
         default_factory=list, description="Referenced source chunks"
     )
@@ -180,6 +240,15 @@ class WebResultsEvent(BaseModel):
     results: list[WebResultResponse]
 
 
+class StatusEvent(BaseModel):
+    """Non-answer status emitted when generation enters a degraded mode."""
+
+    type: Literal["status"] = "status"
+    event_version: Literal["1"] = "1"
+    status: str
+    reason: str | None = None
+
+
 class ErrorEvent(BaseModel):
     type: Literal["error"] = "error"
     event_version: Literal["1"] = "1"
@@ -212,6 +281,7 @@ StreamEvent = (
     | SourcesEvent
     | TraceEvent
     | WebResultsEvent
+    | StatusEvent
     | ErrorEvent
     | DoneEvent
     | HeartbeatEvent

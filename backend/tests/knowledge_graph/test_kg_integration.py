@@ -76,7 +76,7 @@ class TestPhase3Config:
     def test_knowledge_graph_defaults(self):
         from src.core.config import settings
 
-        assert settings.KNOWLEDGE_GRAPH_ENABLED is True
+        assert settings.KNOWLEDGE_GRAPH_ENABLED is False
         assert settings.MEMORY_EXTRACTION_MODE == "balanced"
 
     def test_entity_types_set(self):
@@ -121,10 +121,13 @@ class TestSelfLoopPrevention:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_extract_entities_skips_self_loop_relation(self):
+    async def test_extract_entities_skips_self_loop_relation(self, monkeypatch):
         """LLM output with subject == object should not store a self-loop relation."""
 
         user_id = "self_loop_svc_user"
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_GRAPH_ENABLED", True)
         # LLM says an entity relates to itself
         mock_response = MagicMock()
         mock_response.content = json.dumps(

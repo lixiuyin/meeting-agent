@@ -1,0 +1,133 @@
+{
+  "date": "2026-09-07",
+  "release_ready": false,
+  "backend": {
+    "passed": 2203,
+    "skipped": 1,
+    "seconds": 216.36
+  },
+  "frontend_unit": {
+    "passed": 178,
+    "files": 34
+  },
+  "browser": {
+    "unique_passed": 87,
+    "execution": "85 passed in full suite, then corrected locator tests passed in targeted suites",
+    "new_mobile_viewport": {
+      "width": 390,
+      "height": 844
+    }
+  },
+  "authenticated_full_stack": {
+    "passed": 25,
+    "minutes": 4.2,
+    "report": "backend/benchmark-results/e2e-smoke_2026-09-07T00-59-13Z.json"
+  },
+  "migration": {
+    "from": "20260906_000007",
+    "to": "20260907_000001",
+    "facts_and_versions_preserved": true,
+    "integrity": "ok",
+    "production_data_modified": false
+  },
+  "synthetic_model_pipeline": {
+    "report": "backend/benchmark-results/memory-pipeline_2026-09-07T01-09-45.270123_00-00.json",
+    "valid": false,
+    "complete": false,
+    "stats": {
+      "pipeline_write_recall": 0.85,
+      "pipeline_reference_key_agreement": null,
+      "pipeline_latest_value_accuracy": 0.85,
+      "pipeline_confirmed_evidence_rate": 0.9,
+      "pipeline_events_attempted": 22,
+      "pipeline_events_correct": 19,
+      "pipeline_events_persisted": 21
+    },
+    "validity_errors": [
+      "same_name_meeting_disambiguation sequence=4: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+      "temporal_validity_latest_policy sequence=2: expected confirmed, persisted=True, statuses=[], retirement_observed=False",
+      "temporal_validity_latest_policy sequence=25: expected confirmed, persisted=True, statuses=[], retirement_observed=False"
+    ],
+    "same_harness_paired_comparison": false,
+    "human_reviewed": false
+  },
+  "api_soak": {
+    "workload": "synthetic_single_instance_api",
+    "concurrency": 2,
+    "requested_seconds": 60.0,
+    "workload_seconds": 72.34247787500135,
+    "initial_start_seconds": 24.545371167001576,
+    "crash_recovery_seconds": 17.399572832997364,
+    "operations": {
+      "memory_write": {
+        "evaluated": 15,
+        "errors": 0,
+        "p50_seconds": 3.165847958000086,
+        "p95_seconds": 30.371984958997928,
+        "p99_seconds": 30.371984958997928
+      },
+      "facts_query": {
+        "evaluated": 15,
+        "errors": 0,
+        "p50_seconds": 0.004341082996688783,
+        "p95_seconds": 0.00690341600420652,
+        "p99_seconds": 0.00690341600420652
+      },
+      "upload_index_rag": {
+        "evaluated": 2,
+        "errors": 0,
+        "p50_seconds": 17.137165832999017,
+        "p95_seconds": 23.496166458000516,
+        "p99_seconds": 23.496166458000516
+      }
+    },
+    "models_enabled": true,
+    "model_quality_score": null,
+    "errors": [],
+    "persisted_writes": 15,
+    "job_counts_after_recovery": {
+      "completed": 4,
+      "expired_running": 0,
+      "oldest_expired_seconds": 0
+    },
+    "jobs_recovered": true,
+    "job_drain_seconds": 0.25036987500061514,
+    "integrity": "ok",
+    "backup_integrity": "ok",
+    "release_ready": false,
+    "limitations": [
+      "synthetic data",
+      "bounded run, not long-duration soak",
+      "no human quality labels",
+      "no multi-instance evaluation"
+    ]
+  },
+  "sqlite_capacity": [
+    {
+      "component": "sqlite_history_no_llm",
+      "versions": 10000,
+      "queries": 1164,
+      "seconds": 30.041128291999485,
+      "p95_seconds": 0.04073604199948022,
+      "p99_seconds": 0.06432245900214184,
+      "integrity": "ok",
+      "end_to_end_chat_evaluated": false
+    },
+    {
+      "component": "sqlite_history_no_llm",
+      "versions": 100000,
+      "queries": 134,
+      "seconds": 30.274884709000617,
+      "p95_seconds": 0.24594366599922068,
+      "p99_seconds": 0.25850070800152025,
+      "integrity": "ok",
+      "end_to_end_chat_evaluated": false
+    }
+  ],
+  "remaining_acceptance": [
+    "Human-reviewed real meeting holdout",
+    "Project/domain attribution model quality gate",
+    "Long-duration mixed workload and specified SLO",
+    "Production backup/migration/deployment not executed"
+  ]
+}

@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-09T03:39:00Z",
+  "publication_status": "current",
+  "scope": "Latest public Meeting Agent benchmark verification",
+  "effective_runtime_roles": {
+    "main_generation": {
+      "binding": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "reasoning_effort": "low",
+      "decision": "verification-time main generation model; the current Chat performance gate did not pass"
+    },
+    "independent_benchmark_judge": {
+      "binding": "openrouter",
+      "model": "qwen/qwen3.8-flash",
+      "decision": "verification-time independent benchmark judge"
+    },
+    "memory_extraction": {
+      "binding": "openrouter",
+      "model": "deepseek/deepseek-v4-flash-vision-exp",
+      "reasoning_effort": "low",
+      "decision": "selected after a 22/22 production-path memory-pipeline run"
+    },
+    "vision": {
+      "binding": "openrouter",
+      "model": "deepseek/deepseek-v4-flash-vision-exp",
+      "reasoning_effort": "none",
+      "combined_max_tokens": 2048,
+      "decision": "selected after the production vision entry point returned caption, OCR, and semantics for a real UI screenshot"
+    },
+    "embedding": {
+      "binding": "openrouter",
+      "model": "qwen/qwen3-embedding-8b"
+    },
+    "reranker": {
+      "binding": "cohere",
+      "model": "qwen/qwen3-reranker-8b"
+    }
+  },
+  "verification": {
+    "protocol_audit": {
+      "command": "make eval-audit",
+      "protocol_families": 9,
+      "valid": true,
+      "execution_ready": true
+    },
+    "evidence_governance": {
+      "valid": true,
+      "complete": true,
+      "cases": 8,
+      "evidence_authority_accuracy": 1.0,
+      "authority_label_visibility": 1.0,
+      "source_revision_fence_accuracy": 1.0,
+      "explicit_temporal_scope_accuracy": 1.0,
+      "report": "backend/benchmark-results/evidence-governance_2026-09-09T02-35-30.244789_00-00.json",
+      "sha256": "c743291c56b7f7887220242c8b3edaca7c9e27d7f61fe307b251d2e776481c2b"
+    },
+    "rag_answer": {
+      "valid": true,
+      "complete": true,
+      "system_model": "z-ai/glm-5.3-flash",
+      "judge_model": "qwen/qwen3.8-flash",
+      "judge_repeats": 3,
+      "same_model_as_generator": false,
+      "parse_failures": 0,
+      "judge_parse_retries": 1,
+      "faithfulness": 0.9966666666666667,
+      "answer_relevance": 1.0,
+      "context_precision": 0.9833333333333334,
+      "context_recall": 1.0,
+      "correctness": 0.9966666666666667,
+      "citation_quality": 0.9316666666666666,
+      "source_identity_recall": 1.0,
+      "corpus_isolation": 1.0,
+      "report": "backend/benchmark-results/rag-answer_2026-09-09T02-57-42.995070_00-00.json",
+      "sha256": "7e096d86944ec2d83735e4c66864086a888e041d5b02c7e940aab6cc0c5bc7dc"
+    },
+    "multi_turn": {
+      "valid": true,
+      "cases": 6,
+      "judge_model": "qwen/qwen3.8-flash",
+      "judge_repeats": 1,
+      "parse_failures": 0,
+      "judge_parse_retries": 1,
+      "faithfulness": 0.9916666666666667,
+      "appropriateness": 1.0,
+      "naturalness": 0.9875,
+      "completeness": 1.0,
+      "evidence_recall": 1.0,
+      "session_continuity": 1.0,
+      "corpus_isolation": 1.0,
+      "report": "backend/benchmark-results/multi-turn_2026-09-09T03-16-35.897400_00-00.json",
+      "sha256": "686298ca0c938bd632b8fbf150f88673ab4aedf770740143369dd5d7e87a3a52"
+    },
+    "memory_pipeline": {
+      "valid": true,
+      "complete": true,
+      "extraction_model": "deepseek/deepseek-v4-flash-vision-exp",
+      "events_attempted": 22,
+      "events_correct": 22,
+      "events_persisted": 21,
+      "write_recall": 1.0,
+      "latest_value_accuracy": 1.0,
+      "confirmed_evidence_rate": 1.0,
+      "report": "backend/benchmark-results/memory-pipeline_2026-09-09T03-37-10.533479_00-00.json",
+      "sha256": "0a6317340e6325213833f246745afac16433f7b3c625ff101c951ab151ef3264"
+    },
+    "vision_smoke": {
+      "model": "deepseek/deepseek-v4-flash-vision-exp",
+      "production_entry_point": "src.services.vision._captioner.extract_image_content",
+      "success": true,
+      "elapsed_seconds": 5.44,
+      "caption_present": true,
+      "ocr_characters": 2248,
+      "semantics_present": true,
+      "source_image_sha256": "c9bf5806a7139e9ff1c5c7eb0632887a315d18b255c822bf1a7628c1281c1b4f",
+      "boundary": "one real text-heavy Meeting Agent screenshot; not a representative vision benchmark"
+    },
+    "reranker_quality": {
+      "valid": true,
+      "complete": true,
+      "evaluated_queries": 8,
+      "skipped_queries": 0,
+      "baseline_mrr": 0.10928030303030303,
+      "reranked_mrr": 1.0,
+      "baseline_ndcg_at_10": 0.24946188678934547,
+      "reranked_ndcg_at_10": 0.9899650986435234,
+      "report": "backend/benchmark-results/reranker-quality_2026-09-09T03-17-29.294727_00-00.json",
+      "sha256": "4439665b4ea6ee1bd9d5010b17ba17ad354a8c96702d01159135c183d06063ad"
+    },
+    "rag_retrieval": {
+      "valid": true,
+      "complete": true,
+      "hybrid_recall_at_10": 0.7,
+      "file_recall_at_8": 1.0,
+      "reranker_evaluated_queries": 0,
+      "reranker_skipped_queries": 10,
+      "warning": "one vector search exceeded 8 seconds and fell back to BM25",
+      "report": "backend/benchmark-results/rag-retrieval_2026-09-09T03-18-12.419951_00-00.json",
+      "sha256": "542d5307a8e846e35a65219ab0a1d0d64ffb5497319c9fed45a21dc58c4f410a"
+    },
+    "e2e_smoke": {
+      "passed": true,
+      "upload_to_ready_ms": 940.558917,
+      "chat_ttft_ms": 1872.199999988079,
+      "chat_total_ms": 2721.899999976158,
+      "answer_has_citation": true,
+      "answer_has_expected_fact": true,
+      "source_identity_ok": true,
+      "dead_letter_jobs": 0,
+      "report": "backend/benchmark-results/e2e-smoke_2026-09-09T02-57-55Z.json",
+      "sha256": "ee29f0f809e8894f4ece6f3f610be6ab97686ba6ed05af50db8c92ff5be44e96"
+    },
+    "current_chat_performance": {
+      "model": "z-ai/glm-5.3-flash",
+      "samples": 20,
+      "all_requests_completed": true,
+      "gate_passed": false,
+      "degraded_rate": 0.45,
+      "ttft_p95_ms": 4169.295543443879,
+      "total_p95_ms": 6152.038187197469,
+      "report": "backend/benchmark-results/chat_2026-09-09T03-38-33.268821_00-00.json",
+      "sha256": "d9ea3d24783bb7bf21513df7582a65bc86c37342ce02a913e3686f89a187e6ba"
+    }
+  },
+  "quality_checks": {
+    "backend_full_test_suite": "2410 passed, 2 skipped",
+    "post_report_metadata_targeted_tests": "59 passed plus 57 passed",
+    "ruff": "passed",
+    "pyright": "0 errors, 0 warnings",
+    "frontend_typescript": "passed",
+    "documentation": "90 Markdown files passed",
+    "environment_layout": "passed"
+  },
+  "publication_boundary": {
+    "claim_type": "dated project-specific diagnostic",
+    "public_summary_allowed": true,
+    "repository_defaults": false,
+    "synthetic_workload": true,
+    "openrouter_provider_endpoint_pinned": false,
+    "controlled_head_to_head_model_comparison": false,
+    "comparison_limitations": [
+      "OpenRouter could route a model across provider endpoints.",
+      "The public quality datasets contain fewer than 30 cases and are not human-reviewed production holdouts."
+    ],
+    "safe_claim": "Under the dated Meeting Agent workload, OpenRouter route, configuration, and project gates, the tested model route did or did not satisfy the project requirement.",
+    "prohibited_overgeneralizations": [
+      "universal model availability or unavailability",
+      "general model quality ranking",
+      "production readiness inferred from one passing smoke test",
+      "direct comparison of runs with different workloads or configurations"
+    ],
+    "excluded_public_data": [
+      "API credentials and authorization headers",
+      "account identifiers",
+      "private prompts and answers",
+      "real meeting content",
+      "unredacted provider error payloads",
+      "ignored raw benchmark and private holdout artifacts"
+    ]
+  },
+  "release_assessment": {
+    "functional_model_replacement": true,
+    "release_ready": false,
+    "blocking_or_limiting_evidence": [
+      "The current main-generation Chat performance gate failed.",
+      "The published quality datasets are synthetic and contain fewer than 30 cases.",
+      "Multi-turn used one judge repeat in this diagnostic run.",
+      "Vision was verified on one real screenshot rather than a representative corpus.",
+      "The embedding path still showed an intermittent 8-second timeout and BM25 fallback."
+    ]
+  }
+}

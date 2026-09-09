@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from ....api.middleware import limiter
 from ....core import database as db
@@ -16,7 +16,6 @@ from ._common import _ownership_filter, logger, router
 async def reprocess_meeting(
     request: Request,
     meeting_id: int,
-    background_tasks: BackgroundTasks,
     principal: dict = Depends(verify_api_key),
 ):
     """Reprocess a meeting file (delete vectors and re-index)"""
@@ -40,16 +39,8 @@ async def reprocess_meeting(
     await asyncio.to_thread(_reset)
 
     try:
-        # Delete old vector chunks
-        try:
-            from ....services.rag import delete_meeting_chunks
-
-            delete_meeting_chunks(meeting_id)
-        except Exception:
-            logger.warning("Failed to delete old vectors for meeting %d", meeting_id, exc_info=True)
-
         # Schedule reprocessing for each file
-        from ....services.processor import process_meeting_file
+        from ....services.processor import schedule_meeting_file_processing
 
         def _list_files():
             with db.get_connection() as conn:
@@ -66,7 +57,11 @@ async def reprocess_meeting(
             logger.warning("Failed to invalidate file summaries for reprocess", exc_info=True)
 
         for f in files:
-            background_tasks.add_task(process_meeting_file, f["id"], force_meeting_summary=True)
+            await schedule_meeting_file_processing(
+                f["id"],
+                force_meeting_summary=True,
+                force_native_reindex=True,
+            )
     except Exception:
         logger.error("Reprocess scheduling failed for meeting %d", meeting_id, exc_info=True)
 
@@ -96,7 +91,6 @@ async def reprocess_meeting_file(
     request: Request,
     meeting_id: int,
     file_id: int,
-    background_tasks: BackgroundTasks,
     principal: dict = Depends(verify_api_key),
 ):
     """Reprocess a single file in a meeting."""
@@ -128,28 +122,19 @@ async def reprocess_meeting_file(
         except Exception:
             logger.warning("Failed to invalidate file summary for reprocess", exc_info=True)
 
-        # Delete old vector chunks for the specific file
-        try:
-            from ....services.rag import delete_meeting_chunks
-
-            delete_meeting_chunks(meeting_id, file_id=file_id)
-        except Exception:
-            logger.warning(
-                "Failed to delete old vectors for meeting %d file %d",
-                meeting_id,
-                file_id,
-                exc_info=True,
-            )
-
         # Invalidate meeting-level summary — the file content will change,
         # so any existing meeting summary is stale.
         from ....services.chain._meeting_summary_lifecycle import invalidate_meeting_summary
 
         await asyncio.to_thread(invalidate_meeting_summary, meeting_id)
 
-        from ....services.processor import process_meeting_file
+        from ....services.processor import schedule_meeting_file_processing
 
-        background_tasks.add_task(process_meeting_file, file_id, force_meeting_summary=True)
+        await schedule_meeting_file_processing(
+            file_id,
+            force_meeting_summary=True,
+            force_native_reindex=True,
+        )
     except Exception:
         logger.error("File reprocess scheduling failed for file %d", file_id, exc_info=True)
 

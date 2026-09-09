@@ -1,0 +1,16 @@
+{
+  "20260414_000001_baseline_schema.py": "dda54bb29d1c3c91d0f56d22c83d7506ce724e73edda246fb2f553232a88f3be",
+  "20260425_000001_add_memory_scope_columns.py": "02e988b74f1c06903cad55790ea2f3a434afed9cbe98de44659d6d1b9676168a",
+  "20260425_000002_flag_legacy_scope.py": "db667dfb168adaa4f538a3051b7d88af507c6b88a27b53cfc4a53ac1fad546dd",
+  "20260429_000001_relax_meeting_files_status_check.py": "b6b79c33662818f39bb7d214560707ea8995594bb6ca7d5505b1908d3741d183",
+  "20260429_000002_relax_meetings_status_check.py": "9119b6acf83f4b41dc820f566cc145988b0a25885286686e23acbf26d4a2f4e0",
+  "20260503_000001_add_attempts_to_pending_vector_deletions.py": "1f4e74d4a2e0e50dde4b5c136808d814d28a3de855e9de9a11a38efdc7d123ad",
+  "20260903_000001_add_shared_state_and_cjk_fts.py": "fec0076591f2513fd334573da3fefc4fd423676b0948da97c5a7fd4dac72190d",
+  "20260903_000002_add_pending_deletion_lifecycle.py": "8f79cb14fd2d5ed56c26e9ccc2393f0125ffdc78215fad79e6114a6abb535ad0",
+  "20260903_000003_reconcile_legacy_schema_versions.py": "48b641c7436f68a8aa9717b5e1b5f3a4922053d5e25acd94f0bb489000b7b1db",
+  "20260903_000004_add_account_deletion_batches.py": "7829531b486e4d25e05be284644f5a7b53df2e099f49d4b07ab38e61fbe68e5b",
+  "20260903_000005_harden_deferred_deletions.py": "04bf4af19383fe4d1ca4943a32a0af7982090dc3bbe0d710b2932e853e4515cd",
+  "20260903_000006_add_durable_jobs.py": "94b74f5cee5c572dbcb07968551532285c98d9747498568279440ff9b3ee85ae",
+  "20260904_000001_queue_successors_and_index_health.py": "448e529c902e1af489e89b509aaca409d54cb64312858b76e46a361a89532313",
+  "20260904_000002_add_native_index_manifests.py": "32644d48720080c218d8fb19c0db0739b510cb3a0dd8715fa29acb68ecf2a7b4"
+}

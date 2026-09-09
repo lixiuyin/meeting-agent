@@ -1,5 +1,6 @@
-import { api } from "./client-core";
+import { api, TIMEOUT_CHAT } from "./client-core";
 import type { SourceItem } from "./client-chat";
+import type { components } from "./generated";
 
 export interface SkillItem {
   name: string;
@@ -10,38 +11,25 @@ export interface SkillItem {
   version: string;
 }
 
-export interface SkillInvokeRequest {
-  skill_name: string;
-  query: string;
+type GeneratedSkillInvokeRequest = components["schemas"]["SkillInvokeRequest"];
+export type SkillInvokeRequest = Omit<GeneratedSkillInvokeRequest, "user_id"> & {
   user_id?: string;
-  meeting_ids?: number[];
-}
+};
 
-export interface SkillInvokeResponse {
-  skill_name: string;
-  content: string;
-  format: string;
+export interface SkillInvokeResponse extends Omit<
+  components["schemas"]["SkillInvokeResponse"],
+  "sources"
+> {
   sources: SourceItem[];
-  execution_time_ms: number;
 }
 
-export interface SkillMatchResponse {
-  matched: boolean;
-  skill?: {
-    name: string;
-    display_name: string;
-  };
-  score?: number;
-  details?: Record<string, unknown>;
-  ambiguous?: boolean;
-  reason?: string;
-}
+export type SkillMatchResponse = components["schemas"]["SkillMatchResponse"];
 
-export interface SkillSectionCreateRequest {
-  title: string;
+type GeneratedSkillSection = components["schemas"]["SkillSectionCreateRequest"];
+export type SkillSectionCreateRequest = Omit<GeneratedSkillSection, "description" | "required"> & {
   description?: string;
   required?: boolean;
-}
+};
 
 export interface SkillCreateRequest {
   name: string;
@@ -65,8 +53,11 @@ export async function listSkills() {
   return api.get<{ skills: SkillItem[]; total: number }>("/skills");
 }
 
-export async function invokeSkill(request: SkillInvokeRequest) {
-  return api.post<SkillInvokeResponse>("/skills/invoke", request);
+export async function invokeSkill(request: SkillInvokeRequest, options?: { signal?: AbortSignal }) {
+  return api.post<SkillInvokeResponse>("/skills/invoke", request, {
+    timeout: TIMEOUT_CHAT,
+    signal: options?.signal,
+  });
 }
 
 export async function matchIntent(query: string) {

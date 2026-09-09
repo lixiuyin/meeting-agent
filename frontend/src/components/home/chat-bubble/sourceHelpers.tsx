@@ -58,10 +58,18 @@ export const formatSourceLocation = (source: SourceItem) => {
 };
 
 export const sourceKeyFor = (msgKey: string, source: SourceItem) =>
-  `${msgKey}-${source.meeting_id}-${source.file_id ?? "na"}-${source.chunk_index ?? "na"}`;
+  `${msgKey}-${source.source_kind ?? "unknown"}-${source.meeting_id}-${source.file_id ?? "na"}-${source.chunk_index ?? "na"}${source.memory_key ? `-${source.memory_key}-${source.window_start ?? "na"}` : ""}`;
 
 export const sanitizeAgentAnswer = (content: string) =>
   content
+    // Older persisted turns may contain the pre-fix timeout diagnostic and
+    // retrieval-only context prefix. Strip both at the display boundary so a
+    // refresh cannot reintroduce internal implementation details.
+    .replace(
+      /The model exceeded the fast-path latency budget\.\s*Relevant source excerpts:\s*/gi,
+      "",
+    )
+    .replace(/\[Retrieval context:[^\]]*\]\s*/gi, "")
     .replace(/(\uff09\u4fe1\u606f\u6765\u6e90[:\uff1a][^\uff09]*\uff09)\s*$/u, "")
     .replace(/\(\u4fe1\u606f\u6765\u6e90[:\uff1a][^)]*\)\s*$/u, "")
     .trim();
@@ -73,3 +81,9 @@ export const isImageDerivedSource = (source: SourceItem) =>
   source.content_type === "image_combined";
 export const isAvSource = (source: SourceItem) =>
   source.file_type === "audio" || source.file_type === "video";
+
+// Preserve a visible warning for pre-status historical fallback answers.
+export const isLegacyPartialAnswer = (content: string) =>
+  /The model exceeded the fast-path latency budget|Relevant source excerpts \(partial result\)|以下是与问题相关的来源摘录 \(部分结果\)/i.test(
+    content,
+  );

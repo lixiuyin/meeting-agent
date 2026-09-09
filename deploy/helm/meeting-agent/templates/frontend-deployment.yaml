@@ -13,29 +13,51 @@ spec:
       component: frontend
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         {{- include "meeting-agent.selectorLabels" . | nindent 8 }}
         component: frontend
     spec:
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.frontend.podSecurityContext | nindent 8 }}
       containers:
         - name: frontend
-          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          image: {{ include "meeting-agent.image" (dict "image" .Values.frontend.image "root" .) | quote }}
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.frontend.containerSecurityContext | nindent 12 }}
           ports:
             - containerPort: {{ .Values.frontend.service.port }}
           env:
-            - name: BACKEND_API_KEY
+            - name: API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.backend.secretName }}
                   key: API_KEY
-                  optional: true
+                  optional: false
+            - name: ENVIRONMENT
+              value: {{ .Values.backend.config.ENVIRONMENT | default "production" | quote }}
+            - name: FRONTEND_AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secretName }}
+                  key: FRONTEND_AUTH_USER
+                  optional: false
+            - name: FRONTEND_AUTH_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secretName }}
+                  key: FRONTEND_AUTH_PASSWORD_HASH
+                  optional: false
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.frontend.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.frontend.readinessProbe | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -43,10 +65,14 @@ spec:
               mountPath: /var/cache/nginx
             - name: run
               mountPath: /var/run
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
       volumes:
         - name: tmp
           emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: run
+          emptyDir: {}
+        - name: nginx-conf
           emptyDir: {}

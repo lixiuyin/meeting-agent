@@ -9,6 +9,7 @@ Layer 3: LLM routing (complex disambiguation)
 import asyncio
 import contextlib
 import logging
+import math
 import re
 import threading
 from typing import Any, TypeVar
@@ -116,6 +117,10 @@ class SemanticMatcher:
     def __init__(self):
         self._embeddings = None
         self._cache: dict[str, np.ndarray] = {}
+        # A cold matcher may be entered concurrently by several chat requests.
+        # Serialize the immutable skill-corpus warm-up so those requests do not
+        # all send the same document batch to the embedding provider.
+        self._skill_cache_lock = threading.Lock()
         # TTL cache for query embeddings — avoids re-calling the embedding API
         # for repeated or similar queries within the TTL window.
         self._query_embed_cache: TTLCache = TTLCache(maxsize=512, ttl=600)
@@ -130,16 +135,63 @@ class SemanticMatcher:
         return self._embeddings
 
     def precompute_skill_embeddings(self, skill: SkillSummary) -> bool:
-        """Pre-compute and cache embeddings for skill examples."""
-        texts = [*skill.intent_matching.examples, skill.description]
-        try:
-            embeddings = self._get_embeddings().embed_documents(texts)
-        except (ValueError, RuntimeError) as exc:
-            logger.warning("Embedding failed for skill %s: %s", skill.name, exc)
-            return False
-        self._cache[skill.name] = np.array(embeddings)
-        logger.debug("Cached %d embeddings for skill: %s", len(texts), skill.name)
-        return True
+        """Pre-compute and cache embeddings for one skill."""
+        return skill.name in self.precompute_skills_embeddings([skill])
+
+    def precompute_skills_embeddings(self, skills: list[SkillSummary]) -> set[str]:
+        """Batch-cache embeddings for a cold skill corpus.
+
+        The former per-skill loop incurred one provider round trip per skill on
+        the first chat request.  Skill definitions are small and immutable
+        between loader invalidations, so one ordered batch produces identical
+        vectors with one round trip.  If a provider rejects the combined batch,
+        retry each skill independently to preserve the old fail-open behaviour.
+        """
+        with self._skill_cache_lock:
+            pending = [skill for skill in skills if skill.name not in self._cache]
+            if not pending:
+                return {skill.name for skill in skills}
+
+            texts_by_skill = [
+                [*skill.intent_matching.examples, skill.description] for skill in pending
+            ]
+            flat_texts = [text for texts in texts_by_skill for text in texts]
+            if not flat_texts:
+                return {skill.name for skill in skills if skill.name in self._cache}
+
+            try:
+                embeddings = self._get_embeddings().embed_documents(flat_texts)
+                if len(embeddings) != len(flat_texts):
+                    raise ValueError(
+                        "skill embedding batch returned "
+                        f"{len(embeddings)} vectors for {len(flat_texts)} texts"
+                    )
+                offset = 0
+                for skill, texts in zip(pending, texts_by_skill, strict=True):
+                    next_offset = offset + len(texts)
+                    self._cache[skill.name] = np.array(embeddings[offset:next_offset])
+                    logger.debug("Cached %d embeddings for skill: %s", len(texts), skill.name)
+                    offset = next_offset
+            except Exception as batch_exc:
+                logger.warning(
+                    "Batched skill embedding failed; retrying skills independently: %s",
+                    batch_exc,
+                )
+                for skill, texts in zip(pending, texts_by_skill, strict=True):
+                    try:
+                        skill_embeddings = self._get_embeddings().embed_documents(texts)
+                        if len(skill_embeddings) != len(texts):
+                            raise ValueError(
+                                "skill embedding returned "
+                                f"{len(skill_embeddings)} vectors for {len(texts)} texts"
+                            )
+                    except Exception as exc:
+                        logger.warning("Embedding failed for skill %s: %s", skill.name, exc)
+                        continue
+                    self._cache[skill.name] = np.array(skill_embeddings)
+                    logger.debug("Cached %d embeddings for skill: %s", len(texts), skill.name)
+
+            return {skill.name for skill in skills if skill.name in self._cache}
 
     def embed_query(self, query: str) -> np.ndarray:
         """Embed query once so it can be reused across multiple skills.
@@ -266,7 +318,8 @@ REASONING: <brief explanation>
         except TimeoutError:
             logger.warning("LLM route timed out, returning first candidate")
             return candidates[0].name, 0.5, "timeout_fallback"
-        content = response.content if hasattr(response, "content") else str(response)
+        raw_content = response.content if hasattr(response, "content") else response
+        content = raw_content if isinstance(raw_content, str) else str(raw_content)
 
         # Parse response
         skill_name = candidates[0].name  # Default fallback
@@ -303,6 +356,37 @@ class IntentMatchingService:
         self._match_cache_lock = threading.Lock()
         self._NO_MATCH_SENTINEL = object()
 
+    def _has_reachable_match(self, query: str, skills: list[SkillSummary], use_llm: bool) -> bool:
+        """Skip remote scoring only when even its maximum cannot select a skill.
+
+        Keep the complete candidate set whenever any skill can pass: a weaker
+        candidate can still affect ambiguity routing. No heuristic intent gate
+        or similarity threshold is introduced here.
+        """
+        for skill in skills:
+            config = skill.intent_matching
+            keyword, _ = self.keyword_matcher.match(query, config.keywords)
+            if config.method == "hybrid":
+                kw_weight = float(config.keywords.get("weight", 0.4))
+                sem_weight = float(config.keywords.get("semantic_weight", 0.4))
+                upper = keyword * kw_weight + (abs(sem_weight) if config.examples else 0)
+            elif config.method == "keyword":
+                upper = keyword
+            else:
+                upper = 1.0 if config.examples else 0.0
+            if not math.isfinite(upper):
+                return True
+            if upper + 1e-12 < config.threshold * 0.5:
+                continue
+            if use_llm and len(skills) > 1 and config.llm_routing.get("enabled", False):
+                weight = float(config.llm_routing.get("weight", 0.2))
+                if not 0 <= weight <= 1:
+                    return True
+                upper = max(upper, upper * (1 - weight) + weight)
+            if upper + 1e-12 >= config.threshold:
+                return True
+        return False
+
     async def match(
         self, query: str, skills: list[SkillSummary], use_llm: bool = True
     ) -> SkillMatchResult | None:
@@ -322,13 +406,18 @@ class IntentMatchingService:
 
         # Check match result cache
         skill_names_key = tuple(sorted(s.name for s in skills))
-        cache_key = (query, skill_names_key)
+        cache_key = (query, skill_names_key, use_llm)
         with self._match_cache_lock:
             cached = self._match_cache.get(cache_key)
         if cached is not None:
             if cached is self._NO_MATCH_SENTINEL:
                 return None
             return cached
+
+        if not self._has_reachable_match(query, skills, use_llm):
+            with self._match_cache_lock:
+                self._match_cache[cache_key] = self._NO_MATCH_SENTINEL
+            return None
 
         # Pre-compute query embedding once if any skill needs semantic matching
         needs_semantic = any(
@@ -337,20 +426,36 @@ class IntentMatchingService:
         )
         query_embedding = None
         if needs_semantic:
-            try:
-                query_embedding = await asyncio.wait_for(
-                    asyncio.to_thread(self.semantic_matcher.embed_query, query),
-                    timeout=_settings.SEMANTIC_EMBED_TIMEOUT_S,
-                )
-            except TimeoutError:
-                logger.warning(
-                    "semantic embed timed out after %.1fs",
-                    _settings.SEMANTIC_EMBED_TIMEOUT_S,
-                )
-                query_embedding = None
-            except Exception as exc:
-                logger.warning("semantic embed failed: %s", exc)
-                query_embedding = None
+            semantic_skills = [
+                skill
+                for skill in skills
+                if skill.intent_matching.method in ("semantic", "hybrid")
+                and skill.intent_matching.examples
+            ]
+
+            async def _embed_query() -> np.ndarray | None:
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(self.semantic_matcher.embed_query, query),
+                        timeout=_settings.SEMANTIC_EMBED_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "semantic embed timed out after %.1fs",
+                        _settings.SEMANTIC_EMBED_TIMEOUT_S,
+                    )
+                    return None
+                except Exception as exc:
+                    logger.warning("semantic embed failed: %s", exc)
+                    return None
+
+            query_embedding, _ = await asyncio.gather(
+                _embed_query(),
+                asyncio.to_thread(
+                    self.semantic_matcher.precompute_skills_embeddings,
+                    semantic_skills,
+                ),
+            )
 
         results = []
 

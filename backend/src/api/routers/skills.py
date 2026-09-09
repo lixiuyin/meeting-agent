@@ -3,16 +3,18 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from time import monotonic
+from typing import Annotated, Any
 
 import yaml
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from skills.loader import SkillLoader
 from skills.matcher import IntentMatchingService
 
 from ...api.middleware import limiter
+from ...core.config import settings
 from ...core.security import _derive_user_id_from_api_key, verify_api_key
 from ...services.chain import PipelineContext, _extract_sources
 from ...services.chain._api import _run_pipeline
@@ -24,7 +26,7 @@ router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(veri
 SKILL_MATCH_TIMEOUT_S = 15.0
 SKILL_INVOKE_TIMEOUT_S = 120.0
 
-_loader = SkillLoader()
+_loader = SkillLoader(custom_skills_dir=settings.CUSTOM_SKILLS_DIR)
 # H-SKILL-1: Serialize skill mutations to prevent cache race windows.
 _skill_mutation_lock = asyncio.Lock()
 
@@ -32,11 +34,11 @@ _skill_mutation_lock = asyncio.Lock()
 class SkillInvokeRequest(BaseModel):
     """Request model for skill invocation."""
 
-    skill_name: str = Field(..., description="Name of the skill to invoke")
-    query: str = Field(..., description="User query or context")
-    user_id: str = Field(default="default", description="User identifier")
+    skill_name: str = Field(..., min_length=1, max_length=64, description="Name of the skill")
+    query: str = Field(..., min_length=1, max_length=10_000, description="User query or context")
+    user_id: str = Field(default="default", min_length=1, max_length=200)
     meeting_ids: list[int] | None = Field(
-        default=None, description="Optional meeting IDs to restrict search"
+        default=None, max_length=50, description="Optional meeting IDs to restrict search"
     )
 
 
@@ -89,11 +91,17 @@ class SkillCreateRequest(BaseModel):
     )
     display_name: str = Field(..., min_length=3, max_length=120)
     description: str = Field(..., min_length=10, max_length=2000)
-    required_keywords: list[str] = Field(default_factory=list)
-    optional_keywords: list[str] = Field(default_factory=list)
-    examples: list[str] = Field(default_factory=list)
+    required_keywords: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        default_factory=list, max_length=50
+    )
+    optional_keywords: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        default_factory=list, max_length=50
+    )
+    examples: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
+        default_factory=list, max_length=20
+    )
     threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    sections: list[SkillSectionCreateRequest] = Field(default_factory=list)
+    sections: list[SkillSectionCreateRequest] = Field(default_factory=list, max_length=20)
     category: str = Field(default="custom", min_length=1, max_length=80)
 
 
@@ -301,6 +309,7 @@ async def invoke_skill(
             detail=f"Skill '{body.skill_name}' not found. Available: {', '.join(available)}",
         )
 
+    started_at = monotonic()
     try:
         if body.user_id != principal["user_id"]:
             logger.warning(
@@ -335,9 +344,11 @@ async def invoke_skill(
             content=ctx.answer,
             format=skill.output.format,
             sources=_extract_sources(ctx.docs),
-            execution_time_ms=0,  # Could add timing if needed
+            execution_time_ms=max(0, round((monotonic() - started_at) * 1000)),
         )
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Skill execution failed for skill=%s", body.skill_name)
         raise HTTPException(status_code=500, detail="Skill execution failed") from None
@@ -345,7 +356,10 @@ async def invoke_skill(
 
 @router.post("/match", response_model=SkillMatchResponse)
 @limiter.limit("60/minute")
-async def match_intent(request: Request, query: str):
+async def match_intent(
+    request: Request,
+    query: str = Query(..., min_length=1, max_length=10_000),
+):
     """Test intent matching for a query without executing.
 
     Useful for debugging intent matching configuration.

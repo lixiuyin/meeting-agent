@@ -1,5 +1,7 @@
 """Settings-related Pydantic models."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -27,6 +29,12 @@ class EmbeddingSettings(BaseModel):
 class RAGSettings(BaseModel):
     chunk_size: int = Field(..., ge=256, le=8192, description="Document chunk size")
     chunk_overlap: int = Field(..., ge=0, le=2048, description="Chunk overlap size")
+    chunk_size_tokens: int = Field(
+        default=384, ge=64, le=4096, description="Language-neutral document chunk size"
+    )
+    chunk_overlap_tokens: int = Field(
+        default=64, ge=0, le=1024, description="Document chunk overlap in tokens"
+    )
     top_k: int = Field(..., ge=1, le=50, description="Number of top results to retrieve")
     query_rewrite_enabled: bool = Field(..., description="Enable query rewriting")
     query_rewrite_model: str = Field(
@@ -58,15 +66,28 @@ class RAGSettings(BaseModel):
     parent_child_enabled: bool = Field(..., description="Enable parent-child chunking")
     child_chunk_size: int = Field(..., ge=64, le=2042, description="Child chunk size")
     child_chunk_overlap: int = Field(..., ge=0, le=512, description="Child chunk overlap")
+    child_chunk_size_tokens: int = Field(
+        default=160, ge=32, le=2048, description="Child chunk size in tokens"
+    )
+    child_chunk_overlap_tokens: int = Field(
+        default=24, ge=0, le=512, description="Child chunk overlap in tokens"
+    )
     hybrid_search_enabled: bool = Field(..., description="Enable hybrid search (vector + BM25)")
-    hybrid_alpha: float = Field(..., ge=0.0, le=1.0, description="Hybrid weight: 0=vector, 1=BM25")
+    hybrid_alpha: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Vector weight for hybrid fusion: 0=pure BM25, 1=pure vector",
+    )
     retriever_provider: str = Field(
-        ..., description="Default retrieval provider: native|hybrid|multimodal|hybrid_multimodal"
+        ...,
+        pattern="^(vector|native|hybrid|multimodal|hybrid_multimodal)$",
+        description="Default retrieval strategy: vector|hybrid|multimodal|hybrid_multimodal",
     )
     raganything_enabled: bool = Field(..., description="Enable RAGAnything multimodal retrieval")
     raganything_fallback_to_native: bool = Field(
         ...,
-        description="Fallback to native retriever when RAGAnything branch fails",
+        description="Fallback to vector/hybrid retrieval when RAGAnything branch fails",
     )
     raganything_working_dir: str = Field(default="", description="RAGAnything working directory")
     raganything_index_timeout_seconds: float = Field(
@@ -81,6 +102,7 @@ class RAGSettings(BaseModel):
     semantic_chunking_enabled: bool = Field(default=False, description="Enable semantic chunking")
     non_text_chunking_strategy: str = Field(
         default="native",
+        pattern="^(native|text)$",
         description="How non-text files are chunked: native|text",
     )
     multi_query_enabled: bool = Field(default=False, description="Enable multi-query expansion")
@@ -123,9 +145,11 @@ class RAGSettings(BaseModel):
         normalized = value.strip().lower()
         if normalized == "raganything":
             raise ValueError("retriever_provider 'raganything' is deprecated; use 'multimodal'")
-        if normalized not in {"native", "hybrid", "multimodal", "hybrid_multimodal"}:
+        if normalized == "native":
+            return "vector"
+        if normalized not in {"vector", "hybrid", "multimodal", "hybrid_multimodal"}:
             raise ValueError(
-                "retriever_provider must be one of: native, hybrid, multimodal, hybrid_multimodal"
+                "retriever_provider must be one of: vector, hybrid, multimodal, hybrid_multimodal"
             )
         return normalized
 
@@ -173,15 +197,15 @@ class MemorySettings(BaseModel):
     session_summary_startup_backfill: bool = Field(
         default=False, description="Summarize unsummarized sessions at startup"
     )
-    consolidation_enabled: bool = Field(default=True, description="Enable memory consolidation")
+    consolidation_enabled: bool = Field(default=False, description="Enable memory consolidation")
     consolidation_min_cluster: int = Field(
         default=3, ge=2, le=20, description="Min cluster size for consolidation"
     )
-    semantic_cluster_enabled: bool = Field(default=True, description="Enable semantic clustering")
+    semantic_cluster_enabled: bool = Field(default=False, description="Enable semantic clustering")
     knowledge_graph_enabled: bool = Field(
-        default=True, description="Enable knowledge graph extraction"
+        default=False, description="Enable knowledge graph extraction"
     )
-    profile_enabled: bool = Field(default=True, description="Enable user profile refresh")
+    profile_enabled: bool = Field(default=False, description="Enable user profile refresh")
     profile_refresh_interval: int = Field(
         default=50, ge=10, le=500, description="Profile refresh interval (turns)"
     )
@@ -228,7 +252,7 @@ class UploadSettings(BaseModel):
 
 
 class ASRSettings(BaseModel):
-    provider: str = Field(default="assemblyai", description="ASR provider")
+    provider: Literal["assemblyai"] = Field(default="assemblyai", description="ASR provider")
     language: str = Field(default="en", description="Speech recognition language")
     assemblyai_api_key: str = Field(
         default="", description="AssemblyAI API key (env-only, masked for display)"
@@ -243,7 +267,11 @@ class ASRSettings(BaseModel):
 
 
 class OCRSettings(BaseModel):
-    provider: str = Field(default="marker", description="OCR provider: marker|mineru|paddleocr")
+    provider: str = Field(
+        default="marker",
+        pattern="^(marker|mineru|paddleocr)$",
+        description="OCR provider: marker|mineru|paddleocr",
+    )
     language: str = Field(default="en", description="OCR language code")
     dpi: int = Field(default=300, ge=72, le=600, description="Scan DPI")
     marker_base_url: str = Field(default="", description="Marker API base URL")
@@ -310,6 +338,15 @@ class ServerInfo(BaseModel):
     security_csp: str = Field(default="")
 
 
+class SettingsActivationPolicy(BaseModel):
+    """Machine-readable activation boundary for every backend Settings field."""
+
+    hot: list[str]
+    resettable: list[str]
+    reindex_required: list[str]
+    restart_required: list[str]
+
+
 class SettingsResponse(BaseModel):
     llm: LLMSettings
     embedding: EmbeddingSettings
@@ -324,6 +361,7 @@ class SettingsResponse(BaseModel):
     parser: ParserSettings
     retention: RetentionSettings
     server: ServerInfo
+    activation_policy: SettingsActivationPolicy
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -339,7 +377,3 @@ class SettingsUpdateRequest(BaseModel):
     tts: TTSSettings | None = None
     parser: ParserSettings | None = None
     retention: RetentionSettings | None = None
-    confirm_vector_rebuild: bool = Field(
-        False,
-        description="Acknowledge vector rebuild requirement for embedding setting changes",
-    )

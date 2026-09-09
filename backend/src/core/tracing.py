@@ -31,13 +31,18 @@ def otel_span(
         from opentelemetry import trace
 
         tracer = trace.get_tracer("meeting-agent")
-        with tracer.start_as_current_span(name) as span:
-            if attributes:
-                for key, value in attributes.items():
-                    span.set_attribute(key, value)
-            yield
     except Exception:
         logger.debug("OTel span creation failed for '%s'", name, exc_info=True)
+        yield
+        return
+
+    # Do not catch exceptions raised by the instrumented application block.
+    # The former broad try/except yielded a second time after an application
+    # error, masking the real failure as "generator didn't stop after throw()".
+    with tracer.start_as_current_span(name) as span:
+        if attributes:
+            for key, value in attributes.items():
+                span.set_attribute(key, value)
         yield
 
 
@@ -93,7 +98,9 @@ def setup_tracing() -> bool:
 def _instrument_fastapi() -> None:
     """Instrument FastAPI application for automatic request spans."""
     try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.fastapi import (  # pyright: ignore[reportMissingImports] - optional extra
+            FastAPIInstrumentor,
+        )
 
         FastAPIInstrumentor.instrument()  # type: ignore[attr-defined]
         logger.debug("FastAPI instrumentation enabled")
@@ -106,7 +113,9 @@ def _instrument_fastapi() -> None:
 def _instrument_httpx() -> None:
     """Instrument httpx for outbound HTTP request spans."""
     try:
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.instrumentation.httpx import (  # pyright: ignore[reportMissingImports] - optional extra
+            HTTPXClientInstrumentor,
+        )
 
         HTTPXClientInstrumentor().instrument()  # type: ignore[attr-defined]
         logger.debug("httpx instrumentation enabled")

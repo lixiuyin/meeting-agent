@@ -1,5 +1,6 @@
 """LLM provider creators and registry."""
 
+import hashlib
 import logging
 import threading
 from collections.abc import Callable
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Thread-safe LLM singleton
 _llm: BaseChatModel | None = None
+_llm_key: tuple[Any, ...] | None = None
 _lock = threading.Lock()
 
 
@@ -21,6 +23,25 @@ def _get_effective_binding() -> str:
     if settings.LLM_BINDING:
         return settings.LLM_BINDING.lower()
     return "openai"
+
+
+def _secret_fingerprint(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _llm_config_key(*, model_name: str | None = None) -> tuple[Any, ...]:
+    """Return the request-visible configuration identity for an LLM client."""
+    return (
+        _get_effective_binding(),
+        model_name or settings.LLM_MODEL,
+        settings.LLM_TEMPERATURE,
+        settings.LLM_MAX_TOKENS,
+        settings.LLM_GENERATION_TIMEOUT_S,
+        settings.LLM_BASE_URL,
+        settings.LLM_HOST,
+        settings.LLM_REASONING_EFFORT,
+        _secret_fingerprint(settings.LLM_API_KEY.get_secret_value()),
+    )
 
 
 def _create_openai_llm(model_name: str | None = None) -> BaseChatModel:
@@ -32,6 +53,7 @@ def _create_openai_llm(model_name: str | None = None) -> BaseChatModel:
         "model": model,
         "temperature": settings.LLM_TEMPERATURE,
         "max_tokens": settings.LLM_MAX_TOKENS,
+        "timeout": settings.LLM_GENERATION_TIMEOUT_S,
     }
     llm_key = settings.LLM_API_KEY.get_secret_value()
     if llm_key:
@@ -54,6 +76,7 @@ def _create_azure_openai_llm(model_name: str | None = None) -> BaseChatModel:
         "model": model_name or settings.LLM_MODEL,
         "temperature": settings.LLM_TEMPERATURE,
         "max_tokens": settings.LLM_MAX_TOKENS,
+        "timeout": settings.LLM_GENERATION_TIMEOUT_S,
     }
     llm_key = settings.LLM_API_KEY.get_secret_value()
     if llm_key:
@@ -72,6 +95,7 @@ def _create_anthropic_llm(model_name: str | None = None) -> BaseChatModel:
         "model": model_name or settings.LLM_MODEL,
         "temperature": settings.LLM_TEMPERATURE,
         "max_tokens": settings.LLM_MAX_TOKENS,
+        "timeout": settings.LLM_GENERATION_TIMEOUT_S,
     }
     llm_key = settings.LLM_API_KEY.get_secret_value()
     if llm_key:
@@ -91,6 +115,7 @@ def _create_openai_compatible_llm(
         "model": model_name or settings.LLM_MODEL,
         "temperature": settings.LLM_TEMPERATURE,
         "max_tokens": settings.LLM_MAX_TOKENS,
+        "timeout": settings.LLM_GENERATION_TIMEOUT_S,
     }
 
     llm_key = settings.LLM_API_KEY.get_secret_value()
@@ -100,6 +125,13 @@ def _create_openai_compatible_llm(
     base_url = settings.LLM_BASE_URL or settings.LLM_HOST or default_base_url
     if base_url:
         kwargs["base_url"] = base_url
+    if _get_effective_binding() == "openrouter":
+        kwargs["extra_body"] = {
+            "reasoning": {
+                "effort": settings.LLM_REASONING_EFFORT,
+                "exclude": True,
+            }
+        }
 
     return ChatOpenAI(**kwargs)  # type: ignore[arg-type]
 
@@ -180,35 +212,44 @@ for _provider_name, (_url, _needs_key) in _OPENAI_COMPATIBLE_PROVIDERS.items():
     )
 
 
+def create_llm(model_name: str | None = None) -> BaseChatModel:
+    """Create a non-singleton LLM, optionally overriding only the model name."""
+    binding = _get_effective_binding()
+    if binding not in _LLM_CREATORS:
+        raise ValueError(
+            f"Unsupported LLM binding: {binding}. Supported: {', '.join(_LLM_CREATORS.keys())}"
+        )
+    creator = _LLM_CREATORS[binding]
+    return creator(model_name=model_name) if model_name is not None else creator()
+
+
 def get_llm() -> BaseChatModel:
     """Get or create the singleton LLM instance (thread-safe)."""
-    global _llm
-    if _llm is None:
+    global _llm, _llm_key
+    config_key = _llm_config_key()
+    if _llm is None or _llm_key != config_key:
         with _lock:
-            if _llm is None:  # double-check after acquiring lock
-                binding = _get_effective_binding()
-
-                if binding not in _LLM_CREATORS:
-                    raise ValueError(
-                        f"Unsupported LLM binding: {binding}. "
-                        f"Supported: {', '.join(_LLM_CREATORS.keys())}"
-                    )
-
-                _llm = _LLM_CREATORS[binding]()
-                logger.info("Initialized %s LLM with model %s", binding, settings.LLM_MODEL)
+            if _llm is None or _llm_key != config_key:
+                _llm = create_llm()
+                _llm_key = config_key
+                logger.info(
+                    "Initialized %s LLM with model %s", _get_effective_binding(), settings.LLM_MODEL
+                )
     return _llm
 
 
 def reset_llm() -> None:
     """Reset the LLM singleton so the next call to get_llm() creates a fresh instance."""
-    global _llm
+    global _llm, _llm_key
     with _lock:
         _llm = None
+        _llm_key = None
     logger.info("LLM singleton reset")
 
 
 # Thread-safe extraction LLM singleton (separate model from main LLM)
 _extraction_llm: BaseChatModel | None = None
+_extraction_llm_key: tuple[Any, ...] | None = None
 _extraction_llm_lock = threading.Lock()
 
 
@@ -223,10 +264,11 @@ def get_extraction_llm() -> BaseChatModel:
     if not model_name:
         return get_llm()
 
-    global _extraction_llm
-    if _extraction_llm is None:
+    global _extraction_llm, _extraction_llm_key
+    config_key = _llm_config_key(model_name=model_name)
+    if _extraction_llm is None or _extraction_llm_key != config_key:
         with _extraction_llm_lock:
-            if _extraction_llm is None:
+            if _extraction_llm is None or _extraction_llm_key != config_key:
                 binding = _get_effective_binding()
                 if binding not in _LLM_CREATORS:
                     logger.warning(
@@ -236,6 +278,7 @@ def get_extraction_llm() -> BaseChatModel:
                     return get_llm()
                 # Pass model_name explicitly — no settings mutation needed.
                 _extraction_llm = _LLM_CREATORS[binding](model_name=model_name)
+                _extraction_llm_key = config_key
                 logger.info(
                     "Initialized extraction LLM: binding=%s, model=%s",
                     binding,
@@ -246,9 +289,10 @@ def get_extraction_llm() -> BaseChatModel:
 
 def reset_extraction_llm() -> None:
     """Reset the extraction LLM singleton."""
-    global _extraction_llm
+    global _extraction_llm, _extraction_llm_key
     with _extraction_llm_lock:
         _extraction_llm = None
+        _extraction_llm_key = None
     logger.info("Extraction LLM singleton reset")
 
 

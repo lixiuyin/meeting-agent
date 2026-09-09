@@ -80,12 +80,25 @@ def initialize_default_resettable_services() -> None:
 
     from .chain._skill_matching import reset_skill_loader, reset_skill_matcher
     from .embedder import reset_embeddings
-    from .llm import reset_llm
+    from .knowledge_graph._vectorstore import reset_entity_vectorstore
+    from .llm import reset_extraction_llm, reset_llm
+    from .memory._summary_vectorstore import (
+        reset_summary_vectorstore as reset_session_summary_store,
+    )
+    from .memory._vectorstore import reset_memory_vectorstore
     from .rag import reset_reranker_state, reset_rewrite_llm, reset_vectorstore
+    from .rag._meeting_summary_vectorstore import reset_meeting_summary_vectorstore
     from .rag._raganything import reset_raganything
+    from .rag._summary_vectorstore import reset_summary_vectorstore as reset_file_summary_store
 
     register_resettable_fn("llm", reset_llm)
+    register_resettable_fn("extraction_llm", reset_extraction_llm)
     register_resettable_fn("embeddings", reset_embeddings)
+    register_resettable_fn("memory_vectorstore", reset_memory_vectorstore)
+    register_resettable_fn("session_summary_vectorstore", reset_session_summary_store)
+    register_resettable_fn("entity_vectorstore", reset_entity_vectorstore)
+    register_resettable_fn("file_summary_vectorstore", reset_file_summary_store)
+    register_resettable_fn("meeting_summary_vectorstore", reset_meeting_summary_vectorstore)
     register_resettable_fn("raganything", reset_raganything)
     register_resettable_fn("reranker", reset_reranker_state)
     register_resettable_fn("query_rewrite", reset_rewrite_llm)
@@ -112,7 +125,7 @@ def initialize_default_resettable_services() -> None:
     register_resettable_fn("file_summary_cache", _reset_file_summary_cache)
 
     def _reset_stream_semaphore() -> None:
-        from ..api.routers.chat import reset_stream_semaphore
+        from .concurrency import reset_stream_semaphore
 
         reset_stream_semaphore()
 

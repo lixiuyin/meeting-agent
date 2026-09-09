@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 from weakref import WeakValueDictionary
 
 from fastapi import HTTPException
@@ -28,15 +29,13 @@ _WRITE_LOCK_TIMEOUT = 60
 
 # Thread-local storage for connection pooling
 _local = threading.local()
-# HIGH-16: User-level write lock pool reduces contention compared to a single
-# global RLock.  Hashing user_id distributes writes across 64 buckets so
-# concurrent writes from different users don't block each other.
-_WRITE_LOCK_POOL_SIZE = 256
+# SQLite WAL still permits only one writer per database file.  Multiple
+# user-bucket locks merely allow contenders to collide inside SQLite and cause
+# busy errors, so all writes share one process-level queue/lock.
+_WRITE_LOCK_POOL_SIZE = 1
 _write_lock_pool: list[threading.RLock] = [threading.RLock() for _ in range(_WRITE_LOCK_POOL_SIZE)]
-# Backward-compatible alias for code that references the original global lock
-# (migrations, database __init__.py). Uses pool[0] which is the default bucket.
 _write_lock = _write_lock_pool[0]
-_pool_lock = threading.Lock()
+_pool_lock = threading.RLock()
 _wal_init_lock = threading.Lock()
 _wal_initialized_paths: set[str] = set()
 
@@ -54,12 +53,30 @@ class _TrackedConnection(sqlite3.Connection):
 _connections: WeakValueDictionary[int, sqlite3.Connection] = WeakValueDictionary()
 # CONC-5: Track last activity time per thread for idle-based WAL checkpoint eviction.
 _conn_last_active: dict[int, float] = {}
+# Number of active connection contexts per thread. WAL recovery must never
+# close a connection while another thread is using it.
+_conn_active: dict[int, int] = {}
+
+
+def _mark_conn_active(tid: int) -> None:
+    with _pool_lock:
+        _conn_active[tid] = _conn_active.get(tid, 0) + 1
+
+
+def _mark_conn_idle(tid: int) -> None:
+    with _pool_lock:
+        depth = _conn_active.get(tid, 1) - 1
+        if depth <= 0:
+            _conn_active.pop(tid, None)
+            _conn_last_active[tid] = time.monotonic()
+        else:
+            _conn_active[tid] = depth
 
 
 def _get_thread_conn() -> sqlite3.Connection:
     """Get or create a thread-local connection (one per thread)."""
     conn = getattr(_local, "conn", None)
-    target_db = str(settings.DB_PATH)
+    target_db = str(Path(settings.DB_PATH).resolve())
     # Detect closed or stale connections before use.
     if conn is not None:
         try:
@@ -71,7 +88,7 @@ def _get_thread_conn() -> sqlite3.Connection:
     # If the connection points to a different database (e.g. benchmark switched
     # to a new temp DB), close it so we reconnect to the correct file.
     if conn is not None:
-        current_db = conn.execute("PRAGMA database_list").fetchone()[2]
+        current_db = str(Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve())
         if current_db != target_db:
             try:
                 conn.close()
@@ -95,6 +112,20 @@ def _get_thread_conn() -> sqlite3.Connection:
                 if target_db not in _wal_initialized_paths:
                     conn.execute("PRAGMA journal_mode=WAL")
                     _wal_initialized_paths.add(target_db)
+        # SQLite creates the main/WAL/shared-memory files using the caller's
+        # umask. Normalize them for deployments launched outside our scripts.
+        for database_file in (
+            Path(target_db),
+            Path(f"{target_db}-wal"),
+            Path(f"{target_db}-shm"),
+        ):
+            if database_file.exists():
+                try:
+                    database_file.chmod(0o600)
+                except OSError:
+                    logger.warning(
+                        "Could not restrict database file permissions: %s", database_file
+                    )
         _local.conn = conn
         with _pool_lock:
             _connections[threading.get_ident()] = conn
@@ -111,9 +142,14 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
     is closed and removed from the thread-local pool to unblock WAL checkpoint
     truncation and prevent .db-wal bloat (HIGH-12).
     """
-    conn = _get_thread_conn()
+    tid = threading.get_ident()
+    # Resolve and mark the connection as active under the same lock used by
+    # WAL recovery. This closes the small window where another thread could
+    # evict a connection between lookup and activity registration.
+    with _pool_lock:
+        conn = _get_thread_conn()
+        _mark_conn_active(tid)
     tx_start = time.monotonic()
-    _conn_last_active[threading.get_ident()] = tx_start
     try:
         yield conn
     except HTTPException:
@@ -124,6 +160,7 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
         conn.rollback()
         raise
     finally:
+        _mark_conn_idle(tid)
         elapsed = time.monotonic() - tx_start
         try:
             from ..metrics import DB_READ_TX_AGE_SECONDS
@@ -140,12 +177,16 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
                 _MAX_READ_TX_SECONDS,
                 stack_info=True,
             )
-            try:
-                conn.close()
-                logger.debug("Closed long-held read connection (%.0fs)", elapsed)
-            except Exception:
-                logger.debug("Failed to close long-held read connection", exc_info=True)
-            _local.conn = None
+            with _pool_lock:
+                if _conn_active.get(tid, 0) == 0:
+                    try:
+                        conn.close()
+                        logger.debug("Closed long-held read connection (%.0fs)", elapsed)
+                    except Exception:
+                        logger.debug("Failed to close long-held read connection", exc_info=True)
+                    _connections.pop(tid, None)
+                    _conn_last_active.pop(tid, None)
+                    _local.conn = None
 
 
 @contextmanager
@@ -154,32 +195,25 @@ def get_write_connection(
 ) -> Generator[sqlite3.Connection, None, None]:
     """Yield a thread-local connection with serialized write access.
 
-    HIGH-16: Uses a bucketed lock pool (64 locks, hashed by ``user_id``).
-    When ``user_id`` is omitted, falls back to the global lock for backward
-    compatibility with internal operations (schema migrations, startup).
+    SQLite has a single writer per database file, so ``user_id`` is accepted
+    only for API compatibility and all callers enter the same writer queue.
     """
+    _ = user_id
     tid = threading.get_ident()
-    conn = _get_thread_conn()
-    if user_id is not None:
-        # CONC-4: Deterministic hashing avoids PYTHONHASHSEED variance.
-        import hashlib as _hashlib
-
-        bucket = (
-            int.from_bytes(_hashlib.blake2b(user_id.encode(), digest_size=4).digest(), "big")
-            % _WRITE_LOCK_POOL_SIZE
-        )
-        lock = _write_lock_pool[bucket]
-    else:
-        # Legacy global lock for operations without user context.
-        lock = _write_lock_pool[0]
+    with _pool_lock:
+        conn = _get_thread_conn()
+        _mark_conn_active(tid)
+    lock = _write_lock
     acquired = lock.acquire(timeout=_WRITE_LOCK_TIMEOUT)
     if not acquired:
+        _mark_conn_idle(tid)
         raise RuntimeError(
             f"Write lock acquisition timed out after {_WRITE_LOCK_TIMEOUT}s "
             f"(bucket user_id={user_id!r}). Check for long-held write transactions."
         )
     try:
-        depth = _write_depth_per_thread.get(tid, 0) + 1
+        previous_depth = _write_depth_per_thread.get(tid, 0)
+        depth = previous_depth + 1
         _write_depth_per_thread[tid] = depth
         if depth >= 2:
             logger.warning(
@@ -187,24 +221,47 @@ def get_write_connection(
                 "to avoid extending the write-lock duration.",
                 depth,
             )
-        if depth > 3:
-            raise RuntimeError(
-                f"Nested write lock too deep (depth={depth}); "
-                "refactor to avoid extending write-lock duration."
-            )
+        savepoint = f"meeting_agent_nested_{depth}" if previous_depth else None
         try:
+            if savepoint is not None:
+                conn.execute(f"SAVEPOINT {savepoint}")
+            elif not conn.in_transaction:
+                # Acquire SQLite's writer reservation before any read/claim.
+                # An outer context without DML must still own a transaction:
+                # otherwise RELEASE of a nested SAVEPOINT commits early.
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
-            conn.commit()
+            if savepoint is not None:
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            else:
+                from ..chat_run_context import fence_run_commit
+                from ..idempotency_context import fence_commit
+                from ..job_fence import assert_active_job_fence
+                from ..source_revision_fence import assert_active_source_revision_fence
+
+                assert_active_job_fence(conn)
+                assert_active_source_revision_fence(conn)
+                fence_commit(conn)
+                fence_run_commit(conn)
+                conn.commit()
         except HTTPException:
             try:
-                conn.rollback()
+                if savepoint is not None:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    conn.rollback()
             except Exception:
                 logger.debug("Rollback failed (connection may be closed)", exc_info=True)
             raise
-        except Exception as exc:
+        except BaseException as exc:
             logger.error("Write transaction failed; rolling back", exc_info=True)
             try:
-                conn.rollback()
+                if savepoint is not None:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    conn.rollback()
             except Exception:
                 logger.debug("Rollback failed (connection may be closed)", exc_info=True)
             if isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower():
@@ -219,6 +276,7 @@ def get_write_connection(
             else:
                 _write_depth_per_thread[tid] = new_depth
     finally:
+        _mark_conn_idle(tid)
         lock.release()
 
 
@@ -228,6 +286,8 @@ def close_all_connections() -> None:
     with _pool_lock:
         conns = list(_connections.values())
         _connections.clear()
+        _conn_active.clear()
+        _conn_last_active.clear()
     for conn in conns:
         try:
             conn.close()

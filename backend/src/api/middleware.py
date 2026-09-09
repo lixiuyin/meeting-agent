@@ -10,7 +10,9 @@ import uuid
 from fastapi import Request
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from ..core.config import settings
 
@@ -128,9 +130,12 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             try:
                 from ..core.metrics import HTTP_REQUEST_DURATION
 
+                route = request.scope.get("route")
+                metric_path = getattr(route, "path", None) or "unmatched"
+
                 HTTP_REQUEST_DURATION.labels(
                     method=request.method,
-                    path=request.url.path,
+                    path=metric_path,
                     status=str(response.status_code),
                 ).observe(time.monotonic() - start)
             except Exception:
@@ -158,6 +163,39 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class SupportedContentTypeMiddleware(BaseHTTPMiddleware):
+    """Reject form encoding the API does not support before Starlette parses it."""
+
+    async def dispatch(self, request: Request, call_next):
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type == "application/x-www-form-urlencoded":
+            return JSONResponse(
+                status_code=415,
+                content={
+                    "detail": (
+                        "application/x-www-form-urlencoded is not supported; "
+                        "use JSON or multipart/form-data"
+                    )
+                },
+            )
+        return await call_next(request)
+
+
+class IdempotencyReservationMiddleware(BaseHTTPMiddleware):
+    """Always release a mutation reservation when its endpoint did not complete it."""
+
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        finally:
+            guard = getattr(request.state, "idempotency_guard", None)
+            if guard is not None:
+                try:
+                    await guard.abandon()
+                except Exception:
+                    logger.exception("Failed to release unfinished idempotency reservation")
+
+
 class RequestIdFilter(logging.Filter):
     """Inject request_id into log records."""
 
@@ -177,9 +215,11 @@ def setup_middleware(app) -> None:
 
     # Request ID tracing
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(IdempotencyReservationMiddleware)
 
     # Security headers
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(SupportedContentTypeMiddleware)
 
     # Trusted hosts (blocks Host header attacks / DNS rebinding)
     trusted_hosts = [h.strip() for h in settings.TRUSTED_HOSTS.split(",") if h.strip()]
@@ -206,7 +246,7 @@ def setup_middleware(app) -> None:
 
     # In dev mode with no configured origins, provide sensible defaults
     if not _origins and settings.ENVIRONMENT == "dev":
-        _origins = ["http://localhost:5173", "http://localhost:3000"]
+        _origins = ["http://localhost:8307"]
         logger.info("CORS: no origins configured in dev mode, using defaults %s", _origins)
 
     # CORS origins are validated in Settings.model_post_init() for non-dev environments.
@@ -216,10 +256,22 @@ def setup_middleware(app) -> None:
         CORSMiddleware,
         allow_origins=_origins,
         allow_credentials=bool(_origins),
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["X-API-Key", "Content-Type", "X-Request-ID"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "X-API-Key",
+            "Content-Type",
+            "X-Request-ID",
+            "Idempotency-Key",
+            "Last-Event-ID",
+        ],
+        expose_headers=["X-Run-ID", "X-Request-ID", "Retry-After"],
     )
     logger.info("CORS configured: origins=%s", _origins if _origins else "[] (deny all)")
+
+    if _METRICS_ENABLED:
+        from .slo_metrics import ChatCompletionMetricsMiddleware
+
+        app.add_middleware(ChatCompletionMetricsMiddleware)
 
 
 async def _rate_limit_envelope_handler(request: Request, exc: RateLimitExceeded):
@@ -272,3 +324,4 @@ def setup_rate_limiter(app) -> None:
     """Register rate limiter on the FastAPI app."""
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_envelope_handler)  # type: ignore[arg-type]
+    app.add_middleware(SlowAPIMiddleware)

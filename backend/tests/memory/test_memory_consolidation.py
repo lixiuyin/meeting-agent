@@ -110,16 +110,29 @@ class TestConsolidateMemories:
 
         with (
             patch("src.services.llm.get_llm", return_value=mock_llm),
-            patch("src.services.memory._service._consolidation.settings") as mock_settings,
             patch(
                 "asyncio.to_thread",
                 new=AsyncMock(return_value=mock_response),
             ),
         ):
-            mock_settings.MEMORY_CONSOLIDATION_ENABLED = True
-            mock_settings.MEMORY_CONSOLIDATION_MIN_CLUSTER = 3
-            mock_settings.MEMORY_SEMANTIC_CLUSTER_ENABLED = False
-            count = await memory_service.consolidate_memories(user_id)
+            with (
+                patch(
+                    "src.services.memory._service._consolidation.settings."
+                    "MEMORY_CONSOLIDATION_ENABLED",
+                    True,
+                ),
+                patch(
+                    "src.services.memory._service._consolidation.settings."
+                    "MEMORY_CONSOLIDATION_MIN_CLUSTER",
+                    3,
+                ),
+                patch(
+                    "src.services.memory._service._consolidation.settings."
+                    "MEMORY_SEMANTIC_CLUSTER_ENABLED",
+                    False,
+                ),
+            ):
+                count = await memory_service.consolidate_memories(user_id)
 
         # At least one cluster should have been consolidated
         assert count >= 1

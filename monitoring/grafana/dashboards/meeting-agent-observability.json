@@ -39,12 +39,12 @@
       "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4}
     },
     {
-      "title": "Vector Store Orphans",
+      "title": "Pending Vector Deletions",
       "type": "stat",
       "targets": [
         {
-          "expr": "rate(vectorstore_orphan_total[1h])",
-          "legendFormat": "orphans/h"
+          "expr": "pending_vector_deletion_jobs{status=\"pending\"}",
+          "legendFormat": "pending"
         }
       ],
       "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4}

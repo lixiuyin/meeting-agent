@@ -7,6 +7,56 @@ import pytest
 from pydantic import SecretStr
 
 
+def test_vision_endpoint_falls_back_to_llm_credentials(monkeypatch):
+    from src.services.vision import _captioner as captioner
+
+    monkeypatch.setattr(captioner.settings, "VISION_BASE_URL", "")
+    monkeypatch.setattr(captioner.settings, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(captioner.settings, "VISION_MODEL", "vision-model")
+    monkeypatch.setattr(captioner.settings, "VISION_API_KEY", SecretStr(""))
+    monkeypatch.setattr(captioner.settings, "LLM_API_KEY", SecretStr("shared-key"))
+
+    assert captioner._vision_endpoint() == (
+        "https://openrouter.ai/api/v1",
+        "shared-key",
+        "vision-model",
+    )
+
+
+def test_openrouter_vision_payload_disables_reasoning(monkeypatch):
+    from src.services.vision import _captioner as captioner
+
+    monkeypatch.setattr(captioner.settings, "VISION_MODEL", "vision-model")
+    monkeypatch.setattr(captioner.settings, "VISION_REASONING_EFFORT", "none")
+    monkeypatch.setattr(captioner, "_image_to_data_url", lambda _path: "data:image/png;base64,AA==")
+
+    payload = captioner._vision_payload(
+        "image.png",
+        base_url="https://openrouter.ai/api/v1",
+        prompt="Describe the image.",
+        max_tokens=2048,
+    )
+
+    assert payload["reasoning"] == {"effort": "none", "exclude": True}
+    assert payload["max_tokens"] == 2048
+
+
+def test_non_openrouter_vision_payload_omits_reasoning(monkeypatch):
+    from src.services.vision import _captioner as captioner
+
+    monkeypatch.setattr(captioner.settings, "VISION_MODEL", "vision-model")
+    monkeypatch.setattr(captioner, "_image_to_data_url", lambda _path: "data:image/png;base64,AA==")
+
+    payload = captioner._vision_payload(
+        "image.png",
+        base_url="https://vision.example/v1",
+        prompt="Describe the image.",
+        max_tokens=120,
+    )
+
+    assert "reasoning" not in payload
+
+
 @pytest.mark.asyncio
 async def test_caption_retries_and_succeeds(monkeypatch):
     from src.services.vision import _captioner as captioner

@@ -77,15 +77,16 @@ export default function HomeContextHeader({
           gap: 16,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className="home-context-selectors">
           <Select
             mode="multiple"
+            aria-label={formatMessage({ id: "home.selectMeetings" })}
             placeholder={formatMessage({ id: "home.selectMeetings" })}
             value={selectedMeetingIds}
             onChange={setSelectedMeetingIds}
             options={meetingOptions}
             optionFilterProp="label"
-            style={{ minWidth: 280, maxWidth: 400 }}
+            className="home-context-meeting-select"
             allowClear
             maxTagCount="responsive"
             variant="borderless"
@@ -93,12 +94,13 @@ export default function HomeContextHeader({
           />
           <Select
             mode="multiple"
-            placeholder="Select files (optional)"
+            aria-label={formatMessage({ id: "home.selectFiles" })}
+            placeholder={formatMessage({ id: "home.selectFiles" })}
             value={selectedFileIds}
             onChange={setSelectedFileIds}
             options={fileOptions}
             optionFilterProp="label"
-            style={{ minWidth: 320, maxWidth: 460 }}
+            className="home-context-file-select"
             allowClear
             maxTagCount="responsive"
             variant="borderless"

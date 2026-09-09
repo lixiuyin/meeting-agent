@@ -6,9 +6,9 @@ import logging
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import create_engine, pool
 
+from alembic import context
 from src.core.constants import DB_PATH
 
 config = context.config

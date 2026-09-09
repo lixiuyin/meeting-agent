@@ -9,8 +9,11 @@ scrape_configs:
   - job_name: "meeting-agent-backend"
     metrics_path: "/metrics"
     scheme: http
-    # Uncomment for production when API_KEY is set:
-    # bearer_token_file: /run/secrets/prometheus_api_token
+    # Uncomment for production when PROMETHEUS_API_KEY is set. The backend
+    # authenticates this endpoint with X-API-Key, not Authorization: Bearer.
+    # http_headers:
+    #   X-API-Key:
+    #     files: [/run/secrets/prometheus_api_token]
     static_configs:
       - targets: ["backend:8000"]
         labels:

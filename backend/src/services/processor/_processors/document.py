@@ -429,6 +429,9 @@ class DocumentFileProcessor:
             image_ocr_success_count += page_metrics["image_ocr_success_count"]
         parsed_doc.pages = enriched_pages
         text = parsed_doc.to_text()
+        from ....core.source_blocks import source_blocks
+
+        pages = source_blocks(pages, text)
         metrics: dict[str, int | float | str] = {
             "page_count": parsed_doc.total_pages,
             "word_count": len(text.split()),

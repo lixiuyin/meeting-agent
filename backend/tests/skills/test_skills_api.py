@@ -142,6 +142,30 @@ class TestSkillsMatchEndpoint:
 
 class TestSkillsInvokeEndpoint:
     @pytest.mark.asyncio
+    async def test_invoke_timeout_preserves_504(self, client, auth_headers, monkeypatch):
+        import asyncio
+
+        import src.api.routers.skills as skills_mod
+
+        async def _never_finishes(*_args, **_kwargs):
+            await asyncio.sleep(1)
+
+        monkeypatch.setattr(skills_mod, "SKILL_INVOKE_TIMEOUT_S", 0.001)
+        monkeypatch.setattr(skills_mod, "_run_pipeline", _never_finishes)
+        async with client as c:
+            response = await c.post(
+                "/api/v1/skills/invoke",
+                json={
+                    "skill_name": "tech_proposal_generator",
+                    "query": "Generate a technical proposal",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 504
+        assert "timed out" in response.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_invoke_existing_skill(self, client, auth_headers, monkeypatch):
         calls = []
 

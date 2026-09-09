@@ -7,6 +7,7 @@ rather than parsing raw error messages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -84,6 +85,14 @@ class LLMContextWindowError(LLMAPIError):
 
 class LLMTransientResponseError(LLMAPIError):
     """Provider returned a malformed/truncated response body (transient)."""
+
+
+class LLMEmptyResponseError(LLMTransientResponseError):
+    """Provider completed successfully but produced no user-visible answer."""
+
+
+class ContinuationSnapshotError(Exception):
+    """The user requested frozen evidence that cannot be restored safely."""
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +175,10 @@ _RULES.append(
 # Keyword-based rules (catch-all for any provider)
 _RULES.extend(
     [
+        _MappingRule(
+            classifier=_instance_of(TimeoutError, asyncio.TimeoutError),
+            factory=lambda exc, p: LLMTimeoutError(str(exc), provider=p),
+        ),
         _MappingRule(
             classifier=_message_contains("rate limit", "quota", "too many requests"),
             factory=lambda exc, p: LLMRateLimitError(str(exc), provider=p),

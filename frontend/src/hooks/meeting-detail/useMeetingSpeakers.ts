@@ -68,16 +68,24 @@ export function useMeetingSpeakers({
   }, []);
 
   const handlePlaySpeaker = useCallback(
-    (meetingId: number, fileId: number, speakerCode: string) => {
+    async (meetingId: number, fileId: number, speakerCode: string) => {
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
         activeAudioRef.current.removeAttribute("src");
       }
 
-      const url = getSpeakerAudioUrl(meetingId, fileId, speakerCode);
+      setSpeakerPlaying(speakerCode);
+      let url: string;
+      try {
+        url = await getSpeakerAudioUrl(meetingId, fileId, speakerCode);
+      } catch (error) {
+        reportNonCriticalError("resolve speaker audio URL", error);
+        message.error("Failed to prepare audio sample");
+        setSpeakerPlaying(null);
+        return;
+      }
       const audio = new Audio(url);
       activeAudioRef.current = audio;
-      setSpeakerPlaying(speakerCode);
 
       audio.onended = () => {
         setSpeakerPlaying(null);

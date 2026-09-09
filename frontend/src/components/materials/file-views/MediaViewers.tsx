@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Spin } from "antd";
 import { ClockCircleOutlined } from "@ant-design/icons";
 import { getFileTimeline } from "../../../api/client";
@@ -29,6 +29,7 @@ interface AudioViewerProps {
   url: string;
   fileName: string;
   seekTo?: number;
+  seekEnd?: number;
   meetingId: number;
   fileId: number;
   audioRef: React.RefObject<HTMLAudioElement | null>;
@@ -38,6 +39,7 @@ export function AudioViewer({
   url,
   fileName,
   seekTo,
+  seekEnd,
   meetingId,
   fileId,
   audioRef,
@@ -48,6 +50,7 @@ export function AudioViewer({
       url={url}
       fileName={fileName}
       seekTo={seekTo}
+      seekEnd={seekEnd}
       meetingId={meetingId}
       fileId={fileId}
       audioRef={audioRef}
@@ -59,6 +62,7 @@ function AudioViewerInner({
   url,
   fileName,
   seekTo,
+  seekEnd,
   meetingId,
   fileId,
   audioRef,
@@ -85,8 +89,10 @@ function AudioViewerInner({
   }, [meetingId, fileId]);
 
   const handleTimeUpdate = useCallback(() => {
-    setCurrentTime(audioRef.current?.currentTime ?? 0);
-  }, [audioRef]);
+    const current = audioRef.current?.currentTime ?? 0;
+    setCurrentTime(current);
+    if (seekEnd != null && current >= seekEnd) audioRef.current?.pause();
+  }, [audioRef, seekEnd]);
 
   const handleSeek = useCallback(
     (time: number) => {
@@ -200,17 +206,26 @@ function AudioViewerInner({
 interface VideoViewerProps {
   url: string;
   seekTo?: number;
+  seekEnd?: number;
   meetingId: number;
   fileId: number;
   videoRef: React.RefObject<HTMLVideoElement | null>;
 }
 
-export function VideoViewer({ url, seekTo, meetingId, fileId, videoRef }: VideoViewerProps) {
+export function VideoViewer({
+  url,
+  seekTo,
+  seekEnd,
+  meetingId,
+  fileId,
+  videoRef,
+}: VideoViewerProps) {
   return (
     <VideoViewerInner
       key={`${meetingId}:${fileId}`}
       url={url}
       seekTo={seekTo}
+      seekEnd={seekEnd}
       meetingId={meetingId}
       fileId={fileId}
       videoRef={videoRef}
@@ -218,7 +233,7 @@ export function VideoViewer({ url, seekTo, meetingId, fileId, videoRef }: VideoV
   );
 }
 
-function VideoViewerInner({ url, seekTo, meetingId, fileId, videoRef }: VideoViewerProps) {
+function VideoViewerInner({ url, seekTo, seekEnd, meetingId, fileId, videoRef }: VideoViewerProps) {
   const [timestamps, setTimestamps] = useState<TimestampSegment[]>([]);
   const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
 
@@ -237,8 +252,10 @@ function VideoViewerInner({ url, seekTo, meetingId, fileId, videoRef }: VideoVie
   }, [meetingId, fileId]);
 
   const handleTimeUpdate = useCallback(() => {
-    setCurrentTime(videoRef.current?.currentTime ?? 0);
-  }, [videoRef]);
+    const current = videoRef.current?.currentTime ?? 0;
+    setCurrentTime(current);
+    if (seekEnd != null && current >= seekEnd) videoRef.current?.pause();
+  }, [seekEnd, videoRef]);
 
   const handleSeek = useCallback(
     (time: number) => {
@@ -354,14 +371,22 @@ function VideoViewerInner({ url, seekTo, meetingId, fileId, videoRef }: VideoVie
 
 // ---- Text file preview ----
 
-export function TextPreview({ url, fileName }: { url: string; fileName: string }) {
-  return <TextPreviewInner key={url} url={url} fileName={fileName} />;
+interface TextPreviewProps {
+  url: string;
+  fileName: string;
+  windowStart?: number;
+  windowEnd?: number;
 }
 
-function TextPreviewInner({ url, fileName }: { url: string; fileName: string }) {
+export function TextPreview(props: TextPreviewProps) {
+  return <TextPreviewInner key={props.url} {...props} />;
+}
+
+function TextPreviewInner({ url, fileName, windowStart, windowEnd }: TextPreviewProps) {
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const evidenceRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +409,10 @@ function TextPreviewInner({ url, fileName }: { url: string; fileName: string }) 
       cancelled = true;
     };
   }, [url]);
+
+  useEffect(() => {
+    evidenceRef.current?.scrollIntoView({ block: "center" });
+  }, [text, windowEnd, windowStart]);
 
   if (loading) {
     return (
@@ -409,6 +438,13 @@ function TextPreviewInner({ url, fileName }: { url: string; fileName: string }) 
     );
   }
 
+  // Backend evidence offsets are Unicode code-point offsets. JavaScript slice
+  // uses UTF-16 units, so split by code point before applying coordinates.
+  const codePoints = Array.from(text);
+  const start = Math.min(Math.max(windowStart ?? 0, 0), codePoints.length);
+  const end = Math.min(Math.max(windowEnd ?? start, start), codePoints.length);
+  const hasExactWindow = windowStart != null && windowEnd != null && end > start;
+
   return (
     <div style={{ padding: 16 }}>
       <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 8 }}>
@@ -430,7 +466,17 @@ function TextPreviewInner({ url, fileName }: { url: string; fileName: string }) 
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
         }}
       >
-        {text}
+        {hasExactWindow ? (
+          <>
+            {codePoints.slice(0, start).join("")}
+            <mark ref={evidenceRef} data-testid="exact-evidence-window">
+              {codePoints.slice(start, end).join("")}
+            </mark>
+            {codePoints.slice(end).join("")}
+          </>
+        ) : (
+          text
+        )}
       </pre>
     </div>
   );

@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "protocol_id": "meeting-agent-eval-v1",
+  "intended_capabilities": [
+    "low-latency cited answers over uploaded meeting artifacts",
+    "principal-isolated evaluation without expected-file leakage",
+    "relevant retrieval across files and meetings",
+    "grounded multi-turn conversation",
+    "incremental long-horizon memory and knowledge-graph use",
+    "diagnosable ingest and chat process execution"
+  ],
+  "allowed_resources": [
+    "versioned synthetic fixtures",
+    "the configured production retrieval pipeline",
+    "a separately recorded LLM judge configuration when explicitly invoked"
+  ],
+  "withheld_information": [
+    "gold evidence identifiers are never inserted into model prompts",
+    "expected answer-bearing file IDs are evaluator-only and never used as retrieval scope",
+    "reference answers are withheld from answer generation",
+    "test fixtures and metric definitions are immutable during a comparison run"
+  ],
+  "artifact_capture": [
+    "protocol and dataset SHA-256 hashes",
+    "command and non-secret model configuration",
+    "raw per-case outputs and process traces",
+    "aggregate score records and timestamps",
+    "source revision and implementation input fingerprints; clean state is checked internally at release",
+    "per-category latency and explicit degradation rates"
+  ],
+  "reference_free_metrics": [
+    "faithfulness",
+    "answer_relevance",
+    "context_precision"
+  ],
+  "metric_contracts": {
+    "context_recall": {
+      "reference_required": true,
+      "reason": "Recall requires gold claims or a reference answer; treating it as reference-free would invalidate the score."
+    },
+    "correctness": {
+      "reference_required": true
+    },
+    "citation_quality": {
+      "reference_required": true,
+      "levels": ["entailment", "completeness", "source_identity"]
+    }
+  },
+  "protocol_validity_contracts": {
+    "exposure": {
+      "checks": ["withheld_information", "artifact_dataset_hashes"]
+    },
+    "exploit": {
+      "checks": ["dataset_path_confinement", "immutable_dataset_hashes"]
+    },
+    "mislead": {
+      "checks": ["reference_required_metrics", "source_mapping", "declared_runner_status"]
+    }
+  },
+  "suites": {
+    "performance": {
+      "status": "implemented",
+      "metrics": [
+        "chat_ttft",
+        "chat_total",
+        "upload_to_ready",
+        "degraded_rate",
+        "category_latency"
+      ],
+      "datasets": [
+        "tests/fixtures/benchmark/queries.json",
+        "tests/fixtures/benchmark/e2e-smoke.txt"
+      ]
+    },
+    "rag_retrieval": {
+      "status": "implemented",
+      "metrics": ["recall", "mrr", "ndcg"],
+      "datasets": ["tests/fixtures/benchmark/golden_set.json"]
+    },
+    "reranker_quality": {
+      "status": "implemented",
+      "metrics": ["mrr", "ndcg", "mrr_gain", "ndcg_gain"],
+      "datasets": ["evaluation/datasets/reranker_cases.json"]
+    },
+    "rag_answer": {
+      "status": "implemented",
+      "metrics": [
+        "faithfulness",
+        "answer_relevance",
+        "context_precision",
+        "context_recall",
+        "correctness",
+        "citation_quality",
+        "source_identity_recall",
+        "corpus_isolation"
+      ],
+      "datasets": ["tests/fixtures/benchmark/golden_set.json"]
+    },
+    "multi_turn": {
+      "status": "implemented",
+      "metrics": ["faithfulness", "appropriateness", "naturalness", "completeness"],
+      "datasets": ["evaluation/datasets/multi_turn_cases.json"]
+    },
+    "long_horizon_memory": {
+      "status": "implemented",
+      "metrics": [
+        "accurate_retrieval",
+        "knowledge_graph_multihop",
+        "knowledge_graph_gain",
+        "test_time_learning",
+        "long_range_understanding",
+        "selective_forgetting",
+        "memory_gain",
+        "abstention_accuracy",
+        "negation_update_accuracy",
+        "entity_scope_disambiguation",
+        "temporal_validity_accuracy"
+      ],
+      "datasets": [
+        "evaluation/datasets/memory_cases.json",
+        "evaluation/datasets/knowledge_graph_cases.json"
+      ]
+    },
+    "process_quality": {
+      "status": "implemented",
+      "metrics": ["step_accuracy", "first_error_accuracy", "error_type_accuracy"],
+      "datasets": ["evaluation/datasets/process_expectations.json"]
+    },
+    "meeting_evidence_governance": {
+      "status": "implemented",
+      "metrics": [
+        "evidence_authority_accuracy",
+        "explicit_temporal_scope_accuracy",
+        "source_revision_fence_accuracy",
+        "authority_label_visibility"
+      ],
+      "datasets": ["evaluation/datasets/evidence_governance_cases.json"]
+    },
+    "protocol_validity": {
+      "status": "implemented",
+      "metrics": ["exposure", "exploit", "mislead"],
+      "datasets": ["evaluation/datasets/process_expectations.json"]
+    }
+  },
+  "method_sources": [
+    {"id": "ragas", "title": "RAGAS: Automated Evaluation of Retrieval Augmented Generation", "year": 2024},
+    {"id": "knollmeyer_2026", "title": "Evaluating Retrieval Augmented Generation: A Comprehensive Review", "year": 2026},
+    {"id": "mtrag", "title": "mtRAG: A Multi-Turn Conversational Benchmark for Evaluating Retrieval-Augmented Generation Systems", "year": 2025},
+    {"id": "hu_2026", "title": "Evaluating Memory in LLM Agents via Incremental Multi-Turn Interactions", "year": 2026},
+    {"id": "memgym", "title": "MemGym: A Long-Horizon Memory Environment for LLM Agents", "year": 2026},
+    {"id": "agentprocessbench", "title": "AgentProcessBench: Diagnosing Step-Level Process Quality in Tool-Using Agents", "year": 2026},
+    {"id": "shao_2026", "title": "Do Agent Benchmarks Measure Capability? Protocol Validity in the Age of Agentic AI", "year": 2026}
+  ]
+}

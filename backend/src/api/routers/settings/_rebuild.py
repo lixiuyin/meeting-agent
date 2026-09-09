@@ -3,9 +3,10 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, Request
+from pydantic import BaseModel
 
 from ....api.middleware import limiter
 from ....core.audit import audit_log
@@ -17,6 +18,7 @@ from ._common import (
     logger,
     rebuild_state,
     release_all_rebuild_locks,
+    renew_rebuild_advisory_lock,
     router,
     try_acquire_multimodal_rebuild,
     try_acquire_vectors_rebuild,
@@ -27,10 +29,30 @@ from ._common import (
 _COPY_BATCH_SIZE = 1000
 
 
+async def _owned_thread(function, *args, on_cancel=None, **kwargs):
+    """Drain a non-cancellable thread before releasing resources it is using."""
+    pending = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(pending)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if pending.cancelled():
+                raise
+    if cancelled:
+        if on_cancel is not None:
+            on_cancel(result)
+        raise asyncio.CancelledError
+    return result
+
+
 def _try_copy_collection_chunks(
     chroma_client: Any,
     source_name: str,
     target_name: str,
+    expected_fingerprint: str,
 ) -> int:
     """Bulk-copy chunks from source to target collection with embeddings intact.
 
@@ -70,6 +92,40 @@ def _try_copy_collection_chunks(
         except (TypeError, ValueError):
             pass
 
+    # A same-dimensional model or a different chunking policy is still an
+    # incompatible index.  Preflight metadata before copying any IDs so a
+    # failed fast path cannot contaminate the shadow collection.
+    checked = 0
+    offset = 0
+    while offset < source_count:
+        batch = source_col.get(
+            include=["metadatas"],
+            limit=_COPY_BATCH_SIZE,
+            offset=offset,
+        )
+        ids = batch.get("ids") or []
+        if not ids:
+            break
+        metadatas = batch.get("metadatas") or []
+        if len(metadatas) != len(ids):
+            logger.warning("Source index metadata is incomplete; full re-index required")
+            return 0
+        if any(
+            (metadata or {}).get("index_config_fingerprint") != expected_fingerprint
+            for metadata in metadatas
+        ):
+            logger.info("Source index fingerprint is stale; full re-index required")
+            return 0
+        checked += len(ids)
+        offset += len(ids)
+    if checked != source_count:
+        logger.warning(
+            "Source index changed during fast-copy preflight (%d/%d); full re-index required",
+            checked,
+            source_count,
+        )
+        return 0
+
     logger.info(
         "Fast-copying %d chunks from '%s' to '%s' (batch size %d)",
         source_count,
@@ -96,10 +152,34 @@ def _try_copy_collection_chunks(
             metadatas=batch.get("metadatas"),
         )
         copied += len(ids)
-        offset += _COPY_BATCH_SIZE
+        offset += len(ids)
+
+    if copied != source_count:
+        raise RuntimeError(
+            f"Source index changed during fast-copy ({copied}/{source_count} chunks copied)"
+        )
 
     logger.info("Fast-copied %d chunks (skipped re-embedding)", copied)
     return copied
+
+
+def _swap_vector_collections(client: Any, shadow_name: str, retired_name: str) -> bool:
+    """Publish a prepared generation; restore live if the second rename fails."""
+    from chromadb.errors import NotFoundError
+
+    try:
+        live = client.get_collection("meetings")
+    except NotFoundError:
+        live = None
+    if live is not None:
+        live.modify(name=retired_name)
+    try:
+        client.get_collection(shadow_name).modify(name="meetings")
+    except Exception:
+        if live is not None:
+            client.get_collection(retired_name).modify(name="meetings")
+        raise
+    return live is not None
 
 
 async def _rebuild_vectors_task(epoch: int) -> None:
@@ -118,72 +198,109 @@ async def _rebuild_vectors_task(epoch: int) -> None:
     Transcripts are reused as-is — the ASR/parser pipeline is not re-run.
     """
     shadow_name = f"meetings_shadow_{uuid.uuid4().hex[:8]}"
+    retired_name = "meetings_retired"
     chroma_client = None
+    rows: list[Any] = []
+    lease_lost = asyncio.Event()
+
+    async def _renew_lease() -> None:
+        while True:
+            await asyncio.sleep(30)
+            if not await asyncio.to_thread(renew_rebuild_advisory_lock):
+                lease_lost.set()
+                return
+
+    lease_task = asyncio.create_task(_renew_lease(), name="vector-rebuild-lease")
 
     try:
         import chromadb
         from langchain_chroma import Chroma
 
         from ....core import database as db
+        from ....core.chroma_security import validate_chroma_runtime
+        from ....core.index_manifest import index_config_fingerprint
         from ....services.embedder import get_embeddings
         from ....services.rag import index_meeting
-        from ....services.rag._bm25_maintenance import rebuild_bm25_from_chroma
-        from ....services.rag._vectorstore import reset_vectorstore
+        from ....services.rag._publication import publish_generation, source_snapshot
+        from ....services.rag._vectorstore import vectorstore_write_lock
+
+        active_fingerprint = index_config_fingerprint()
 
         # --- Phase 1: Create shadow collection ---
         def _create_shadow_collection() -> tuple[Any, Any]:
             embeddings = get_embeddings()
-            client = chromadb.PersistentClient(path=str(settings.VECTOR_DB_DIR))
-            client.get_or_create_collection(
-                name=shadow_name,
-                metadata={"embedding_dimension": settings.EMBEDDING_DIMENSION},
-            )
-            shadow_vs = Chroma(
-                client=client,
-                collection_name=shadow_name,
-                embedding_function=embeddings,
-            )
-            return client, shadow_vs
+            client: Any = chromadb.PersistentClient(path=str(validate_chroma_runtime()))
+            try:
+                client.get_or_create_collection(
+                    name=shadow_name,
+                    metadata={
+                        "embedding_dimension": settings.EMBEDDING_DIMENSION,
+                        "index_config_fingerprint": active_fingerprint,
+                    },
+                )
+                shadow_vs = Chroma(
+                    client=client,
+                    collection_name=shadow_name,
+                    embedding_function=embeddings,
+                )
+                return client, shadow_vs
+            except BaseException:
+                client.close()
+                raise
 
-        chroma_client, shadow_vs = await asyncio.to_thread(_create_shadow_collection)
+        chroma_client, shadow_vs = await _owned_thread(
+            _create_shadow_collection, on_cancel=lambda result: result[0].close()
+        )
         logger.info("Created shadow collection '%s' for rebuild", shadow_name)
+
+        def _fetch_ready_files():
+            with db.get_connection() as conn:
+                return conn.execute(
+                    """
+                    SELECT mf.id AS file_id,
+                           mf.meeting_id AS meeting_id,
+                           mf.file_name AS file_name,
+                           mf.file_type AS file_type,
+                           mf.transcript AS transcript,
+                           m.title AS meeting_title,
+                           m.meeting_date AS meeting_date,
+                           m.user_id AS user_id
+                    FROM meeting_files mf
+                    JOIN meetings m ON m.id = mf.meeting_id
+                    WHERE mf.status='ready'
+                    ORDER BY mf.meeting_id, mf.created_at
+                    """
+                ).fetchall()
+
+        def _capture_source():
+            with vectorstore_write_lock():
+                return _fetch_ready_files(), source_snapshot()
+
+        rows, expected_snapshot = await asyncio.to_thread(_capture_source)
 
         # --- Phase 1.5: Fast-copy from live collection (O-CONC-2) ---
         # When the embedding model hasn't changed, bulk-copy chunks with
         # their existing embeddings instead of re-embedding every transcript.
         # This turns a rebuild that costs hundreds of API calls into a
         # seconds-long, zero-API-cost operation.
-        _copied = await asyncio.to_thread(
-            _try_copy_collection_chunks, chroma_client, "meetings", shadow_name
+        _copied = await _owned_thread(
+            _try_copy_collection_chunks,
+            chroma_client,
+            "meetings",
+            shadow_name,
+            active_fingerprint,
         )
         if _copied > 0:
             logger.info("Fast-copy succeeded (%d chunks); skipping Phase 2 re-index", _copied)
             # Skip to Phase 3 (swap)
         else:
             # --- Phase 2: Index all files into shadow ---
-            def _fetch_ready_files():
-                with db.get_connection() as conn:
-                    return conn.execute(
-                        """
-                        SELECT mf.id AS file_id,
-                               mf.meeting_id AS meeting_id,
-                               mf.file_name AS file_name,
-                               mf.file_type AS file_type,
-                               mf.transcript AS transcript,
-                               m.title AS meeting_title,
-                               m.meeting_date AS meeting_date,
-                               m.user_id AS user_id
-                        FROM meeting_files mf
-                        JOIN meetings m ON m.id = mf.meeting_id
-                        WHERE mf.status='ready' AND mf.transcript IS NOT NULL
-                        ORDER BY mf.meeting_id, mf.created_at
-                        """
-                    ).fetchall()
-
-            rows = await asyncio.to_thread(_fetch_ready_files)
             logger.info("Rebuilding %d files into shadow '%s'", len(rows), shadow_name)
+            rebuild_generation = uuid.uuid4().hex
 
             for row in rows:
+                if lease_lost.is_set():
+                    raise RuntimeError("Vector rebuild lease lost")
                 if epoch != get_settings_epoch():
                     logger.warning(
                         "Settings changed during vector rebuild; cancelling at epoch=%d",
@@ -203,19 +320,27 @@ async def _rebuild_vectors_task(epoch: int) -> None:
                         raise asyncio.CancelledError("Settings changed during vector rebuild")
 
                     meeting_date = row["meeting_date"]
+                    transcript = str(row["transcript"] or "").strip()
+                    if not transcript:
+                        raise RuntimeError(
+                            f"File {file_id} has no persisted transcript; "
+                            "use durable file reprocessing instead of a text-only rebuild"
+                        )
                     metadata = {
                         "title": row["meeting_title"],
                         "file_type": row["file_type"],
                         "file_id": file_id,
                         "file_name": row["file_name"],
                         "meeting_date": (int(meeting_date.replace("-", "")) if meeting_date else 0),
-                        "user_id": row.get("user_id", "default"),
+                        "user_id": row["user_id"] or "default",
+                        "index_config_fingerprint": active_fingerprint,
+                        "index_generation": rebuild_generation,
                         "chunk_strategy_route": "text",
                     }
-                    await asyncio.to_thread(
+                    await _owned_thread(
                         index_meeting,
                         meeting_id=meeting_id,
-                        text=row["transcript"],
+                        text=transcript,
                         metadata=metadata,
                         target_vs=shadow_vs,
                         skip_bm25=True,
@@ -231,35 +356,32 @@ async def _rebuild_vectors_task(epoch: int) -> None:
                         e,
                         exc_info=True,
                     )
+                    raise
 
-        # --- Phase 3: Atomic swap (three-step rename) ---
-        def _swap_collections() -> None:
-            live_old_name = "meetings_retired"
-            # Step 1: Rename live → retired
-            try:
-                chroma_client.rename_collection("meetings", live_old_name)
-            except Exception:
-                logger.warning("Live 'meetings' collection not found; skipping rename to retired")
-            # Step 2: Rename shadow → live
-            try:
-                chroma_client.rename_collection(shadow_name, "meetings")
-            except Exception:
-                # Rollback: restore old live collection
-                logger.error("Failed to rename shadow to 'meetings'; attempting rollback")
-                try:
-                    chroma_client.rename_collection(live_old_name, "meetings")
-                except Exception:
-                    logger.error("Rollback failed — manual intervention required")
-                raise
-            # Step 3: Drop retired (old live)
-            try:
-                chroma_client.delete_collection(live_old_name)
-            except Exception:
-                logger.debug("Failed to drop retired collection '%s'", live_old_name)
-            reset_vectorstore()
+        # Only local publication drains readers and acquires the write lock.
+        # Embedding and shadow preparation above never hold SQLite's lock.
+        if lease_lost.is_set() or not await asyncio.to_thread(renew_rebuild_advisory_lock):
+            raise RuntimeError("Vector rebuild lease lost before activation")
 
-        await asyncio.to_thread(_swap_collections)
-        logger.info("Atomic swap complete: shadow '%s' → 'meetings'", shadow_name)
+        publication = asyncio.create_task(
+            asyncio.to_thread(
+                publish_generation,
+                chroma_client,
+                shadow_name,
+                retired_name,
+                rows,
+                active_fingerprint,
+                expected_snapshot,
+                epoch,
+            )
+        )
+        try:
+            await asyncio.shield(publication)
+        except asyncio.CancelledError:
+            # A thread cannot be cancelled. Do not close its client or drop its
+            # shadow until the commit/rollback has completed.
+            await publication
+            raise
 
         # --- Phase 3.5: Invalidate summary vectorstores (O-RAG-3) ---
         # After swapping the main collection, drop all summary vectors so they
@@ -310,24 +432,26 @@ async def _rebuild_vectors_task(epoch: int) -> None:
                 logger.warning("Post-rebuild meeting summary reconcile failed", exc_info=True)
             logger.info("Summary vectorstores invalidated after rebuild swap")
 
-        await asyncio.to_thread(_invalidate_summaries)
-
-        # --- Phase 4: Rebuild BM25 from new Chroma data ---
-        if settings.HYBRID_SEARCH_ENABLED:
-            logger.info("Rebuilding BM25 index from new Chroma data")
-            await asyncio.to_thread(rebuild_bm25_from_chroma, True)
+        await _owned_thread(_invalidate_summaries)
 
         logger.info("Vector rebuild completed (shadow swap)")
-    except Exception:
-        # Cleanup: drop the shadow collection on any failure
+    except (Exception, asyncio.CancelledError):
+        # Publication owns rollback; preparation failures only own the shadow.
         if chroma_client is not None:
             try:
-                chroma_client.delete_collection(shadow_name)
+                if shadow_name in {
+                    collection.name for collection in chroma_client.list_collections()
+                }:
+                    chroma_client.delete_collection(shadow_name)
             except Exception:
                 logger.warning("Failed to cleanup shadow '%s'", shadow_name, exc_info=True)
-        logger.warning("Vector rebuild failed; live collection is unchanged", exc_info=True)
+        logger.warning("Vector rebuild did not finish; consult publication journal", exc_info=True)
         raise
     finally:
+        lease_task.cancel()
+        await asyncio.gather(lease_task, return_exceptions=True)
+        if chroma_client is not None:
+            await asyncio.to_thread(chroma_client.close)
         rebuild_state.vectors = False
 
 
@@ -335,6 +459,16 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
     """Background task: backfill multimodal index for ready files missing doc IDs."""
     indexed = 0
     failed = 0
+    lease_lost = asyncio.Event()
+
+    async def _renew_lease() -> None:
+        while True:
+            await asyncio.sleep(30)
+            if not await asyncio.to_thread(renew_rebuild_advisory_lock):
+                lease_lost.set()
+                return
+
+    lease_task = asyncio.create_task(_renew_lease(), name="multimodal-rebuild-lease")
     try:
         from ....core import database as db
         from ....services.rag._raganything import (
@@ -352,8 +486,10 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
                         mf.file_type,
                         mf.file_name,
                         mf.file_path,
-                        mf.transcript
+                        mf.transcript,
+                        m.user_id
                     FROM meeting_files mf
+                    JOIN meetings m ON m.id=mf.meeting_id
                     WHERE mf.status='ready'
                       AND (mf.raganything_doc_id IS NULL OR mf.raganything_doc_id='')
                     ORDER BY mf.id
@@ -364,6 +500,8 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
         rows = await asyncio.to_thread(_fetch_candidates)
         logger.info("Starting multimodal backfill for %d files", len(rows))
         for row in rows:
+            if lease_lost.is_set():
+                raise RuntimeError("Multimodal rebuild lease lost")
             if epoch != get_settings_epoch():
                 logger.warning(
                     "Settings changed during multimodal rebuild; cancelling at epoch=%d",
@@ -394,7 +532,11 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
                         meeting_id=meeting_id,
                         file_id=file_id,
                         file_path=file_path,
-                        metadata={"title": file_name, "file_type": file_type},
+                        metadata={
+                            "title": file_name,
+                            "file_type": file_type,
+                            "user_id": row.get("user_id", "default"),
+                        },
                     )
                 else:
                     transcript = str(row.get("transcript") or "").strip()
@@ -410,7 +552,11 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
                         file_id=file_id,
                         text=transcript,
                         file_path=str(file_path or ""),
-                        metadata={"title": file_name, "file_type": file_type},
+                        metadata={
+                            "title": file_name,
+                            "file_type": file_type,
+                            "user_id": row.get("user_id", "default"),
+                        },
                     )
 
                 def _mark_indexed(
@@ -453,10 +599,16 @@ async def _rebuild_multimodal_task(epoch: int) -> None:
 
         logger.info("Multimodal backfill completed indexed=%d failed=%d", indexed, failed)
     finally:
+        lease_task.cancel()
+        await asyncio.gather(lease_task, return_exceptions=True)
         rebuild_state.multimodal = False
 
 
 def _reset_rebuild_flag(future: asyncio.Task | None = None) -> None:
+    if future is not None:
+        rebuild_state.vector_result = (
+            "cancelled" if future.cancelled() else "failed" if future.exception() else "completed"
+        )
     if future is not None and not future.cancelled():
         exc = future.exception()
         if exc is not None:
@@ -474,6 +626,17 @@ def _reset_multimodal_rebuild_flag(future: asyncio.Task | None = None) -> None:
     release_all_rebuild_locks()
 
 
+class VectorRebuildStatus(BaseModel):
+    active: bool
+    result: Literal["idle", "running", "completed", "failed", "cancelled"]
+
+
+@router.get("/rebuild-status", response_model=VectorRebuildStatus)
+async def vector_rebuild_status() -> VectorRebuildStatus:
+    """Process-local result; restarts reset it to idle (single-instance API)."""
+    return VectorRebuildStatus(active=rebuild_state.active, result=rebuild_state.vector_result)
+
+
 @router.post("/rebuild-vectors", response_model=MessageResponse)
 @limiter.limit("5/minute")
 async def rebuild_vectors(request: Request) -> dict[str, str]:
@@ -481,6 +644,7 @@ async def rebuild_vectors(request: Request) -> dict[str, str]:
     if not try_acquire_vectors_rebuild():
         raise HTTPException(status_code=409, detail="Vector rebuild already in progress")
     epoch = get_settings_epoch()
+    rebuild_state.vector_result = "running"
     task = asyncio.create_task(_rebuild_vectors_task(epoch))
     _active_rebuild_tasks.add(task)
     task.add_done_callback(lambda t: (_reset_rebuild_flag(t), _active_rebuild_tasks.discard(t)))

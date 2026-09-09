@@ -19,7 +19,7 @@ spec:
         {{- if .Values.networkPolicy.ingress.from }}
         {{- toYaml .Values.networkPolicy.ingress.from | nindent 8 }}
         {{- else }}
-        - namespaceSelector: {}
+        - podSelector: {}
         {{- end }}
       ports:
         - protocol: TCP
@@ -42,4 +42,44 @@ spec:
         - protocol: TCP
           port: 80
     {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "meeting-agent.fullname" . }}-frontend
+  labels:
+    {{- include "meeting-agent.labels" . | nindent 4 }}
+    component: frontend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "meeting-agent.selectorLabels" . | nindent 6 }}
+      component: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- if .Values.networkPolicy.ingress.from }}
+        {{- toYaml .Values.networkPolicy.ingress.from | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.frontend.service.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "meeting-agent.selectorLabels" . | nindent 14 }}
+              component: backend
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.service.port }}
+    - ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
 {{- end }}

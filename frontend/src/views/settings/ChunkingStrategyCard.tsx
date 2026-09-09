@@ -48,13 +48,13 @@ export function ChunkingStrategyCard() {
           getFieldValue(["rag", "parent_child_enabled"]) ? (
             <div style={twoColGrid}>
               <Form.Item
-                name={["rag", "child_chunk_size"]}
+                name={["rag", "child_chunk_size_tokens"]}
                 label={formatMessage({ id: "settings.rag.childChunkSize" })}
               >
                 <InputNumber min={64} max={2048} step={64} style={{ width: "100%" }} />
               </Form.Item>
               <Form.Item
-                name={["rag", "child_chunk_overlap"]}
+                name={["rag", "child_chunk_overlap_tokens"]}
                 label={formatMessage({ id: "settings.rag.childOverlap" })}
               >
                 <InputNumber min={0} max={512} step={16} style={{ width: "100%" }} />

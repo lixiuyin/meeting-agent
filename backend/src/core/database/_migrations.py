@@ -35,7 +35,16 @@ from ._migration_lock import (
 logger = logging.getLogger(__name__)
 
 
+from ._domain_schema import ensure_domain_schema  # noqa: E402
+from ._memory_schema import ensure_memory_semantics_schema  # noqa: E402
 from ._migration_definitions import _MIGRATIONS, SCHEMA_SQL  # noqa: E402, F401
+from ._relation_evidence_schema import ensure_relation_evidence_schema  # noqa: E402
+from ._summary_cjk_schema import ensure_file_summary_cjk_schema  # noqa: E402
+from .conversation_state import ensure_conversation_state_schema  # noqa: E402
+from .idempotency_schema import ensure_idempotency_lifecycle_schema  # noqa: E402
+from .index_state import ensure_index_health_schema  # noqa: E402
+from .jobs import ensure_job_schema  # noqa: E402
+from .meeting_file_semantics import ensure_meeting_file_semantics_schema  # noqa: E402
 
 
 def _get_schema_version(conn: sqlite3.Connection) -> int:
@@ -140,6 +149,21 @@ def init_db() -> None:
                 )
             else:
                 logger.debug("Database schema is up to date (v%d)", current)
+            # Compatibility bootstrap for tests and emergency dev environments.
+            # Production schema evolution is Alembic-only after legacy v52.
+            ensure_job_schema(conn)
+            ensure_index_health_schema(conn)
+            ensure_idempotency_lifecycle_schema(conn)
+            ensure_memory_semantics_schema(conn)
+            ensure_conversation_state_schema(conn)
+            ensure_file_summary_cjk_schema(conn)
+            ensure_relation_evidence_schema(conn)
+            ensure_meeting_file_semantics_schema(conn)
+            ensure_domain_schema(conn)
+            from .memory_lifecycle import ensure_lifecycle_schema
+
+            ensure_lifecycle_schema(conn)
+            conn.commit()
             conn.execute("PRAGMA foreign_keys=ON")
             fk_result = conn.execute("PRAGMA foreign_keys").fetchone()
             if not fk_result or fk_result[0] != 1:

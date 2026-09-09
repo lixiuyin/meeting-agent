@@ -5,6 +5,7 @@ from . import (
     _create,  # noqa: F401
     _delete,  # noqa: F401
     _detail,  # noqa: F401
+    _evidence,  # noqa: F401
     _export,  # noqa: F401
     _files,  # noqa: F401
     _list,  # noqa: F401

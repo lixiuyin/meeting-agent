@@ -27,7 +27,7 @@ class ChunkConfig:
 AUDIO_CHUNK_CONFIGS: list[ChunkConfig] = [
     # A — Native Segment-Aware
     ChunkConfig(
-        name="A Native（Segment-Aware）",
+        name="A Native (Segment-Aware)",
         preset="S",
         method="native",
         chunk_size=512,
@@ -37,7 +37,7 @@ AUDIO_CHUNK_CONFIGS: list[ChunkConfig] = [
         audio_semantic_boundary_threshold=0.5,
     ),
     ChunkConfig(
-        name="A Native（Segment-Aware）",
+        name="A Native (Segment-Aware)",
         preset="M",
         method="native",
         chunk_size=1024,
@@ -47,7 +47,7 @@ AUDIO_CHUNK_CONFIGS: list[ChunkConfig] = [
         audio_semantic_boundary_threshold=0.5,
     ),
     ChunkConfig(
-        name="A Native（Segment-Aware）",
+        name="A Native (Segment-Aware)",
         preset="L",
         method="native",
         chunk_size=2048,

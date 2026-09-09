@@ -15,7 +15,7 @@ const MAX_RECONNECT_DELAY = 10000;
 const MAX_RECONNECT_ATTEMPTS = 60;
 
 // Close codes that indicate permanent rejection — no point retrying.
-const PERMANENT_CLOSE_CODES = new Set([4003, 4004, 4008, 4010, 4013, 4014]);
+const PERMANENT_CLOSE_CODES = new Set([1008, 4003, 4004, 4008, 4010, 4013, 4014]);
 
 export function useWebSocket(url: string | null, options: UseWebSocketOptions = {}) {
   const { onMessage } = options;
@@ -71,9 +71,11 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
       };
 
       ws.onclose = (event) => {
-        setConnected(false);
-        wsRef.current = null;
         if (!activeRef.current || generation !== generationRef.current) return;
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        setConnected(false);
 
         // Permanent close — stop retrying
         if (PERMANENT_CLOSE_CODES.has(event.code)) {
@@ -131,6 +133,7 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     connect();
     return () => {
       activeRef.current = false;
+      generationRef.current += 1;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;

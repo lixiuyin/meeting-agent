@@ -1,0 +1,94 @@
+{
+  "date": "2026-09-08",
+  "latest_update": "2026-09-09",
+  "timezone": "Asia/Taipei",
+  "release_ready": false,
+  "source_revision": "1ff31dba7ffc833314f7a211a271a36f4638b0e1",
+  "final_e2e_scope_fingerprints": {
+    "dataset_fingerprint_sha256": "77836c65be280b0cf781b0c40b4c691d9ed386f67a06273a74d4634762349007",
+    "harness_fingerprint_sha256": "d4a40672fa771ee55dc1e23c70f66a78a2bf6b992d06faf08c9dc211b2ad5751",
+    "implementation_fingerprint_sha256": "d68c74c77885144e6a39539996e6828353403b8564aae333a1b3c00d319c32e1"
+  },
+  "verification": {
+    "backend_pytest": { "passed": 2388, "skipped": 2, "failed": 0 },
+    "frontend_vitest": { "files": 38, "passed": 203, "failed": 0 },
+    "chromium_production_bundle_mock_api": { "passed": 91, "failed": 0 },
+    "production_authenticated_full_stack_vite": { "passed": 27, "failed": 0 },
+    "process_crash_recovery_subset": { "passed": 3, "failed": 0 },
+    "local_overlay_container_checks": { "passed": 11, "failed": 0 },
+    "synthetic_evidence_governance": { "passed": 8, "failed": 0 },
+    "lint_format_types_contracts_build": "passed",
+    "live_readiness": "ok",
+    "oversized_cursor_http_status": 400,
+    "pdf_initial_canvas_width_px": 528,
+    "pdf_available_width_px": 528,
+    "initial_html_preloads_pdf_chunk": false,
+    "chinese_meeting_review_full_stack": "passed",
+    "idempotency_key_mode": "0600",
+    "idempotency_key_restart_stable": true,
+    "memory_workspace_layout": {
+      "memory_list_unit_tests": { "passed": 7, "failed": 0 },
+      "chromium_memory_page": { "passed": 16, "failed": 0 },
+      "geometry_viewport": "1440x1000",
+      "visual_viewport": "1470x834",
+      "list_bottom_within_card": true,
+      "document_vertical_overflow": false,
+      "production_build_visually_checked": true
+    }
+  },
+  "latency_samples": {
+    "controlled_mode_comparison": false,
+    "limitation": "20 inputs per mode include five social inputs; other verification overlapped; not a production SLO",
+    "balanced": {
+      "artifact": "backend/benchmark-results/chat_2026-09-08T02-39-02.085304_00-00.json",
+      "inputs_unchanged": true,
+      "queries": 20,
+      "degraded": 0,
+      "total_p95_ms": 17533.57,
+      "ttft_p95_ms": 17205.07,
+      "answer_quality": null,
+      "answer_quality_evaluated_count": 0,
+      "answer_quality_skipped_count": 20
+    },
+    "fast": {
+      "artifact": "backend/benchmark-results/chat_2026-09-08T02-40-19.466078_00-00.json",
+      "inputs_unchanged": true,
+      "queries": 20,
+      "degraded": 0,
+      "total_p95_ms": 6164.93,
+      "ttft_p95_ms": 4941.82,
+      "answer_quality": null,
+      "answer_quality_evaluated_count": 0,
+      "answer_quality_skipped_count": 20
+    },
+    "latest_authenticated_full_stack": {
+      "target_ms": 3000,
+      "ttft_ms": 2600.6,
+      "total_ms": 2632.9,
+      "sample_passed": true,
+      "source_backed_timeout_fallback": true,
+      "long_term_slo_proven": false
+    }
+  },
+  "local_overlay_images": {
+    "backend": "sha256:8cb70b294b014d5d8326e439efc05df455d88874de6c0a952fb75f7b8fcce318",
+    "frontend": "sha256:e4888049fb9ba719a7ac0f7e2e2cc5c768315f70cf1524e17b3ce2a643859898",
+    "deployed": true,
+    "deployment_scope": "local_compose_only",
+    "restart_policy": "unless-stopped",
+    "pinned_base_rebuild_verified": false
+  },
+  "remaining": {
+    "three_second_latency_target": "met_in_latest_single_authenticated_e2e_not_long_term_slo",
+    "human_gold_acceptance": "not_evaluated_missing_reviewed_corpus",
+    "thirty_day_slo_passed": null,
+    "prometheus_observation": "127.0.0.1:9090 connection refused",
+    "pinned_image_build": "blocked_registry_head_timeout",
+    "chroma_security_exceptions": 4,
+    "chroma_embedded_only_gate": "passed",
+    "container_scan_completed": false,
+    "security_exception_expiry": "2026-10-01",
+    "production_scale_capacity": "not_certified",
+    "deployment_boundary": "single_instance_trusted_principal"
+  }
+}

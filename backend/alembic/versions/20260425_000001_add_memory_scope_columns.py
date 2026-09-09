@@ -51,37 +51,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Drop scope columns via recreate pattern for each table
+    # Python 3.12 ships SQLite with DROP COLUMN support. Using it preserves
+    # primary keys, foreign keys, indexes and triggers; CREATE TABLE AS would
+    # silently discard all of them.
     for table in ("user_memories", "memory_entities"):
-        _recreate_without_columns(table, {"meeting_ids", "file_ids"})
-
-
-def _get_columns_to_keep(bind, table: str, drop_cols: set[str]) -> list[str]:
-    """Return column names from *table* excluding *drop_cols*."""
-    rows = bind.execute(sa.text(f"PRAGMA table_info({table})")).fetchall()
-    return [row[1] for row in rows if row[1] not in drop_cols]
-
-
-def _recreate_without_columns(table: str, drop_cols: set[str]) -> None:
-    """Recreate *table* without the columns in *drop_cols* (SQLite safe pattern)."""
-    import tempfile
-
-    bind = op.get_bind()
-    cols = _get_columns_to_keep(bind, table, drop_cols)
-    if len(cols) == bind.execute(sa.text(f"PRAGMA table_info({table})")).fetchall().__len__():
-        return  # nothing to drop
-
-    col_list = ", ".join(cols)
-    new_table = f"{table}__downgrade_tmp"
-
-    op.execute(sa.text("PRAGMA foreign_keys=OFF"))
-    op.execute(sa.text(f"DROP TABLE IF EXISTS {new_table}"))
-
-    # Create new table with same schema minus dropped columns
-    # by using CREATE TABLE ... AS SELECT to infer types
-    op.execute(sa.text(f"CREATE TABLE {new_table} AS SELECT {col_list} FROM {table} WHERE 0"))
-    op.execute(sa.text(f"INSERT INTO {new_table} ({col_list}) SELECT {col_list} FROM {table}"))
-    op.execute(sa.text(f"DROP TABLE {table}"))
-    op.execute(sa.text(f"ALTER TABLE {new_table} RENAME TO {table}"))
-
-    op.execute(sa.text("PRAGMA foreign_keys=ON"))
+        existing = {
+            row[1]
+            for row in op.get_bind().exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+        }
+        for column in ("meeting_ids", "file_ids"):
+            if column in existing:
+                op.execute(f"ALTER TABLE {table} DROP COLUMN {column}")

@@ -2,10 +2,11 @@ import { Button, Empty, Space, Tooltip } from "antd";
 import { ArrowRightOutlined, FileTextOutlined } from "@ant-design/icons";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useMemo } from "react";
+import { useIntl } from "react-intl";
 import type { SessionSummaryItem } from "../../../api/client";
 import { messageKeyFor } from "./sourceHelpers";
 import { MessageBubble } from "./MessageBubble";
-import type { SessionMessage } from "./types";
+import { isAgentRole, type SessionMessage } from "./types";
 
 interface Props {
   allMessages: SessionMessage[];
@@ -17,6 +18,9 @@ interface Props {
   onSummarize: () => void;
   summary: SessionSummaryItem | undefined;
   summarizing: boolean;
+  hasOlderMessages: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
 }
 
 export function MessagesSection({
@@ -29,11 +33,15 @@ export function MessagesSection({
   onSummarize,
   summary,
   summarizing,
+  hasOlderMessages,
+  loadingOlder,
+  onLoadOlder,
 }: Props) {
+  const { formatMessage } = useIntl();
   const isVisibleByFilter = useCallback(
     (msg: SessionMessage) => {
       if (messageRoleFilter === "all") return true;
-      return messageRoleFilter === "human" ? msg.role === "human" : msg.role !== "human";
+      return messageRoleFilter === "human" ? msg.role === "human" : isAgentRole(msg.role);
     },
     [messageRoleFilter],
   );
@@ -49,28 +57,37 @@ export function MessagesSection({
 
   return (
     <>
+      {hasOlderMessages && (
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <Button size="small" loading={loadingOlder} onClick={onLoadOlder}>
+            {formatMessage({ id: "history.loadOlder" })}
+          </Button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Filter:</span>
+        <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+          {formatMessage({ id: "history.filter" })}
+        </span>
         <Button
           size="small"
           type={messageRoleFilter === "all" ? "primary" : "default"}
           onClick={() => onSetMessageRoleFilter("all")}
         >
-          All ({allMessages.length})
+          {formatMessage({ id: "history.all" }, { count: allMessages.length })}
         </Button>
         <Button
           size="small"
           type={messageRoleFilter === "human" ? "primary" : "default"}
           onClick={() => onSetMessageRoleFilter("human")}
         >
-          User ({humanMessageCount})
+          {formatMessage({ id: "history.user" }, { count: humanMessageCount })}
         </Button>
         <Button
           size="small"
           type={messageRoleFilter === "agent" ? "primary" : "default"}
           onClick={() => onSetMessageRoleFilter("agent")}
         >
-          Agent ({agentMessageCount})
+          {formatMessage({ id: "history.agent" }, { count: agentMessageCount })}
         </Button>
       </div>
       <div style={{ maxHeight: 400, overflowY: "auto", marginBottom: 20, padding: 4 }}>
@@ -97,7 +114,7 @@ export function MessagesSection({
               }
             >
               <Empty
-                description="No messages for this filter"
+                description={formatMessage({ id: "history.noFilteredMessages" })}
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
               />
             </motion.div>
@@ -111,11 +128,13 @@ export function MessagesSection({
           onClick={onContinue}
           style={{ background: "var(--gradient-primary)", border: "none" }}
         >
-          Continue Conversation
+          {formatMessage({ id: "history.continue" })}
         </Button>
-        <Tooltip title="Generate AI summary of this session">
+        <Tooltip title={formatMessage({ id: "history.summaryTooltip" })}>
           <Button icon={<FileTextOutlined />} onClick={onSummarize} loading={summarizing}>
-            {summary ? "Regenerate Summary" : "Summarize"}
+            {summary
+              ? formatMessage({ id: "history.regenerateSummary" })
+              : formatMessage({ id: "history.summarize" })}
           </Button>
         </Tooltip>
       </Space>

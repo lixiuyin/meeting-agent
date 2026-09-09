@@ -52,7 +52,7 @@ class TestResolver:
         result = await resolve_query("Hi", history, session_id="s1")
         assert result == "Hi"
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_anaphora_resolved(self, mock_invoke):
         """Anaphoric question with history → LLM called and output used."""
         from langchain_core.messages import AIMessage, HumanMessage
@@ -72,7 +72,7 @@ class TestResolver:
         assert "Project Alpha" in result or "Q3" in result
         mock_invoke.assert_called_once()
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_resolver_timeout_falls_back(self, mock_invoke):
         """LLM timeout → returns original question."""
         from langchain_core.messages import HumanMessage
@@ -97,7 +97,7 @@ class TestResolver:
             AIMessage(content="On track for Q3."),
         ]
 
-        with patch("src.services.chain._resolver.cached_retry_invoke") as mock_invoke:
+        with patch("src.services.chain._resolver._invoke_resolver") as mock_invoke:
             mock_resp = MagicMock()
             mock_resp.content = "Project Alpha status"
             mock_invoke.return_value = mock_resp
@@ -210,7 +210,7 @@ class TestResolverFormatHistory:
 class TestResolverCacheEviction:
     """Tests for L1 cache capacity management."""
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_evicts_oldest_when_full(self, mock_invoke):
         """L1 cache evicts oldest entry when max capacity reached."""
         from langchain_core.messages import AIMessage, HumanMessage
@@ -255,7 +255,7 @@ class TestResolverCacheEviction:
             AIMessage(content="Alpha is a Q3 project."),
         ]
 
-        with patch("src.services.chain._resolver.cached_retry_invoke") as m:
+        with patch("src.services.chain._resolver._invoke_resolver") as m:
             m.return_value = MagicMock(content="resolved alpha")
             await resolve_query("What about that project?", history, session_id="sess_a")
             await resolve_query("What about it?", history, session_id="sess_b")
@@ -294,7 +294,7 @@ class TestResolverChineseAnaphora:
         # The key check: short Chinese query with pronoun-like words should resolve
         # (it has non-ASCII chars so the short-gate won't block it)
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_chinese_anaphora_resolved(self, mock_invoke):
         """Chinese anaphoric question gets resolved via LLM."""
         from langchain_core.messages import AIMessage, HumanMessage
@@ -339,13 +339,13 @@ class TestResolverEdgeCases:
             AIMessage(content="X details"),
         ]
 
-        with patch("src.services.chain._resolver.cached_retry_invoke") as m:
+        with patch("src.services.chain._resolver._invoke_resolver") as m:
             m.return_value = MagicMock(content="X resolved")
             await resolve_query("What about X?", history)  # no session_id
 
         assert len(_l1_cache) == initial_size
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_llm_returns_unchanged_question(self, mock_invoke):
         """LLM decides question is already self-contained → returns as-is."""
         from langchain_core.messages import AIMessage, HumanMessage
@@ -366,7 +366,7 @@ class TestResolverEdgeCases:
         # Should use LLM output even if same as original-ish
         assert result == original
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_length_guard_exact_boundary(self, mock_invoke):
         """Output exactly 4x input length triggers guard."""
         from langchain_core.messages import HumanMessage
@@ -383,7 +383,7 @@ class TestResolverEdgeCases:
         result = await resolve_query(question, history, session_id="s1")
         assert result == question
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_length_guard_under_threshold_passes(self, mock_invoke):
         """Output under 4x input length passes the guard."""
         from langchain_core.messages import HumanMessage
@@ -742,7 +742,7 @@ class TestFailureModes:
         # The anchor data itself is valid; an empty narrow-fetch caused by
         # a missing meeting falls through to the wide-fetch results.
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_resolver_garbage_output_falls_back(self, mock_invoke):
         """LLM returns essay-length output → length guard triggers, original used."""
         from langchain_core.messages import HumanMessage
@@ -757,7 +757,7 @@ class TestFailureModes:
         result = await resolve_query("What about it?", history, session_id="s1")
         assert result == "What about it?"
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_resolver_generic_exception_falls_back(self, mock_invoke):
         """Any exception during LLM call → returns original question."""
         from langchain_core.messages import HumanMessage
@@ -770,7 +770,7 @@ class TestFailureModes:
         result = await resolve_query("What about it?", history, session_id="s1")
         assert result == "What about it?"
 
-    @patch("src.services.chain._resolver.cached_retry_invoke")
+    @patch("src.services.chain._resolver._invoke_resolver")
     async def test_resolver_response_without_content_attr(self, mock_invoke):
         """LLM response lacks .content attribute → str() fallback used."""
         from langchain_core.messages import HumanMessage
@@ -812,3 +812,30 @@ class TestFailureModes:
             assert result is None or isinstance(result, dict)
         except Exception:
             pass  # Also acceptable: malformed data causes failure
+
+
+async def test_resolver_deadline_cancels_native_transport(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from langchain_core.messages import HumanMessage
+
+    from src.services.chain import _resolver
+
+    cancelled = asyncio.Event()
+
+    async def slow_request(_messages):
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(_resolver.settings, "RESOLVER_TIMEOUT_S", 0.01)
+    _resolver.clear_l1_cache()
+    result = await _resolver.resolve_query(
+        "What about it?",
+        [HumanMessage(content="Project Atlas")],
+        llm=SimpleNamespace(ainvoke=slow_request),
+    )
+    assert result == "What about it?"
+    assert cancelled.is_set()

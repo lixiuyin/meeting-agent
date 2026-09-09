@@ -15,7 +15,8 @@ _http_client = LoopBoundAsyncClient(
     lambda: httpx.AsyncClient(
         timeout=settings.SEARCH_TIMEOUT,
         limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
-    )
+    ),
+    key_factory=lambda: settings.SEARCH_TIMEOUT,
 )
 
 
@@ -206,7 +207,7 @@ async def web_search(query: str, max_results: int | None = None) -> list[SearchR
         List of search results
     """
     binding = (settings.SEARCH_BINDING or "duckduckgo").lower()
-    max_results = max_results or settings.SEARCH_MAX_RESULTS
+    effective_max_results = max_results or settings.SEARCH_MAX_RESULTS or 5
 
     # Map binding to search function
     search_functions: dict[str, Any] = {
@@ -224,7 +225,7 @@ async def web_search(query: str, max_results: int | None = None) -> list[SearchR
         )
 
     try:
-        results = await search_functions[binding](query, max_results)
+        results = await search_functions[binding](query, effective_max_results)
         logger.info(
             "Web search [%s] for '%s' returned %d results",
             binding,
@@ -261,12 +262,12 @@ async def search_with_fallback(query: str, max_results: int | None = None) -> li
     Useful when API key expires or rate limited.
     """
     binding = settings.SEARCH_BINDING.lower()
-    max_results = max_results or settings.SEARCH_MAX_RESULTS
+    effective_max_results = max_results or settings.SEARCH_MAX_RESULTS or 5
 
     # Try configured provider first
     if binding and binding != "duckduckgo":
         try:
-            results = await web_search(query, max_results)
+            results = await web_search(query, effective_max_results)
             if results:
                 return results
             logger.warning("Primary search returned no results, trying fallback")
@@ -274,4 +275,4 @@ async def search_with_fallback(query: str, max_results: int | None = None) -> li
             logger.warning("Primary search failed (%s), trying fallback: %s", binding, e)
 
     # Fallback to DuckDuckGo (free)
-    return await search_duckduckgo(query, max_results)
+    return await search_duckduckgo(query, effective_max_results)

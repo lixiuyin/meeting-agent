@@ -15,6 +15,8 @@ def _stabilise_vision_settings(monkeypatch):
     monkeypatch.setattr(cap.settings, "VISION_OCR_MIN_CHARS", 3, raising=False)
     monkeypatch.setattr(cap.settings, "VISION_RETRY_BASE_DELAY_SECONDS", 0.0, raising=False)
     monkeypatch.setattr(cap.settings, "VISION_RETRY_MAX_DELAY_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(cap.settings, "VISION_REASONING_EFFORT", "none", raising=False)
+    monkeypatch.setattr(cap.settings, "VISION_COMBINED_MAX_TOKENS", 2048, raising=False)
 
 
 def test_parse_combined_vision_json_all_fields():
@@ -81,6 +83,19 @@ async def test_extract_image_content_disabled_when_multimodal_off(monkeypatch, t
 
 
 @pytest.mark.anyio
+async def test_extract_image_content_returns_none_for_missing_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(cap.settings, "MULTIMODAL_CAPTIONING_ENABLED", True)
+    monkeypatch.setattr(cap.settings, "VISION_COMBINED_EXTRACTION_ENABLED", True)
+    monkeypatch.setattr(cap.settings, "VISION_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(
+        cap.settings, "VISION_API_KEY", type("K", (), {"get_secret_value": lambda self: "key"})()
+    )
+    monkeypatch.setattr(cap.settings, "VISION_MODEL", "vlm-test")
+
+    assert await cap.extract_image_content(tmp_path / "missing.png") is None
+
+
+@pytest.mark.anyio
 async def test_extract_image_content_makes_single_call(monkeypatch, tmp_path):
     """Verify the combined path is a single POST — the main optimization."""
     monkeypatch.setattr(cap.settings, "MULTIMODAL_CAPTIONING_ENABLED", True)
@@ -131,3 +146,4 @@ async def test_extract_image_content_makes_single_call(monkeypatch, tmp_path):
     assert result.ocr_text is not None
     assert result.semantics is not None
     assert len(post_calls) == 1  # single VLM call, not three
+    assert post_calls[0][1]["max_tokens"] == 2048

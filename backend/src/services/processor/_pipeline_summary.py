@@ -32,7 +32,9 @@ async def _ainvoke_with_retry(llm: Any, prompt: str) -> Any:
     last_exc: Exception | None = None
     for attempt in range(_LLM_RETRY_MAX_ATTEMPTS):
         try:
-            return await llm.ainvoke(prompt)
+            from ..llm import invoke_llm_text
+
+            return await invoke_llm_text(llm, prompt)
         except Exception as exc:
             last_exc = exc
             if not is_retryable(exc) or attempt == _LLM_RETRY_MAX_ATTEMPTS - 1:
@@ -46,8 +48,10 @@ async def _ainvoke_with_retry(llm: Any, prompt: str) -> Any:
                 delay,
             )
             await asyncio.sleep(delay)
-    assert last_exc is not None
-    raise last_exc
+    # The loop either returns or raises on its final iteration. Keep an
+    # explicit fallback so optimized Python builds do not remove correctness
+    # checks the way an ``assert`` would.
+    raise RuntimeError("LLM retry loop exhausted without a result") from last_exc
 
 
 def _mark_auto_failed(meeting_id: int) -> None:
@@ -61,19 +65,11 @@ def _mark_auto_failed(meeting_id: int) -> None:
         )
 
 
-def _maybe_trigger_meeting_summary(meeting_id: int) -> None:
-    """Fire-and-forget meeting summary generation after a file is processed.
+async def _maybe_trigger_meeting_summary(meeting_id: int) -> None:
+    """Compatibility facade for durable meeting-summary scheduling."""
+    from ..summaries import enqueue_meeting_summary
 
-    Called synchronously (from lifecycle module or after file ingest).
-    Schedules :func:`_auto_summarize_meeting` on the current event loop.
-    No-op if no event loop is running.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    _task = loop.create_task(_auto_summarize_meeting(meeting_id))
-    _task.add_done_callback(lambda _t: None)  # prevent "task not awaited" warning
+    await enqueue_meeting_summary(meeting_id)
 
 
 def _parse_segments_json(raw: Any) -> Any | None:
@@ -191,8 +187,18 @@ _MAX_AUTO_TOKENS = 12_000
 
 def _split_into_chunks(text: str, max_tokens: int, count_fn: Any) -> list[str]:
     """Split text into token-bounded chunks for map-reduce."""
-    paragraphs = text.split("\n\n")
-    chunk_size = max_tokens // 2
+    chunk_size = max(1, max_tokens // 2)
+    paragraphs: list[str] = []
+    for paragraph in text.split("\n\n"):
+        remainder = paragraph
+        while remainder and count_fn(remainder) > chunk_size:
+            end = min(len(remainder), max(chunk_size * 3, 1))
+            while end > 1 and count_fn(remainder[:end]) > chunk_size:
+                end = max(1, int(end * 0.85))
+            paragraphs.append(remainder[:end])
+            remainder = remainder[end:]
+        if remainder:
+            paragraphs.append(remainder)
     chunks: list[str] = []
     current: list[str] = []
     current_tokens = 0
@@ -219,8 +225,7 @@ async def _generate_summary(
     """Generate a meeting summary, using map-reduce for long inputs."""
     if count_fn(composed) <= _MAX_AUTO_TOKENS:
         prompt = _SUMMARY_PROMPT_TEMPLATE.format(title=title, transcript=composed)
-        response = await _ainvoke_with_retry(llm, prompt)
-        return str(response.content)
+        return await _ainvoke_with_retry(llm, prompt)
 
     chunks = _split_into_chunks(composed, _MAX_AUTO_TOKENS, count_fn)
     chunk_prompt = (
@@ -229,10 +234,14 @@ async def _generate_summary(
         "contributions, and conclusions. Cite sources with [file:ID].\n\n"
         "{chunk}\n\nSection Summary:"
     )
-    chunk_results = await asyncio.gather(
-        *(_ainvoke_with_retry(llm, chunk_prompt.format(chunk=c)) for c in chunks)
-    )
-    chunk_summaries = "\n\n---\n\n".join(str(r.content) for r in chunk_results)
+    semaphore = asyncio.Semaphore(8)
+
+    async def _summarize_chunk(chunk: str) -> str:
+        async with semaphore:
+            return await _ainvoke_with_retry(llm, chunk_prompt.format(chunk=chunk))
+
+    chunk_results = await asyncio.gather(*(_summarize_chunk(chunk) for chunk in chunks))
+    chunk_summaries = "\n\n---\n\n".join(chunk_results)
 
     merge_prompt = (
         "Merge into a single structured meeting summary starting with "
@@ -243,8 +252,7 @@ async def _generate_summary(
         "Every claim must cite its source with [file:ID].\n\n"
         f"{chunk_summaries}\n\nFinal Summary:"
     )
-    merge_response = await _ainvoke_with_retry(llm, merge_prompt)
-    return str(merge_response.content)
+    return await _ainvoke_with_retry(llm, merge_prompt)
 
 
 async def _auto_summarize_meeting(meeting_id: int) -> None:
@@ -277,12 +285,15 @@ async def _auto_summarize_meeting(meeting_id: int) -> None:
 
     try:
         # Mark pending
-        with get_write_connection() as conn:
-            conn.execute(
-                "UPDATE meetings SET summary_status='pending', updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
-                (meeting_id,),
-            )
+        def _mark_pending() -> None:
+            with get_write_connection() as conn:
+                conn.execute(
+                    "UPDATE meetings SET summary_status='pending', updated_at=CURRENT_TIMESTAMP "
+                    "WHERE id=?",
+                    (meeting_id,),
+                )
+
+        await asyncio.to_thread(_mark_pending)
 
         # Clear stale vectors inside the lock to ensure atomicity with the
         # upcoming upsert.  This prevents orphan vectors if the process
@@ -290,28 +301,32 @@ async def _auto_summarize_meeting(meeting_id: int) -> None:
         try:
             from ..rag._meeting_summary_vectorstore import delete_meeting_summary
 
-            delete_meeting_summary(meeting_id)
+            await asyncio.to_thread(delete_meeting_summary, meeting_id)
         except Exception:
             logger.debug("Failed to clear stale summary vector for %d", meeting_id, exc_info=True)
         try:
             from ..rag._summary_vectorstore import delete_meeting_summaries
 
-            delete_meeting_summaries(meeting_id)
+            await asyncio.to_thread(delete_meeting_summaries, meeting_id)
         except Exception:
             logger.debug("Failed to clear legacy summary vector for %d", meeting_id, exc_info=True)
 
         # Load meeting + files
         from ...core import database as db
 
-        with db.get_connection() as conn:
-            m = db.get_meeting(conn, meeting_id)
-            if not m or m["status"] not in ("ready", "summarizing"):
-                _mark_auto_failed(meeting_id)
-                return
-            files = db.list_ready_meeting_files(conn, meeting_id)
+        def _load_meeting_and_files():
+            with db.get_connection() as conn:
+                meeting = db.get_meeting(conn, meeting_id)
+                files_value = db.list_ready_meeting_files(conn, meeting_id) if meeting else []
+                return meeting, files_value
+
+        m, files = await asyncio.to_thread(_load_meeting_and_files)
+        if not m or m["status"] not in ("ready", "summarizing"):
+            await asyncio.to_thread(_mark_auto_failed, meeting_id)
+            return
 
         if not files:
-            _mark_auto_failed(meeting_id)
+            await asyncio.to_thread(_mark_auto_failed, meeting_id)
             return
 
         # M-2: Skip summary when total transcript is too short (saves LLM tokens)
@@ -322,7 +337,7 @@ async def _auto_summarize_meeting(meeting_id: int) -> None:
                 meeting_id,
                 len(total_text),
             )
-            _mark_auto_failed(meeting_id)
+            await asyncio.to_thread(_mark_auto_failed, meeting_id)
             return
 
         # Ensure per-file summaries exist
@@ -333,7 +348,7 @@ async def _auto_summarize_meeting(meeting_id: int) -> None:
                 per_file_summaries.append(result)
 
         if not per_file_summaries:
-            _mark_auto_failed(meeting_id)
+            await asyncio.to_thread(_mark_auto_failed, meeting_id)
             return
 
         # Build speaker context (same as manual endpoint)
@@ -370,6 +385,7 @@ async def _auto_summarize_meeting(meeting_id: int) -> None:
         )
     except Exception:
         logger.error("_auto_summarize_meeting failed for meeting %d", meeting_id, exc_info=True)
-        _mark_auto_failed(meeting_id)
+        await asyncio.to_thread(_mark_auto_failed, meeting_id)
+        raise
     finally:
         release_summary_inflight(meeting_id)

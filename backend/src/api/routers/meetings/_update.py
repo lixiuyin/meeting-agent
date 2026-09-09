@@ -49,15 +49,11 @@ async def update_meeting(
             m = db.get_meeting(conn, meeting_id, user_id=ownership)
             if m is None:
                 raise HTTPException(404, "Meeting not found")
-            return m
+            file_types = db.list_distinct_file_types_bulk(conn, [m["id"]]).get(m["id"], [])
+            response = _build_meeting_response(m, file_types=file_types)
+            guard.save_in_transaction(conn, response.model_dump(mode="json"))
+            return response
 
-    m = await asyncio.to_thread(_update)
-
-    def _fetch_types() -> list[str]:
-        with db.get_connection() as conn:
-            return db.list_distinct_file_types_bulk(conn, [m["id"]]).get(m["id"], [])
-
-    file_types = await asyncio.to_thread(_fetch_types)
-    response = _build_meeting_response(m, file_types=file_types)
-    await guard.save(response.model_dump(mode="json"))
+    response = await asyncio.to_thread(_update)
+    await guard.finish_transaction()
     return response

@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from ...core._config_snapshot import submit_with_context
 from ...core.config import settings
 from ...core.constants import DATA_DIR
 from ..embedder import get_embeddings
@@ -21,6 +22,7 @@ from ..parser.types import ParsedDocument
 logger = logging.getLogger(__name__)
 
 _raganything_singleton: Any | None = None
+_raganything_key: tuple[str, int, int, int] | None = None
 _raganything_lock = threading.Lock()
 _raganything_index_lock = threading.Lock()
 _raganything_types_cache: tuple[Any, Any] | None = None
@@ -28,6 +30,7 @@ _DOC_ID_PATTERN = re.compile(r"meeting_(?P<meeting>\d+)_file_(?P<file>[^_\s]+)")
 _SCOPE_PREAMBLE_PATTERN = re.compile(
     r"\[SCOPE meeting_id=(?P<meeting>\d+) file_id=(?P<file>\d+|unknown) doc_id=(?P<doc>[^\]\s]+)\]"
 )
+_PRINCIPAL_PREAMBLE_PATTERN = re.compile(r"\[PRINCIPAL user_id=(?P<user>[^\]\s]+)\]")
 _ASYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="raganything")
 
 
@@ -40,9 +43,10 @@ atexit.register(_shutdown_executor)
 
 def reset_raganything() -> None:
     """Reset the singleton so settings changes can re-create the client."""
-    global _raganything_singleton, _raganything_types_cache
+    global _raganything_key, _raganything_singleton, _raganything_types_cache
     with _raganything_lock:
         _raganything_singleton = None
+        _raganything_key = None
         _raganything_types_cache = None
     logger.info("RAGAnything singleton reset")
 
@@ -71,7 +75,7 @@ def _run_async(coro: Any) -> Any:
     except RuntimeError:
         return asyncio.run(coro)
 
-    future = _ASYNC_EXECUTOR.submit(asyncio.run, coro)
+    future = submit_with_context(_ASYNC_EXECUTOR, asyncio.run, coro)
     return future.result()
 
 
@@ -192,11 +196,18 @@ def _create_raganything() -> Any:
 
 def _get_raganything() -> Any:
     """Get or create RAGAnything singleton."""
-    global _raganything_singleton
-    if _raganything_singleton is None:
+    global _raganything_key, _raganything_singleton
+    config_key = (
+        str(_get_working_dir().resolve()),
+        id(get_llm()),
+        id(get_embeddings()),
+        settings.EMBEDDING_DIMENSION,
+    )
+    if _raganything_singleton is None or _raganything_key != config_key:
         with _raganything_lock:
-            if _raganything_singleton is None:
+            if _raganything_singleton is None or _raganything_key != config_key:
                 _raganything_singleton = _create_raganything()
+                _raganything_key = config_key
                 logger.info("Initialized RAGAnything singleton")
     return _raganything_singleton
 
@@ -208,6 +219,14 @@ def _doc_id(meeting_id: int, file_id: int | None) -> str:
 def _scope_preamble(meeting_id: int, file_id: int | None, doc_id: str) -> str:
     file_tag = str(file_id) if file_id is not None else "unknown"
     return f"[SCOPE meeting_id={meeting_id} file_id={file_tag} doc_id={doc_id}]\n\n"
+
+
+def _principal_preamble(user_id: str | None) -> str:
+    """Embed an ownership hint while DB ownership remains authoritative."""
+    if not user_id or user_id == "default":
+        return ""
+    normalized = re.sub(r"[\]\s]+", "_", user_id)
+    return f"[PRINCIPAL user_id={normalized}]\n\n"
 
 
 def _extract_text(parsed: ParsedDocument | None, text: str | None) -> str:
@@ -259,7 +278,6 @@ def index_with_raganything(
         return
 
     doc_id = _doc_id(meeting_id, file_id)
-    wrapped_content = _scope_preamble(meeting_id, file_id, doc_id) + content
     base_meta = dict(metadata or {})
     base_meta.update(
         {
@@ -270,6 +288,10 @@ def index_with_raganything(
     )
     if file_path:
         base_meta["file_path"] = file_path
+    user_id = str(base_meta.get("user_id") or "default")
+    wrapped_content = (
+        _scope_preamble(meeting_id, file_id, doc_id) + _principal_preamble(user_id) + content
+    )
 
     rag = _get_raganything()
 
@@ -279,7 +301,14 @@ def index_with_raganything(
                 rag,
                 ("insert_content_list",),
                 kwargs={
-                    "content_list": [{"type": "text", "text": wrapped_content, "page_idx": 0}],
+                    "content_list": [
+                        {
+                            "type": "text",
+                            "text": wrapped_content,
+                            "page_idx": 0,
+                            "metadata": base_meta,
+                        }
+                    ],
                     "file_path": file_path or doc_id,
                     "doc_id": doc_id,
                 },
@@ -379,9 +408,19 @@ def _parse_result_item(item: Any) -> dict[str, Any] | None:
             score = float(score_raw)
         except (TypeError, ValueError):
             score = 0.0
-        return {"content": content.strip(), "metadata": metadata, "score": score}
+        return {
+            "content": content.strip(),
+            "metadata": metadata,
+            "score": score,
+            "score_kind": "relevance",
+        }
     if isinstance(item, str) and item.strip():
-        return {"content": item.strip(), "metadata": {}, "score": 0.0}
+        return {
+            "content": item.strip(),
+            "metadata": {},
+            "score": 0.0,
+            "score_kind": "relevance",
+        }
     return None
 
 
@@ -405,7 +444,14 @@ def _normalize_query_payload(payload: Any) -> list[dict[str, Any]]:
             return [single] if single else []
 
     if isinstance(payload, str) and payload.strip():
-        return [{"content": payload.strip(), "metadata": {}, "score": 0.0}]
+        return [
+            {
+                "content": payload.strip(),
+                "metadata": {},
+                "score": 0.0,
+                "score_kind": "relevance",
+            }
+        ]
     return []
 
 
@@ -449,8 +495,28 @@ def _lookup_scope_ids_by_doc_id(doc_id: str) -> tuple[int | None, int | None]:
         return None, None
 
 
-def _scope_match(doc_id: str | None, meeting_ids: set[int], file_ids: set[int]) -> bool:
-    if not meeting_ids and not file_ids:
+def _lookup_user_id_by_doc_id(doc_id: str) -> str | None:
+    """Resolve the authoritative owner for a multimodal document."""
+    try:
+        from ...core import database as db
+
+        with db.get_connection() as conn:
+            row = db.get_meeting_file_by_raganything_doc_id(conn, doc_id)
+        if not row:
+            return None
+        value = row.get("user_id")
+        return str(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _scope_match(
+    doc_id: str | None,
+    meeting_ids: set[int],
+    file_ids: set[int],
+    user_id: str | None = None,
+) -> bool:
+    if not meeting_ids and not file_ids and not user_id:
         return True
     if not doc_id:
         return False
@@ -462,7 +528,10 @@ def _scope_match(doc_id: str | None, meeting_ids: set[int], file_ids: set[int]) 
             return False
         if meeting_ids and meeting_id not in meeting_ids:
             return False
-        return not (file_ids and (file_id is None or file_id not in file_ids))
+        scope_matches = not (file_ids and (file_id is None or file_id not in file_ids))
+        if not scope_matches:
+            return False
+        return not user_id or _lookup_user_id_by_doc_id(doc_id) == user_id
 
     meeting_id = int(match.group("meeting"))
     file_raw = match.group("file")
@@ -470,7 +539,9 @@ def _scope_match(doc_id: str | None, meeting_ids: set[int], file_ids: set[int]) 
 
     if meeting_ids and meeting_id not in meeting_ids:
         return False
-    return not (file_ids and file_id not in file_ids)
+    if file_ids and file_id not in file_ids:
+        return False
+    return not user_id or _lookup_user_id_by_doc_id(doc_id) == user_id
 
 
 def retrieve_with_raganything(
@@ -501,12 +572,16 @@ def retrieve_with_raganything(
         return []
 
     meeting_ids, file_ids = _extract_scope_ids(filters)
-    if not meeting_ids and not file_ids:
+    from ._filters import _extract_eq_filter
+
+    user_id_raw = _extract_eq_filter(filters, "user_id")
+    user_id = str(user_id_raw) if user_id_raw is not None else None
+    if not meeting_ids and not file_ids and not user_id:
         return results[:top_k]
 
     filtered: list[dict[str, Any]] = []
     for item in results:
         doc_id = _extract_doc_id(item)
-        if _scope_match(doc_id, meeting_ids, file_ids):
+        if _scope_match(doc_id, meeting_ids, file_ids, user_id):
             filtered.append(item)
     return filtered[:top_k]

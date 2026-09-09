@@ -1,11 +1,36 @@
 """BM25 index persistence and FTS5 search operations."""
 
 import logging
+import re
 import sqlite3
 from json import JSONDecodeError, dumps, loads
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+
+
+def _build_fts_query(query: str) -> tuple[str, str]:
+    """Return ``(table, MATCH expression)`` with CJK-aware tokenisation."""
+    escaped = query.replace('"', '""')
+    if _CJK_RE.search(escaped):
+        terms: list[str] = []
+        for run in _CJK_RE.findall(escaped):
+            if len(run) >= 3:
+                terms.extend(run[i : i + 3] for i in range(len(run) - 2))
+        terms.extend(t for t in re.findall(r"[A-Za-z0-9_]{3,}", escaped))
+        deduped = list(dict.fromkeys(terms))
+        if deduped:
+            return "bm25_chunks_cjk", " OR ".join(f'"{term}"' for term in deduped)
+
+    _FTS5_SPECIAL = set('*+-><(){}|:="^#')
+    # Treat FTS operators and punctuation as token boundaries. Removing them
+    # in-place would turn identifiers such as ``ZXQ-4817`` into ``ZXQ4817``,
+    # which cannot match the two tokens produced by the FTS5 tokenizer.
+    sanitized = "".join(" " if c in _FTS5_SPECIAL else c for c in escaped)
+    tokens = [t for t in sanitized.split() if t]
+    return "bm25_chunks", " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
 
 
 def add_bm25_chunk(
@@ -32,10 +57,14 @@ def delete_bm25_chunks_by_meeting(conn: sqlite3.Connection, meeting_id: int) -> 
 
 def delete_bm25_chunks_by_file(conn: sqlite3.Connection, meeting_id: int, file_id: int) -> None:
     """Delete BM25 chunks for one file under a meeting."""
-    prefix = f"meeting_{meeting_id}_file_{file_id}_chunk_%"
+    # Metadata is authoritative because chunk IDs may describe flat, parent/
+    # child, page, timestamp, or auxiliary-image chunks. Keep the prefix
+    # fallback for legacy rows whose metadata predates ``file_id``.
+    prefix = f"meeting_{meeting_id}_file_{file_id}_%"
     conn.execute(
-        "DELETE FROM bm25_index WHERE meeting_id=? AND chunk_id LIKE ?",
-        (meeting_id, prefix),
+        "DELETE FROM bm25_index WHERE meeting_id=? AND ("
+        "CAST(json_extract(metadata, '$.file_id') AS INTEGER)=? OR chunk_id LIKE ?)",
+        (meeting_id, file_id, prefix),
     )
 
 
@@ -99,6 +128,8 @@ def fts5_search(
     file_ids: list[int] | None = None,
     limit: int = 10,
     speaker_names: list[str] | None = None,
+    user_id: str | None = None,
+    config_fingerprint: str | None = None,
 ) -> list[dict]:
     """Search bm25_chunks FTS5 virtual table with BM25 ranking.
 
@@ -114,25 +145,26 @@ def fts5_search(
     # BM25 ranker then sorts by relevance.  This avoids zero-result
     # queries caused by long natural-language questions when AND would
     # require every word to appear in the same short chunk.
-    tokens = [t for t in query.replace('"', '""').split() if t]
-    # Strip FTS5 operator characters from each token for defense-in-depth.
-    _FTS5_SPECIAL = set('*+-><(){}|:="^#')
-    tokens = ["".join(c for c in t if c not in _FTS5_SPECIAL) for t in tokens]
-    tokens = [t for t in tokens if t]
-    safe_query = " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
+    table, safe_query = _build_fts_query(query)
+    if not safe_query:
+        return []
     meeting_ids_json = dumps(meeting_ids or [])
     file_ids_json = dumps(file_ids or [])
     speaker_names_json = dumps([n.lower() for n in speaker_names] if speaker_names else [])
 
-    sql = """
+    sql = f"""
         SELECT chunk_id, meeting_id, content, metadata, rank
-        FROM bm25_chunks
-        WHERE bm25_chunks MATCH ?
+        FROM {table}
+        WHERE {table} MATCH ?
           AND (
             ? = 0
             OR meeting_id IN (
                 SELECT CAST(value AS INTEGER) FROM json_each(?)
             )
+          )
+          AND (
+            ? = 0
+            OR meeting_id IN (SELECT id FROM meetings WHERE user_id = ?)
           )
           AND (
             ? = 0
@@ -150,6 +182,10 @@ def fts5_search(
                 ) > 0
             )
           )
+          AND (
+            ? = 0
+            OR json_extract(metadata, '$.index_config_fingerprint') = ?
+          )
         ORDER BY rank
         LIMIT ?
     """
@@ -157,10 +193,14 @@ def fts5_search(
         safe_query,
         1 if meeting_ids else 0,
         meeting_ids_json,
+        1 if user_id is not None else 0,
+        user_id or "",
         1 if file_ids else 0,
         file_ids_json,
         1 if speaker_names else 0,
         speaker_names_json,
+        1 if config_fingerprint else 0,
+        config_fingerprint or "",
         limit,
     ]
 
@@ -234,6 +274,8 @@ def get_page_sibling_chunks(
                 meta = {}
         else:
             meta = {}
+        # The SQL record ID remains authoritative for legacy sibling metadata.
+        meta["chunk_id"] = row["chunk_id"]
         out.append(
             {
                 "content": row["content"],
@@ -284,6 +326,7 @@ def fts5_search_file_summaries(
     query: str,
     meeting_ids: list[int] | None = None,
     limit: int = 20,
+    user_id: str | None = None,
 ) -> list[dict]:
     """Search file summaries via FTS5 BM25.
 
@@ -298,20 +341,35 @@ def fts5_search_file_summaries(
     # BM25 ranker then sorts by relevance.  This avoids zero-result
     # queries caused by long natural-language questions when AND would
     # require every word to appear in the same short chunk.
-    tokens = [t for t in query.replace('"', '""').split() if t]
-    safe_query = " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
+    escaped = query.replace('"', '""')
+    if _CJK_RE.search(escaped):
+        table = "file_summary_fts_cjk"
+        terms = [
+            run[i : i + 3] for run in _CJK_RE.findall(escaped) for i in range(max(0, len(run) - 2))
+        ]
+        safe_query = " OR ".join(f'"{term}"' for term in dict.fromkeys(terms))
+    else:
+        table = "file_summary_fts"
+        tokens = [t for t in escaped.split() if t]
+        safe_query = " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
+    if not safe_query:
+        return []
     meeting_ids_json = dumps(meeting_ids or [])
 
-    sql = """
+    sql = f"""
         SELECT fsb.file_id, fsb.meeting_id, rank
-        FROM file_summary_fts fsft
+        FROM {table} fsft
         JOIN file_summary_bm25 fsb ON fsb.id = fsft.rowid
-        WHERE file_summary_fts MATCH ?
+        WHERE {table} MATCH ?
           AND (
             ? = 0
             OR fsb.meeting_id IN (
-                SELECT CAST(value AS INTEGER) FROM json_each(?)
+              SELECT CAST(value AS INTEGER) FROM json_each(?)
             )
+          )
+          AND (
+            ? = 0
+            OR fsb.meeting_id IN (SELECT id FROM meetings WHERE user_id = ?)
           )
         ORDER BY rank
         LIMIT ?
@@ -320,6 +378,8 @@ def fts5_search_file_summaries(
         safe_query,
         1 if meeting_ids else 0,
         meeting_ids_json,
+        1 if user_id is not None else 0,
+        user_id or "",
         limit,
     ]
 

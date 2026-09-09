@@ -11,6 +11,9 @@ They contain no proprietary or personal data.
 | `sample.wav` | 15s mono 16 kHz sine sweep (exercises transcriber) |
 | `queries.json` | 20 chat queries for latency benchmarking |
 | `golden_set.json` | Hand-written + LLM-generated Q/A pairs for RAG quality eval |
+| `amicorpus_golden_scoped.json` | Versioned scoped retrieval gold set for the AMI audio benchmark |
+| `amicorpus_golden_unscoped.json` | Versioned broad-recall gold set for the AMI audio benchmark |
+| `e2e-smoke.txt` | Deterministic text input used by the isolated upload-to-cited-answer smoke gate |
 
 ## Regenerating fixtures
 
@@ -18,3 +21,9 @@ They contain no proprietary or personal data.
 cd backend/tests/fixtures/benchmark
 python generate.py
 ```
+
+`generate.py` regenerates the synthetic binary fixtures. The AMI gold sets are
+maintained by `backend/scripts/_bench_generate_golden.py` and must not be
+silently replaced as part of fixture regeneration. See
+[`backend/docs/benchmarking.md`](../../../docs/benchmarking.md) for the governed
+evaluation commands and evidence rules.

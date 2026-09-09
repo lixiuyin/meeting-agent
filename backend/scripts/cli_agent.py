@@ -36,19 +36,19 @@ import shlex
 import shutil
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-# Add parent directory to Python path to allow importing from src
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
+
+# Add parent directory to Python path to allow importing from src
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 console = Console()
 
@@ -89,7 +89,9 @@ class MeetingAgentCLI:
 └─────────────────────────────────────────────────────────────┘
         """
         console.print(Panel(banner, border_style="blue", padding=(0, 2)))
-        console.print("\n[cyan]Type /help for available commands or ask a question directly.[/cyan]\n")
+        console.print(
+            "\n[cyan]Type /help for available commands or ask a question directly.[/cyan]\n"
+        )
 
     async def check_database(self) -> tuple[bool, str]:
         """Check database connectivity and return status with details."""
@@ -126,7 +128,7 @@ class MeetingAgentCLI:
 
             llm = get_llm()
             # Quick test invocation
-            response = llm.invoke("Hi")
+            llm.invoke("Hi")
             return True, f"{settings.LLM_BINDING} ({settings.LLM_MODEL})"
         except Exception as e:
             return False, str(e)
@@ -162,7 +164,7 @@ class MeetingAgentCLI:
         try:
             from src.mcp import list_skills
 
-            result = list_skills()
+            list_skills()
             results["list_skills"] = (True, "OK")
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -172,7 +174,7 @@ class MeetingAgentCLI:
         try:
             from src.mcp import list_meetings
 
-            result = list_meetings(limit=1)
+            list_meetings(limit=1)
             results["list_meetings"] = (True, "OK")
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -193,7 +195,7 @@ class MeetingAgentCLI:
         try:
             from src.mcp import search_meetings
 
-            result = search_meetings("test", top_k=1)
+            search_meetings("test", top_k=1)
             results["search_meetings"] = (True, "OK")
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -203,7 +205,7 @@ class MeetingAgentCLI:
         try:
             from src.mcp import ask_about_meetings
 
-            result = await ask_about_meetings("Hello", user_id=self.user_id)
+            await ask_about_meetings("Hello", user_id=self.user_id)
             results["ask_about_meetings"] = (True, "OK")
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -309,7 +311,8 @@ class MeetingAgentCLI:
             console.print(table)
             if has_more:
                 console.print(
-                    f"[dim]More available. Try: /meetings --limit {limit} --offset {offset + limit}[/dim]"
+                    f"[dim]More available. Try: /meetings --limit {limit} "
+                    f"--offset {offset + limit}[/dim]"
                 )
             console.print()
 
@@ -395,7 +398,9 @@ class MeetingAgentCLI:
                 f"[bold]Created:[/bold] {meeting.get('created_at') or '-'}",
                 f"[bold]Files:[/bold] {len(files)}",
             ]
-            console.print(Panel("\n".join(details), title=f"Meeting #{meeting_id}", border_style="cyan"))
+            console.print(
+                Panel("\n".join(details), title=f"Meeting #{meeting_id}", border_style="cyan")
+            )
 
             if files:
                 table = Table(box=box.ROUNDED, show_header=True, title="Meeting Files")
@@ -429,9 +434,11 @@ class MeetingAgentCLI:
                 return
 
             has_more = len(files) > offset + limit
-            page = files[offset: offset + limit]
+            page = files[offset : offset + limit]
 
-            table = Table(box=box.ROUNDED, show_header=True, title=f"Files in Meeting #{meeting_id}")
+            table = Table(
+                box=box.ROUNDED, show_header=True, title=f"Files in Meeting #{meeting_id}"
+            )
             table.add_column("File ID", style="cyan", width=8)
             table.add_column("Name", style="white", width=35)
             table.add_column("Type", style="blue", width=8)
@@ -448,7 +455,8 @@ class MeetingAgentCLI:
             console.print(table)
             if has_more:
                 console.print(
-                    f"[dim]More available. Try: /files {meeting_id} --limit {limit} --offset {offset + limit}[/dim]"
+                    f"[dim]More available. Try: /files {meeting_id} --limit {limit} "
+                    f"--offset {offset + limit}[/dim]"
                 )
             console.print()
         except Exception as e:
@@ -460,7 +468,9 @@ class MeetingAgentCLI:
 
             def _fetch():
                 with db.get_connection() as conn:
-                    return db.list_sessions(conn, user_id=self.user_id, limit=limit + 1, offset=offset)
+                    return db.list_sessions(
+                        conn, user_id=self.user_id, limit=limit + 1, offset=offset
+                    )
 
             sessions = await asyncio.to_thread(_fetch)
             if not sessions:
@@ -484,7 +494,8 @@ class MeetingAgentCLI:
             console.print(table)
             if has_more:
                 console.print(
-                    f"[dim]More available. Try: /sessions --limit {limit} --offset {offset + limit}[/dim]"
+                    f"[dim]More available. Try: /sessions --limit {limit} "
+                    f"--offset {offset + limit}[/dim]"
                 )
             console.print()
         except Exception as e:
@@ -560,7 +571,9 @@ class MeetingAgentCLI:
             from src.services.rag import retrieve
 
             with console.status("[yellow]Retrieving relevant chunks...[/yellow]"):
-                docs = await asyncio.to_thread(retrieve, query, meeting_ids=meeting_ids, top_k=top_k)
+                docs = await asyncio.to_thread(
+                    retrieve, query, meeting_ids=meeting_ids, top_k=top_k
+                )
 
             if not docs:
                 console.print("[yellow]No relevant chunks found.[/yellow]\n")
@@ -588,6 +601,8 @@ class MeetingAgentCLI:
         meeting_ids: list[int] | None = None,
         top_k: int | None = None,
         use_web_search: bool = False,
+        retrieval_profile: str = "balanced",
+        memory_mode: str = "balanced",
     ):
         try:
             from src.services.chain import ask_stream
@@ -602,6 +617,8 @@ class MeetingAgentCLI:
                 meeting_ids=meeting_ids,
                 top_k=top_k,
                 use_web_search=use_web_search,
+                retrieval_profile=retrieval_profile,
+                memory_mode=memory_mode,
             ):
                 event_type = event.get("type")
                 if event_type == "token":
@@ -684,6 +701,7 @@ class MeetingAgentCLI:
 
                 meeting_id = await asyncio.to_thread(_create_meeting)
             else:
+
                 def _ensure_meeting():
                     with db.get_connection() as conn:
                         return db.get_meeting(conn, meeting_id)
@@ -718,7 +736,8 @@ class MeetingAgentCLI:
             file_id, existing = await asyncio.to_thread(_reserve)
             if existing:
                 console.print(
-                    f"[yellow]File already exists in meeting #{meeting_id} (file_id={existing['id']}).[/yellow]\n"
+                    f"[yellow]File already exists in meeting #{meeting_id} "
+                    f"(file_id={existing['id']}).[/yellow]\n"
                 )
                 return
             if file_id is None:
@@ -728,6 +747,7 @@ class MeetingAgentCLI:
             try:
                 await asyncio.to_thread(shutil.copy2, path, save_path)
             except Exception:
+
                 def _cleanup_reserved_record():
                     with db.get_write_connection() as conn:
                         db.delete_meeting_file(conn, file_id)
@@ -735,7 +755,8 @@ class MeetingAgentCLI:
                 await asyncio.to_thread(_cleanup_reserved_record)
                 raise
             console.print(
-                f"[green]Uploaded to meeting #{meeting_id} as file #{file_id}. Processing started.[/green]"
+                f"[green]Uploaded to meeting #{meeting_id} as file #{file_id}. "
+                f"Processing started.[/green]"
             )
 
             if wait:
@@ -833,10 +854,17 @@ class MeetingAgentCLI:
 
             with console.status("[yellow]Generating summary...[/yellow]"):
                 result = await generate_summary(meeting_id, principal={"user_id": "default"})
-            console.print(Panel(result.summary, title=f"Meeting #{meeting_id} Summary", border_style="green"))
+            console.print(
+                Panel(result.summary, title=f"Meeting #{meeting_id} Summary", border_style="green")
+            )
             if result.per_file_summaries:
-                lines = [f"• {f.file_name}: {len(f.key_points)} key points" for f in result.per_file_summaries]
-                console.print(Panel("\n".join(lines), title="Per-file Coverage", border_style="blue"))
+                lines = [
+                    f"• {f.file_name}: {len(f.key_points)} key points"
+                    for f in result.per_file_summaries
+                ]
+                console.print(
+                    Panel("\n".join(lines), title="Per-file Coverage", border_style="blue")
+                )
             console.print()
         except Exception as e:
             console.print(f"[red]Summary generation failed: {e}[/red]\n")
@@ -879,7 +907,8 @@ class MeetingAgentCLI:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(response.content, encoding="utf-8")
             console.print(
-                f"[green]Exported meeting #{meeting_id} to {out} ({response.format.value}).[/green]\n"
+                f"[green]Exported meeting #{meeting_id} to {out} "
+                f"({response.format.value}).[/green]\n"
             )
         except Exception as e:
             console.print(f"[red]Export failed: {e}[/red]\n")
@@ -1010,14 +1039,27 @@ class MeetingAgentCLI:
 
     async def settings_rebuild_vectors_cli(self):
         try:
-            from src.api.routers import settings as settings_router
+            from src.api.routers.settings._common import (
+                _active_rebuild_tasks,
+                try_acquire_vectors_rebuild,
+            )
+            from src.api.routers.settings._rebuild import (
+                _rebuild_vectors_task,
+                _reset_rebuild_flag,
+            )
+            from src.core.settings_epoch import get_settings_epoch
 
-            if settings_router._rebuild_running:  # noqa: SLF001
+            if not try_acquire_vectors_rebuild():
                 console.print("[yellow]Vector rebuild already running.[/yellow]\n")
                 return
-            settings_router._rebuild_running = True  # noqa: SLF001
-            task = asyncio.create_task(settings_router._rebuild_vectors_task())  # noqa: SLF001
-            task.add_done_callback(settings_router._reset_rebuild_flag)  # noqa: SLF001
+            task = asyncio.create_task(_rebuild_vectors_task(get_settings_epoch()))
+            _active_rebuild_tasks.add(task)
+
+            def _finish_rebuild(completed: asyncio.Task) -> None:
+                _reset_rebuild_flag(completed)
+                _active_rebuild_tasks.discard(completed)
+
+            task.add_done_callback(_finish_rebuild)
             self._track_background_task(task)
             console.print("[green]Vector rebuild started in background.[/green]\n")
         except Exception as e:
@@ -1031,11 +1073,13 @@ class MeetingAgentCLI:
             section_payload = payload.get(section)
             if not isinstance(section_payload, dict):
                 console.print(
-                    "[red]Unknown section. Try one of: llm, embedding, rag, memory, search, upload[/red]\n"
+                    "[red]Unknown section. Try one of: llm, embedding, rag, "
+                    "memory, search, upload[/red]\n"
                 )
                 return
             console.print(
-                f"[cyan]Settings wizard for section '{section}'. Press Enter to keep current value.[/cyan]"
+                f"[cyan]Settings wizard for section '{section}'. "
+                f"Press Enter to keep current value.[/cyan]"
             )
             for key, value in section_payload.items():
                 raw = Prompt.ask(f"{section}.{key}", default=str(value))
@@ -1089,12 +1133,14 @@ class MeetingAgentCLI:
             console.print("  7. Run all tests")
             console.print("  0. Back to main menu")
 
-            choice = Prompt.ask("[cyan]Select test[/cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7"])
+            choice = Prompt.ask(
+                "[cyan]Select test[/cyan]", choices=["0", "1", "2", "3", "4", "5", "6", "7"]
+            )
 
             if choice == "0":
                 break
             elif choice == "7":
-                for key, (_, test_func) in tools.items():
+                for _, test_func in tools.values():
                     await test_func()
             else:
                 _, test_func = tools[choice]
@@ -1132,7 +1178,9 @@ class MeetingAgentCLI:
             from src.mcp import manage_memory
 
             # Test set
-            result = manage_memory("set", key="cli_test", value="Hello from CLI", user_id=self.user_id)
+            result = manage_memory(
+                "set", key="cli_test", value="Hello from CLI", user_id=self.user_id
+            )
             console.print(f"[green]Set:[/green] {result}")
 
             # Test get
@@ -1156,7 +1204,9 @@ class MeetingAgentCLI:
         try:
             from src.mcp import ask_about_meetings
 
-            question = Prompt.ask("[cyan]Enter question[/cyan]", default="What meetings do we have?")
+            question = Prompt.ask(
+                "[cyan]Enter question[/cyan]", default="What meetings do we have?"
+            )
 
             with console.status("[yellow]Thinking...[/yellow]"):
                 result = await ask_about_meetings(question, user_id=self.user_id)
@@ -1164,11 +1214,9 @@ class MeetingAgentCLI:
             # Parse and display JSON result
             try:
                 parsed = json.loads(result)
-                console.print(Panel(
-                    parsed.get("answer", "No answer"),
-                    border_style="green",
-                    title="Answer"
-                ))
+                console.print(
+                    Panel(parsed.get("answer", "No answer"), border_style="green", title="Answer")
+                )
                 if parsed.get("sources"):
                     console.print(f"[dim]Sources: {', '.join(parsed['sources'])}[/dim]")
             except json.JSONDecodeError:
@@ -1194,18 +1242,23 @@ class MeetingAgentCLI:
         try:
             from src.mcp import invoke_skill
 
-            query = Prompt.ask("[cyan]Enter query for skill invocation[/cyan]", default="Generate a project proposal")
+            query = Prompt.ask(
+                "[cyan]Enter query for skill invocation[/cyan]",
+                default="Generate a project proposal",
+            )
 
             with console.status("[yellow]Invoking skill...[/yellow]"):
                 result = await invoke_skill("tech_proposal_generator", query, user_id=self.user_id)
 
             try:
                 parsed = json.loads(result)
-                console.print(Panel(
-                    parsed.get("output", "No output"),
-                    border_style="green",
-                    title=f"Skill: {parsed.get('skill', 'unknown')}"
-                ))
+                console.print(
+                    Panel(
+                        parsed.get("output", "No output"),
+                        border_style="green",
+                        title=f"Skill: {parsed.get('skill', 'unknown')}",
+                    )
+                )
             except json.JSONDecodeError:
                 console.print(Panel(result, border_style="green", title="Raw result"))
         except Exception as e:
@@ -1235,7 +1288,7 @@ class MeetingAgentCLI:
                     skill.name,
                     skill.display_name[:25],
                     skill.metadata.category or "-",
-                    examples[:30]
+                    examples[:30],
                 )
 
             console.print(table)
@@ -1267,7 +1320,10 @@ class MeetingAgentCLI:
             skill = loader.get(skill_name)
             if not skill:
                 available = [s.name for s in loader.load_all()]
-                console.print(f"[red]Skill '{skill_name}' not found. Available: {', '.join(available)}[/red]\n")
+                console.print(
+                    f"[red]Skill '{skill_name}' not found. Available: "
+                    f"{', '.join(available)}[/red]\n"
+                )
                 return
 
             if not query:
@@ -1288,32 +1344,33 @@ class MeetingAgentCLI:
 
             # Display result
             answer_panel = Panel(
-                ctx.answer,
-                border_style="green",
-                title=f"Skill: {skill.display_name}"
+                ctx.answer, border_style="green", title=f"Skill: {skill.display_name}"
             )
             console.print(answer_panel)
 
             # Display sources
             sources = _extract_sources(ctx.docs)
             if sources:
-                sources_text = "\n".join([
-                    f"• {s['meeting_title']} (score: {s['score']:.3f})"
-                    for s in sources
-                ])
+                sources_text = "\n".join(
+                    [f"• {s['meeting_title']} (score: {s['score']:.3f})" for s in sources]
+                )
                 console.print(Panel(sources_text, border_style="blue", title="Sources"))
 
             # Save to history
-            self.conversation_history.append({
-                "role": "user",
-                "content": f"[{skill_name}] {query}",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            self.conversation_history.append({
-                "role": "agent",
-                "content": ctx.answer,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            self.conversation_history.append(
+                {
+                    "role": "user",
+                    "content": f"[{skill_name}] {query}",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+            self.conversation_history.append(
+                {
+                    "role": "agent",
+                    "content": ctx.answer,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
         except Exception as e:
             console.print(f"[red]Error invoking skill: {e}[/red]\n")
@@ -1348,10 +1405,13 @@ class MeetingAgentCLI:
             table.add_row("Description", result.skill.description[:50] + "...")
 
             if result.details:
-                details_text = "\n".join([
-                    f"{k}: {v}" for k, v in result.details.items()
-                    if isinstance(v, (str, int, float))
-                ])
+                details_text = "\n".join(
+                    [
+                        f"{k}: {v}"
+                        for k, v in result.details.items()
+                        if isinstance(v, (str, int, float))
+                    ]
+                )
                 if details_text:
                     table.add_row("Details", details_text)
 
@@ -1375,7 +1435,7 @@ class MeetingAgentCLI:
         while True:
             action = Prompt.ask(
                 "[cyan]Action[/cyan] (list/set/get/delete/quit)",
-                choices=["list", "set", "get", "delete", "quit"]
+                choices=["list", "set", "get", "delete", "quit"],
             )
 
             if action == "quit":
@@ -1460,23 +1520,26 @@ class MeetingAgentCLI:
 
             # Display sources if any
             if result.sources:
-                sources_text = "\n".join([
-                    f"• {s['meeting_title']} (score: {s['score']:.3f})"
-                    for s in result.sources
-                ])
+                sources_text = "\n".join(
+                    [f"• {s['meeting_title']} (score: {s['score']:.3f})" for s in result.sources]
+                )
                 console.print(Panel(sources_text, border_style="blue", title="Sources"))
 
             # Save to history
-            self.conversation_history.append({
-                "role": "user",
-                "content": question,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            self.conversation_history.append({
-                "role": "agent",
-                "content": result.answer,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            self.conversation_history.append(
+                {
+                    "role": "user",
+                    "content": question,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+            self.conversation_history.append(
+                {
+                    "role": "agent",
+                    "content": result.answer,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
@@ -1549,7 +1612,8 @@ class MeetingAgentCLI:
     > /status
 
   Stream answer:
-    > /chat_stream "What are the top risks?" --meeting 12 --top-k 6 --web
+    > /chat_stream "What are the top risks?" --meeting 12
+      --rag-profile thorough --memory-mode deep --web
 
   Upload and wait:
     > /upload "~/Downloads/spec.pdf" --title "Spec Review" --wait
@@ -1582,9 +1646,7 @@ class MeetingAgentCLI:
         elif command == "status":
             await self.display_status()
         elif command == "meetings":
-            positional, options = self._split_args_options(
-                args, {"--limit", "--offset"}, set()
-            )
+            positional, options = self._split_args_options(args, {"--limit", "--offset"}, set())
             if positional:
                 console.print("[yellow]Ignoring extra positional args for /meetings.[/yellow]")
             limit = self._parse_int_option(options.get("--limit"), 20)
@@ -1594,9 +1656,7 @@ class MeetingAgentCLI:
             meeting_id = int(args[0]) if args else self._prompt_int("Meeting ID", 1)
             await self.show_meeting_detail(meeting_id)
         elif command == "files":
-            positional, options = self._split_args_options(
-                args, {"--limit", "--offset"}, set()
-            )
+            positional, options = self._split_args_options(args, {"--limit", "--offset"}, set())
             meeting_id = int(positional[0]) if positional else self._prompt_int("Meeting ID", 1)
             limit = self._parse_int_option(options.get("--limit"), 20)
             offset = self._parse_non_negative_option(options.get("--offset"), 0)
@@ -1610,7 +1670,9 @@ class MeetingAgentCLI:
             else:
                 file_path = Prompt.ask("[cyan]Path to local file[/cyan]").strip()
             meeting_id = int(options["--meeting"]) if "--meeting" in options else None
-            if meeting_id is None and Confirm.ask("[cyan]Upload into an existing meeting?[/cyan]", default=False):
+            if meeting_id is None and Confirm.ask(
+                "[cyan]Upload into an existing meeting?[/cyan]", default=False
+            ):
                 meeting_id = self._prompt_int("Meeting ID", 1)
             title = options.get("--title")
             description = options.get("--description")
@@ -1618,7 +1680,9 @@ class MeetingAgentCLI:
                 title = Prompt.ask("[cyan]Meeting title (new meeting)[/cyan]")
             wait_flag = bool(options.get("--wait"))
             if not wait_flag:
-                wait_flag = Confirm.ask("[cyan]Wait until processing finishes?[/cyan]", default=False)
+                wait_flag = Confirm.ask(
+                    "[cyan]Wait until processing finishes?[/cyan]", default=False
+                )
             await self.upload_file_cli(
                 file_path,
                 meeting_id=meeting_id,
@@ -1641,7 +1705,9 @@ class MeetingAgentCLI:
             positional, options = self._split_args_options(args, value_opts, flag_opts)
             meeting_id = int(positional[0]) if positional else self._prompt_int("Meeting ID", 1)
             file_id = int(options["--file"]) if "--file" in options else None
-            if file_id is None and Confirm.ask("[cyan]View transcript of a specific file?[/cyan]", default=False):
+            if file_id is None and Confirm.ask(
+                "[cyan]View transcript of a specific file?[/cyan]", default=False
+            ):
                 file_id = self._prompt_int("File ID", 1)
             await self.show_transcript_cli(meeting_id, file_id=file_id)
         elif command == "summary":
@@ -1679,7 +1745,9 @@ class MeetingAgentCLI:
             top_k = self._parse_int_option(options.get("--top-k"), 5)
             await self.retrieve_only(query, meeting_ids=meeting_ids, top_k=top_k)
         elif command == "chat_stream":
-            value_opts = {"--meeting", "--top-k"}
+            from src.core.operating_modes import MEMORY_MODES, RETRIEVAL_PROFILES
+
+            value_opts = {"--meeting", "--top-k", "--rag-profile", "--memory-mode"}
             flag_opts = {"--web"}
             positional, options = self._split_args_options(args, value_opts, flag_opts)
             question = " ".join(positional).strip()
@@ -1690,8 +1758,14 @@ class MeetingAgentCLI:
                 return
             meeting_ids = self._parse_int_csv(options.get("--meeting"))
             top_k = int(options["--top-k"]) if "--top-k" in options else None
-            if top_k is None and Confirm.ask("[cyan]Customize top-k?[/cyan]", default=False):
-                top_k = self._prompt_int("Top-K", 5)
+            retrieval_profile = options.get("--rag-profile", "balanced")
+            memory_mode = options.get("--memory-mode", "balanced")
+            if retrieval_profile not in RETRIEVAL_PROFILES:
+                console.print("[red]--rag-profile must be fast, balanced, or thorough.[/red]\n")
+                return
+            if memory_mode not in MEMORY_MODES:
+                console.print("[red]--memory-mode must be off, focused, balanced, or deep.[/red]\n")
+                return
             use_web = bool(options.get("--web"))
             if not use_web:
                 use_web = Confirm.ask("[cyan]Enable web search?[/cyan]", default=False)
@@ -1700,11 +1774,11 @@ class MeetingAgentCLI:
                 meeting_ids=meeting_ids,
                 top_k=top_k,
                 use_web_search=use_web,
+                retrieval_profile=retrieval_profile,
+                memory_mode=memory_mode,
             )
         elif command == "sessions":
-            positional, options = self._split_args_options(
-                args, {"--limit", "--offset"}, set()
-            )
+            positional, options = self._split_args_options(args, {"--limit", "--offset"}, set())
             if positional:
                 console.print("[yellow]Ignoring extra positional args for /sessions.[/yellow]")
             limit = self._parse_int_option(options.get("--limit"), 20)
@@ -1755,10 +1829,14 @@ class MeetingAgentCLI:
             elif sub == "rebuild":
                 await self.settings_rebuild_vectors_cli()
             elif sub == "wizard":
-                section = rest[0] if rest else Prompt.ask(
-                    "[cyan]Section[/cyan]",
-                    choices=["llm", "embedding", "rag", "memory", "search", "upload"],
-                    default="rag",
+                section = (
+                    rest[0]
+                    if rest
+                    else Prompt.ask(
+                        "[cyan]Section[/cyan]",
+                        choices=["llm", "embedding", "rag", "memory", "search", "upload"],
+                        default="rag",
+                    )
                 )
                 await self.settings_wizard_cli(section)
             else:

@@ -48,6 +48,53 @@ class TestMemoryAPIEntityEndpoints:
         assert data["entities"][0]["entity_type"] == "person"
 
     @pytest.mark.asyncio
+    async def test_list_entities_supports_cursor_pagination(self, client, auth_headers):
+        user_id = "default"
+        entity_type = "pagination-test"
+        with get_write_connection() as conn:
+            for index in range(3):
+                db.upsert_entity(
+                    conn,
+                    user_id=user_id,
+                    name=f"paged-entity-{index}",
+                    entity_type=entity_type,
+                )
+
+        async with client as c:
+            first = await c.get(
+                "/api/v1/memory/entities",
+                params={"entity_type": entity_type, "limit": 2},
+                headers=auth_headers,
+            )
+            cursor = first.json()["next_cursor"]
+            second = await c.get(
+                "/api/v1/memory/entities",
+                params={"entity_type": entity_type, "limit": 2, "cursor": cursor},
+                headers=auth_headers,
+            )
+
+        assert first.json()["total"] == 3
+        assert len(first.json()["entities"]) == 2
+        assert cursor
+        assert len(second.json()["entities"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_batch_delete_entities(self, client, auth_headers):
+        with get_write_connection() as conn:
+            db.upsert_entity(conn, user_id="default", name="batch-ent-1", entity_type="concept")
+            db.upsert_entity(conn, user_id="default", name="batch-ent-2", entity_type="concept")
+
+        async with client as c:
+            resp = await c.post(
+                "/api/v1/memory/entities/batch-delete",
+                headers=auth_headers,
+                json={"names": ["batch-ent-1", "batch-ent-2", "missing-ent"]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 2, "missing": ["missing-ent"]}
+
+    @pytest.mark.asyncio
     async def test_get_entity_not_found(self, client, auth_headers):
         """GET /memory/entities/{name} returns 404 for unknown entity."""
         async with client as c:

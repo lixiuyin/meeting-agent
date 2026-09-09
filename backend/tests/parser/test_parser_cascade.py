@@ -130,7 +130,7 @@ class TestCascadeWithProviders:
     @pytest.fixture
     def text_pdf(self, tmp_path):
         """Create a simple text-only PDF."""
-        import fitz
+        import pymupdf as fitz
 
         path = tmp_path / "text.pdf"
         doc = fitz.open()

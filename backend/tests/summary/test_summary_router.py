@@ -86,6 +86,29 @@ def test_meeting_filter_excludes_other_meetings(router_env):
     assert 202 not in selected
 
 
+def test_user_filter_excludes_other_principals(router_env):
+    mod = router_env
+    mod.upsert_file_summary(
+        211,
+        "alpha alpha",
+        meeting_id=20,
+        extra_metadata={"user_id": "principal-a"},
+    )
+    mod.upsert_file_summary(
+        212,
+        "alpha alpha",
+        meeting_id=21,
+        extra_metadata={"user_id": "principal-b"},
+    )
+
+    from src.services.rag._summary_router import route_files_by_summary
+
+    selected = route_files_by_summary("alpha", user_id="principal-a")
+    assert selected is not None
+    assert 211 in selected
+    assert 212 not in selected
+
+
 def test_empty_query_returns_none(router_env):
     from src.services.rag._summary_router import route_files_by_summary
 

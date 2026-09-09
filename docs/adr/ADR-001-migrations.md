@@ -1,21 +1,25 @@
-# ADR-001: Keep the SQL migration system as the single source of truth
+# ADR-001: Freeze legacy SQL and use Alembic as the migration source of truth
 
 ## Status
 Accepted
 
 ## Context
-The repository had two migration paths:
+The repository historically had two migration representations:
 1. Runtime SQL migrations in `backend/src/core/database/_migrations.py`
 2. Alembic scaffold files in `backend/alembic/`
 
-Only the SQL migration path is fully implemented and used in application startup (`init_db()`).
-Keeping both creates tooling ambiguity for contributors and can cause schema drift.
+Production startup runs Alembic and fails closed if it cannot migrate. The
+numbered SQL list remains necessary only for compatibility with installations
+created before Alembic became mandatory.
 
 ## Decision
-Use the SQL migration system in `_migrations.py` as the only authoritative migration mechanism.
-Alembic files remain for future optional adoption, but are explicitly non-authoritative.
+Alembic is the only migration execution path for schema changes after legacy
+schema version 52. The legacy list is frozen. Fresh bootstrap/test schema SQL
+may be cumulative, but it does not create a new `schema_version` entry. Startup
+verifies that all legacy versions 1–52 exist and that Alembic is at head.
 
 ## Consequences
-1. New schema changes must be added as new numbered SQL migrations in `_migrations.py`.
-2. Contributors should not create Alembic revisions for this repository.
-3. Runtime startup remains deterministic because all migrations are applied by `init_db()`.
+1. New schema changes require one Alembic revision, not duplicate legacy SQL.
+2. `schema_version` remains at 52 while `alembic_version` advances.
+3. Production never silently falls back when Alembic is unavailable or fails.
+4. A downgrade must not destroy application data merely to remove compatibility columns.

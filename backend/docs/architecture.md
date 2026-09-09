@@ -1,189 +1,180 @@
-# 系统架构总览
+# System Architecture Overview
 
-> Meeting Agent 后端整体架构说明。本文档作为 `backend/docs/` 的入口，其余子系统文档均从此处交叉引用。
+Meeting Agent is a meeting-record and document knowledge assistant. This document is the entry point for `backend/docs/`; subsystem documents are indexed and cross-referenced here.
 
-## 1. 目标与定位
+**Verified against implementation:** 2026-09-09.
 
-Meeting Agent 是一个**"会议记录 + 文档"知识助手**：
+## 1. Product scope
 
-- 摄入视频/音频（转写）、PDF/PPTX/图像（解析+OCR）
-- 将内容切块后存入向量库（Chroma） + BM25 / FTS5 倒排索引
-- 提供 **RAG 问答**（同步/流式）、**长期记忆**、**知识图谱**
-- 通过 **REST API**、**WebSocket**、**MCP Server** 三种协议对外暴露能力
+Meeting Agent:
 
-## 2. 分层结构
+- ingests registered video/audio formats through transcription, plain text/data
+  through local extraction, and PDF/Office/image content through profiled,
+  quality-gated parsing and optional vision enrichment;
+- chunks content into Chroma vector storage plus a BM25/FTS5 inverted index;
+- provides synchronous and streaming RAG answers, long-term memory, and a knowledge graph;
+- exposes REST API, WebSocket, and MCP Server interfaces.
 
-```
+## 2. Layered structure
+
+```text
 backend/src/
-├── main.py                 # FastAPI app 入口，注册中间件 + 路由 + 生命周期
-├── mcp.py                  # MCP 服务（独立入口：python -m src.mcp）
-│
-├── api/                    # HTTP 接入层
-│   ├── dependencies.py     # FastAPI 依赖注入（公共 dep）
-│   ├── lifespan.py         # 启动/关闭编排（critical vs best-effort）
-│   ├── middleware.py       # RequestId、限流、日志、CORS
-│   ├── metrics.py          # /metrics 统计端点
-│   └── routers/            # 按领域拆分的路由
-│       ├── file_download.py # 会议文件下载（API Key 或短期 token；先于 meetings 注册）
-│       ├── meetings/       # 会议 CRUD、上传、转写、总结、搜索（14 个子路由模块）
-│       ├── chat.py         # /chat, /chat/stream, /chat/search
-│       ├── sessions.py     # 会话列表 / 摘要 / cite / 跨会话搜索
-│       ├── memory.py       # 记忆 CRUD / 批量 / 衰减 / 知识图谱实体
-│       ├── settings/       # 运行时配置 + rebuild-vectors（__init__.py + _common + _rebuild）
-│       ├── skills.py       # Skill 注册 / 匹配 / 调用
-│       ├── health.py       # /health 及 live/ready/traffic/index-consistency
-│       └── websocket.py    # 实时进度推送（WS /api/v1/ws）
-│
-├── services/               # 业务 & 领域服务
-│   ├── chain/              # Ask 编排（PipelineContext/Result + 流式，25 个模块）
-│   ├── rag/                # 向量库、索引、检索、重排、查询改写（27 个模块）
-│   ├── processor/          # 上传 → 解析/转写 → 入库 的统一管线（含摘要生成）
-│   │   └── _processors/    # 按文件类型分发：text / document / image / av
-│   ├── parser/             # profile + 路由 + 云 API 级联（marker/mineru/paddle）+ local 兜底
-│   │   └── providers/      # local / marker_api / mineru_api / paddle_api
-│   ├── asr/                # 语音转写（AssemblyAI + 音频切片 + speaker 映射）
-│   ├── vision/             # 图像描述 / OCR / 去重（_captioner / _batch / _dedupe / _client）
-│   ├── files/              # 文件类型分类（_kinds）与资产管理（_assets）
-│   ├── transcriber.py      # ASR 调度器（委托 asr/ 包）
-│   ├── llm/                # LLM Provider 注册表、缓存、Prompts、遥测（6 个子模块）
-│   ├── embedder.py         # Embedding Provider 单例
-│   ├── memory/             # 事实提取 / 衰减 / 合并 / 画像 / 搜索 / 历史
-│   │   └── _service/       # MemoryService mixins：extraction / consolidation / crud / search / decay_sync / profile
-│   ├── knowledge_graph/    # 实体 / 关系 / 向量化（含 _parsing 实体解析）
-│   ├── search.py           # Web 搜索接入（DuckDuckGo/Tavily/Bing…）
-│   ├── tokenizer.py        # tiktoken 单例封装
-│   ├── stream_bus.py       # SSE 事件总线（生产者-消费者）
-│   ├── traffic_control.py  # 并发 / 限速 / 熔断 / 错误率
-│   ├── registry.py         # 可重置服务注册表
-│   ├── retention.py        # 数据保留策略
-│   └── websocket.py        # WebSocketManager 单例
-│
-├── utils/                  # 通用工具
-│   └── supervised_task.py  # 受监管后台任务注册表
-│
-├── core/                   # 基础设施
-│   ├── config.py           # pydantic-settings 配置聚合
-│   ├── _config_yaml.py     # YAML 配置加载
-│   ├── _config_validation.py # 配置校验辅助
-│   ├── constants.py        # 路径常量（派生自 __file__）
-│   ├── settings_epoch.py   # settings epoch 追踪（缓存失效）
-│   ├── security.py         # verify_api_key 依赖
-│   ├── exceptions.py       # 领域异常
-│   ├── tracing.py          # OpenTelemetry span 封装
-│   ├── trace.py            # 请求级 trace context
-│   ├── audit.py            # 结构化审计日志
-│   ├── logging.py          # 结构化日志配置
-│   ├── http_client.py      # 共享 httpx.AsyncClient 单例
-│   ├── metrics.py          # 应用指标定义
-│   ├── tz.py               # 时区工具（UTC 规范）
-│   └── database/           # SQLite 封装 + 迁移 + CRUD 仓储
-│
-└── models/                 # Pydantic 响应/请求模型
-    ├── meeting_status.py   # MeetingStatus 枚举
-    └── schemas/            # 按领域拆分的 schema
+├── main.py                 # FastAPI entry point, middleware, routes, lifespan
+├── mcp.py                  # Thin MCP → HTTP API adapter
+├── api/                    # HTTP integration layer
+│   ├── dependencies.py     # Shared FastAPI dependencies
+│   ├── lifespan/           # Startup/shutdown orchestration
+│   ├── middleware.py       # Request IDs, rate limits, logging, CORS
+│   ├── metrics.py          # /metrics endpoint
+│   └── routers/            # Domain-specific routes
+│       ├── file_download.py # File downloads using API key or short-lived token
+│       ├── meetings/        # Meeting CRUD, upload, transcription, summary, search
+│       ├── chat.py          # /chat, /chat/stream, /chat/search
+│       ├── sessions.py      # Session list, summary, citations, cross-session search
+│       ├── memory.py        # Memory CRUD, batch operations, decay, KG entities
+│       ├── settings/        # Runtime settings and vector rebuild
+│       ├── skills.py        # Skill registration, matching, invocation
+│       ├── health.py        # Health, live/ready/traffic/index consistency
+│       └── websocket.py     # Real-time progress at /api/v1/ws
+├── services/               # Domain and business services
+│   ├── chain/              # Ask orchestration and streaming
+│   ├── rag/                # Vector store, indexing, retrieval, reranking, rewriting
+│   ├── processor/          # Upload → parse/transcribe → persistence pipeline
+│   ├── parser/             # Profiles, cloud routing/quality, PDF-only local fallback
+│   ├── transcriber.py      # ASR transcription, timestamps, and diarization
+│   ├── vision/             # Captions, OCR, deduplication, and clients
+│   ├── files/              # File classification and asset management
+│   ├── llm/                # Provider registry, cache, prompts, telemetry
+│   ├── embedder.py         # Embedding provider singleton
+│   ├── memory/             # Extraction, decay, consolidation, profiles, history
+│   ├── knowledge_graph/    # Entity, relation, and vector operations
+│   ├── search.py           # Web-search adapters
+│   ├── stream_bus.py       # SSE producer/consumer event bus
+│   ├── jobs.py             # SQLite-backed durable queue and embedded workers
+│   ├── summaries.py        # Shared summary job producers
+│   ├── concurrency.py      # Request concurrency controls
+│   ├── traffic_control.py  # Concurrency, rate, breaker, and error-rate control
+│   ├── registry.py          # Resettable service registry
+│   ├── retention.py         # Retention policy
+│   └── websocket.py         # WebSocketManager singleton
+├── utils/                  # Shared utilities and supervised tasks
+├── core/                   # Configuration, security, tracing, logging, metrics, database
+└── models/                 # Pydantic request/response models and status enums
 ```
 
-## 3. 核心数据流
+## 3. Core data flows
 
-### 3.1 上传摄入（Ingest）
+### 3.1 Ingestion
 
-```
-Upload API → 落盘 + meeting_files 记录
+```text
+Upload API → persist file + meeting_files row
            ↓
-BackgroundTasks → process_meeting_file()
+durable_jobs → worker → process_meeting_file()
            ↓
    ┌────────────┬────────────────┐
    ↓            ↓                ↓
- transcribe   parse (cascade)   fetch_metadata
- (video/audio)(PDF/PPTX/image)
-   └────────────┴────────────────┘
+ transcribe   parse (cascade)   local text/data   fetch_metadata
+ (video/audio)(PDF/Office/image)
+   └────────────┴────────────────┴────────────────┘
            ↓
-   index_meeting() → Chroma + BM25 索引
+   index_meeting() → Chroma + BM25 index
            ↓
-   状态更新 → WebSocket 通知
+   status update → durable summary job → WebSocket notification
 ```
 
-细节见 [`ingest-pipeline.md`](./ingest-pipeline.md)。
+See [`ingest-pipeline.md`](./ingest-pipeline.md) for parser and processor details.
 
-### 3.2 问答（Query / RAG）
+### 3.2 Query and RAG
 
-```
+```text
 Chat API → ask() / ask_stream()
        ↓
 _run_pipeline(PipelineContext)
        ↓
-  1. ensure_session            # 创建或恢复会话
-  2. rewrite_query             # LLM 改写 / 多查询
-  3. parallel gather:
-     ├ retrieve + rerank + dedup（native / raganything / hybrid_multimodal）
+  1. ensure_session          # create or restore a session
+  2. rewrite_query            # LLM rewriting and multi-query variants
+  3. parallel local context loading:
+     ├ retrieve + rerank + dedup
      ├ load memories
      ├ load session context
-     ├ load entity context (KG)
-     ├ web search (可选)
+     ├ load entity context from KG
      └ load history
-  4. build_context             # 拼装最终 prompt
-  5. generate_answer           # LCEL chain → LLM
-  6. save_messages             # 持久化用户/助手消息
-  7. schedule_fact_extraction  # 后台提取记忆
+  4. optional web fallback    # runs after local retrieval confidence is known
+  5. build_context            # assemble the final prompt
+  6. generate_answer          # LCEL chain → LLM
+  7. save_messages            # persist user and assistant messages
+  8. schedule_fact_extraction # commit a durable memory-extraction job
 ```
 
-> 多模态检索采用 **dual-store**：原生 Chroma/BM25 与 RAGAnything 并存。上传阶段可双写，
-> 查询阶段可按请求 `rag_mode` 切换（`native` / `multimodal` / `hybrid_multimodal` / `auto`）。
+Chroma/BM25 and the optional RAGAnything store form a dual-store design. Uploads may write both stores; a request can select `vector`, `hybrid`, `multimodal`, `hybrid_multimodal`, or `auto` through `rag_mode`. Every branch carries the authenticated `user_id`; meeting/file scope is an additional restriction, not a substitute for ownership filtering.
 
-细节见 [`chain-pipeline.md`](./chain-pipeline.md) 与 [`rag.md`](./rag.md)。
+See [`chain-pipeline.md`](./chain-pipeline.md) and [`rag.md`](./rag.md).
 
-## 4. 跨切面关注点
+## 4. Cross-cutting concerns
 
-| 关注点 | 实现位置 | 说明 |
-|---|---|---|
-| **配置** | `core/config.py` + `config/main.yaml` + `.env` | 三级覆盖：YAML → .env → env vars |
-| **认证** | `core/security.py` | `X-API-Key` Header + `hmac.compare_digest` |
-| **限流** | `api/middleware.py`（slowapi） | 默认读类约 60/min；上传/聊天/设置等见 [`api-reference.md`](./api-reference.md)；尊重 `X-Forwarded-For` |
-| **请求追踪** | `RequestIdMiddleware` + `core/trace.py` | `X-Request-ID`、span 嵌套、event 记录 |
-| **审计** | `core/audit.py` | 敏感变更结构化日志 |
-| **错误** | `core/exceptions.py` + 全局异常处理 | 对外生成通用错误，内部 `exc_info=True` |
-| **日志** | Python `logging` + `LOG_FORMAT=json` | 惰性格式化 `logger.error("%s", x)` |
-| **并发安全** | 所有重对象均为 DCL 单例 | LLM / Embedder / Reranker / VectorStore |
-| **阻塞调用** | `asyncio.to_thread()` | CPU 密集 / 同步 IO 全部离主线程 |
-| **流量治理** | `services/traffic_control.py` | semaphore + token-bucket + circuit breaker |
+| Concern            | Implementation                               | Behavior                                                         |
+| ------------------ | -------------------------------------------- | ---------------------------------------------------------------- |
+| Configuration      | `core/config.py`, `config/main.yaml`, `.env` | YAML defaults < `.env` < OS environment; request/job snapshots prevent mid-flight drift |
+| Authentication     | `core/security.py`                           | `X-API-Key` and `hmac.compare_digest`                            |
+| Rate limiting      | `api/middleware.py` with slowapi             | Default and route-specific limits; trusted forwarded IP handling |
+| Request tracing    | `RequestIdMiddleware` and `core/trace.py`    | `X-Request-ID`, nested spans, and pipeline events                |
+| Audit              | `core/audit.py`                              | Structured records for sensitive changes                         |
+| Errors             | `core/exceptions.py` and global handlers     | Unified public errors and internal `exc_info` logging            |
+| Logging            | Python logging and `LOG_FORMAT=json`         | Lazy formatting and redaction                                    |
+| Concurrency safety | Locking + configuration-keyed singletons     | Old request snapshots cannot publish clients reused by newer settings |
+| Blocking calls     | `asyncio.to_thread()`                        | Synchronous I/O and CPU-heavy work leave the event loop          |
+| Traffic governance | `services/traffic_control.py`                | Semaphore, token bucket, circuit breaker                         |
+| Durable work       | `services/jobs.py`, `durable_jobs`           | Lease, retry, dedupe, cancellation, dead-letter                  |
 
-## 5. 子系统索引
+## 5. Subsystem index
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`architecture.md`](./architecture.md) | 本文：系统总览 |
-| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | 启动 / 关闭 / 运行态维护 |
-| [`configuration.md`](./configuration.md) | 配置项与环境变量 |
-| [`api-reference.md`](./api-reference.md) | REST 路由与 schema |
-| [`database.md`](./database.md) | SQLite、Alembic + `_MIGRATIONS`、主要表、Repository |
-| [`ingest-pipeline.md`](./ingest-pipeline.md) | 上传 → 解析 → 入库 管线 |
-| [`rag.md`](./rag.md) | 检索-重排-生成 全流程 |
-| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` 编排细节与流式事件 |
-| [`llm-and-traffic.md`](./llm-and-traffic.md) | LLM/Embedding Provider + 流量治理 |
-| [`memory-and-kg.md`](./memory-and-kg.md) | 记忆系统 + 知识图谱 |
-| [`../../docs/diagrams/rag-pipeline.md`](../../docs/diagrams/rag-pipeline.md) | RAG 查询路径示意图（Mermaid，英文） |
-| [`../../docs/diagrams/memory-and-kg.md`](../../docs/diagrams/memory-and-kg.md) | 记忆分层与衰减公式速览（英文） |
-| [`mcp-server.md`](./mcp-server.md) | MCP Server 工具 |
-| [`cli.md`](./cli.md) | 终端前端（命令、分页、导出、设置） |
-| [`SKILLS.md`](./SKILLS.md) | Skill 系统（Markdown 配置、意图匹配） |
-| [`benchmarking.md`](./benchmarking.md) | 基准测试工具 |
-| [`operations/alembic.md`](./operations/alembic.md) | Alembic 迁移与 stamp 流程 |
-| [`operations/backup.md`](./operations/backup.md) / [`restore.md`](./operations/restore.md) | 备份与恢复 |
-| [`operations/runbooks/`](./operations/runbooks/) | 故障 runbook（429、Chroma、熔断等） |
+| [`architecture.md`](./architecture.md) | This overview |
+| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | Startup, shutdown, and runtime maintenance |
+| [`configuration.md`](./configuration.md) | Settings and environment variables |
+| [`security-and-tenancy.md`](./security-and-tenancy.md) | Authentication, ownership, tokens, and HTTP security |
+| [`observability.md`](./observability.md) | Logs, traces, metrics, and health probes |
+| [`api-reference.md`](./api-reference.md) | REST routes and schemas |
+| [`../../frontend/docs/architecture.md`](../../frontend/docs/architecture.md) | React routes, API client, SSE/WS, viewers, and security |
+| [`testing.md`](./testing.md) | Test layers, CI, gates, and regression strategy |
+| [`database.md`](./database.md) | SQLite, Alembic, legacy migrations, tables, repositories |
+| [`ingest-pipeline.md`](./ingest-pipeline.md) | Upload, parsing, and persistence |
+| [`rag.md`](./rag.md) | Retrieval, reranking, and generation |
+| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` orchestration and stream events |
+| [`llm-and-traffic.md`](./llm-and-traffic.md) | LLM/embedding providers and traffic governance |
+| [`memory-and-kg.md`](./memory-and-kg.md) | Memory and knowledge graph |
+| [`../../docs/diagrams/rag-pipeline.md`](../../docs/diagrams/rag-pipeline.md) | RAG query diagram |
+| [`../../docs/diagrams/memory-and-kg.md`](../../docs/diagrams/memory-and-kg.md) | Memory layers and decay formulas |
+| [`mcp-server.md`](./mcp-server.md) | MCP Server tools |
+| [`cli.md`](./cli.md) | CLI commands and exports |
+| [`SKILLS.md`](./SKILLS.md) | Markdown Skill system and intent matching |
+| [`benchmarking.md`](./benchmarking.md) | Benchmark runner |
+| [`operations/alembic.md`](./operations/alembic.md) | Alembic migration and stamping |
+| [`operations/backup.md`](./operations/backup.md) / [`restore.md`](./operations/restore.md) | Backup and recovery |
+| [`operations/runbooks/`](./operations/runbooks/) | Incident runbooks |
 
-## 6. 前后端边界
+## 6. Frontend/backend boundary
 
-- 前端位于 `frontend/`（React 19 + Vite 6 + AntD 6）
-- 开发环境通过 Vite 代理 `/api` → `localhost:8000`
-- 容器内通过 nginx 反向代理 `/api/` → `backend:8000`
-- WebSocket 地址：`/api/v1/ws`（进度 / 完成事件）
-- Streaming Chat 使用 SSE：`POST /api/v1/chat/stream`
+- The frontend is in `frontend/` and is documented in [`../../frontend/docs/architecture.md`](../../frontend/docs/architecture.md).
+- Development Vite proxies `/api` to the host-side backend at `localhost:7008`.
+- Containers use nginx to proxy `/api/` to `backend:8000`.
+- WebSocket progress and completion events use `/api/v1/ws`.
+- Streaming chat uses SSE at `POST /api/v1/chat/stream`.
 
-## 7. 关键设计决策
+## 7. Key design decisions
 
-1. **单例 + 双检锁**：所有初始化代价高的资源（LLM 客户端、Chroma、Embedder…）只初始化一次，但可通过 `reset_*()` 在 `PUT /settings` 后热切换。
-2. **关键路径 vs 尽力路径**：启动阶段明确区分两类任务，保证少数关键组件失败即停机，非关键组件失败仅记录。
-3. **阻塞隔离**：任何可能阻塞的调用（LLM、解析、SQLite 写、Chroma 写、视频转码）统一 `asyncio.to_thread`，保证 event loop 响应性。
-4. **读写分离**：SQLite WAL + `get_connection()`（无锁读） + `get_write_connection()`（串行化写）。
-5. **内容哈希幂等**：上传文件按 `content_hash` 去重；相同文件重复上传跳过解析。
-6. **trace-first 可观测**：每个管线步骤在 `core/trace.py` 产生带时长/事件/错误的 span，前端可直接渲染。
+1. **Configuration-keyed singletons with locking:** expensive resources are initialized once per effective provider configuration and reset after `PUT /settings`. Every access verifies its configuration identity, so an older in-flight snapshot cannot repopulate a client that a newer request would reuse.
+2. **Critical versus capability startup:** migrations, local storage and process-safety invariants fail closed; remote AI providers are reported as degraded capabilities without blocking local/history APIs.
+3. **Blocking isolation:** LLM, parsing, SQLite writes, Chroma writes, and transcoding use `asyncio.to_thread` where needed.
+4. **Read/write separation:** SQLite WAL uses `get_connection()` for reads and serialized `get_write_connection()` for writes.
+5. **Content-hash idempotency:** duplicate uploads within the same meeting skip parsing when the persisted content hash already exists.
+6. **Trace-first observability:** pipeline steps emit timed/error-aware spans that the frontend can render directly.
+7. **One business boundary:** HTTP API owns storage and domain services; MCP is
+   an authenticated API client and never opens SQLite/Chroma itself.
+8. **Durable state transitions:** file processing, summaries, and fact
+   extraction are committed to `durable_jobs` before the request returns.
+9. **Modular monolith:** durable-job consumers run inside the single API process
+   by default so SQLite, Chroma locks and runtime settings share one
+   coordination boundary. `DURABLE_JOB_EXECUTION_MODE=off` is an operational
+   escape hatch, not a documented external-worker topology.

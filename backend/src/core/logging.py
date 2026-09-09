@@ -18,6 +18,7 @@ Logs are written to both console (stderr) and a rotating file in ``DATA_DIR/logs
 import json
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 
 from .constants import LOG_DIR
@@ -47,6 +48,35 @@ _NOISY_LOGGER_LEVELS: dict[str, int] = {
     "filelock": logging.WARNING,
     "sqlalchemy.engine": logging.WARNING,
 }
+
+
+class SensitiveDataRedactionFilter(logging.Filter):
+    """Remove credentials from the fully rendered message on every handler."""
+
+    _patterns = (
+        re.compile(r"(?i)([?&](?:token|api[_-]?key)=)[^&\s\"']+"),
+        re.compile(
+            r"(?i)\b(authorization|api[_-]?key)(\s*[=:]\s*)"
+            r"(?:bearer\s+)?['\"]?[^,\s'\"}&]+"
+        ),
+    )
+
+    @classmethod
+    def redact(cls, value: str) -> str:
+        value = cls._patterns[0].sub(r"\1<REDACTED>", value)
+        return cls._patterns[1].sub(r"\1\2<REDACTED>", value)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # getMessage() expands tuple/dict arguments first, so secrets cannot
+        # evade redaction by being supplied as a logging interpolation value.
+        record.msg = self.redact(record.getMessage())
+        record.args = ()
+        if isinstance(record.exc_text, str):
+            record.exc_text = self.redact(record.exc_text)
+        return True
+
+
+_SENSITIVE_DATA_FILTER = SensitiveDataRedactionFilter()
 
 
 class _JsonFormatter(logging.Formatter):
@@ -85,6 +115,7 @@ def _write_banner(log_path: "os.PathLike[str]") -> None:
     try:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(banner)
+        os.chmod(log_path, 0o600)
     except OSError:
         pass
 
@@ -104,6 +135,7 @@ def _make_file_handler() -> RotatingFileHandler:
         encoding="utf-8",
     )
     handler.setFormatter(logging.Formatter(_TEXT_FMT))
+    handler.addFilter(_SENSITIVE_DATA_FILTER)
 
     # Startup banner in app.log
     _write_banner(log_path)
@@ -150,6 +182,7 @@ def configure_logging(level: int | None = None) -> None:
 
     # Console handler
     console = logging.StreamHandler()
+    console.addFilter(_SENSITIVE_DATA_FILTER)
     if log_format == "json":
         console.setFormatter(_JsonFormatter())
     else:
@@ -167,25 +200,6 @@ def configure_logging(level: int | None = None) -> None:
     # Cap chatty third-party loggers so DEBUG mode stays readable.
     for _name, _lvl in _NOISY_LOGGER_LEVELS.items():
         logging.getLogger(_name).setLevel(max(_lvl, effective_level))
-
-    # Redact Authorization headers from log output to prevent API key leaks.
-    class _AuthRedactionFilter(logging.Filter):
-        _pattern = __import__("re").compile(
-            r"(?i)(authorization|api[_-]?key)[=:]\s*['\"]?[^\s'\"}]+",
-        )
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.msg = self._pattern.sub(r"\1=<REDACTED>", str(record.msg))
-            if record.args:
-                record.args = tuple(
-                    self._pattern.sub(r"\1=<REDACTED>", str(a)) if isinstance(a, str) else a
-                    for a in record.args
-                )
-            return True
-
-    _redaction_filter = _AuthRedactionFilter()
-    logging.getLogger("httpx").addFilter(_redaction_filter)
-    logging.getLogger("httpcore").addFilter(_redaction_filter)
 
     # Clear any handlers libraries added before us (uvicorn, alembic, …)
     _strip_child_handlers()

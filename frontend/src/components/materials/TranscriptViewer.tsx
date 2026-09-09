@@ -14,6 +14,7 @@ interface TranscriptViewerProps {
   segments: TimestampSegment[];
   playback: TimestampPlayback | null;
   seekTo: number | undefined;
+  seekEnd?: number;
   activeSegmentIndex: number | null;
   listRef: RefObject<HTMLDivElement | null>;
   isUnnamedSpeaker: (speaker?: string | null) => boolean;
@@ -28,6 +29,7 @@ export default function TranscriptViewer({
   segments,
   playback,
   seekTo,
+  seekEnd,
   activeSegmentIndex,
   listRef,
   isUnnamedSpeaker,
@@ -119,6 +121,7 @@ export default function TranscriptViewer({
                 fileId={playback.fileId}
                 mediaType="audio"
                 seekTo={seekTo}
+                seekEnd={seekEnd}
                 segments={segments}
                 onActiveSegmentChange={onActiveSegmentChange}
               />
@@ -151,6 +154,7 @@ export default function TranscriptViewer({
                   mediaType="video"
                   videoMaxHeight={isCompactVideoLayout ? 460 : 620}
                   seekTo={seekTo}
+                  seekEnd={seekEnd}
                   segments={segments}
                   onActiveSegmentChange={onActiveSegmentChange}
                 />

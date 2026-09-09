@@ -29,6 +29,15 @@ def test_build_filters_drops_chunk_type_for_scoped_ids(monkeypatch):
     assert "chunk_type" not in as_text
 
 
+def test_build_filters_scopes_default_principal(monkeypatch):
+    from src.services.rag import _retriever
+
+    monkeypatch.setattr("src.services.rag._retriever.settings.PARENT_CHILD_ENABLED", False)
+    filters = _retriever._build_filters(user_id="default")
+
+    assert _retriever._extract_eq_filter(filters, "user_id") == "default"
+
+
 def test_vector_retrieve_scoped_disables_distance_threshold(monkeypatch):
     from src.services.rag import _retriever
 
@@ -86,7 +95,7 @@ def test_vector_retrieve_bm25_fallback_logs_scoped_zero_results(monkeypatch, cap
             4,
         )
         assert out == []
-        bm25_mock.assert_called_once_with("q", [3], [11], 4, speaker_names=None)
+        bm25_mock.assert_called_once_with("q", [3], [11], 4, speaker_names=None, user_id=None)
 
     warning_msgs = [
         record.getMessage() for record in caplog.records if record.levelname == "WARNING"

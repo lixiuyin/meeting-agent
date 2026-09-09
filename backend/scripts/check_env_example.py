@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""CI check: verify .env.example is in sync with pydantic-settings schema.
-
-Exit 1 with a diff if the committed .env.example is stale.
-"""
+"""CI check that the compact ``.env.example`` matches its generator."""
 
 from __future__ import annotations
 
@@ -13,6 +10,20 @@ from pathlib import Path
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _ENV_EXAMPLE = _BACKEND_DIR / ".env.example"
+_PRIVATE_ENV = _BACKEND_DIR / ".env"
+
+
+def _layout(text: str) -> list[str]:
+    """Return comments/order/keys while removing private assignment values."""
+    layout: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if line and not line.lstrip().startswith("#") and "=" in line:
+            key, _ = line.split("=", 1)
+            layout.append(f"{key.strip()}=")
+        else:
+            layout.append(line)
+    return layout
 
 
 def main() -> int:
@@ -27,35 +38,36 @@ def main() -> int:
         print(result.stderr, file=sys.stderr)
         return 1
 
-    generated = result.stdout
     committed = _ENV_EXAMPLE.read_text()
+    failed = False
+    if committed != result.stdout:
+        failed = True
+        print("FAIL: .env.example differs from the generated compact template:")
+        print(
+            "".join(
+                difflib.unified_diff(
+                    committed.splitlines(keepends=True),
+                    result.stdout.splitlines(keepends=True),
+                    fromfile="backend/.env.example",
+                    tofile="generated",
+                )
+            )
+        )
+        print("Run from backend/: python -m scripts.gen_env_example > .env.example")
 
-    # Compare only non-blank, non-comment lines for robustness
-    gen_lines = [l for l in generated.splitlines() if l.strip() and not l.startswith("#")]
-    com_lines = [l for l in committed.splitlines() if l.strip() and not l.startswith("#")]
+    if _PRIVATE_ENV.exists():
+        private_text = _PRIVATE_ENV.read_text()
+        if _layout(private_text) != _layout(committed):
+            failed = True
+            print("FAIL: .env and .env.example do not share the canonical layout.")
+            print("Run: python -m scripts.gen_env_example --sync .env")
+        if _PRIVATE_ENV.stat().st_mode & 0o077:
+            failed = True
+            print("FAIL: .env must not be readable or writable by group/others (use mode 600).")
 
-    # Extract variable names (before =) from both
-    gen_vars = {l.split("=", 1)[0] for l in gen_lines if "=" in l}
-    com_vars = {l.split("=", 1)[0] for l in com_lines if "=" in l}
-
-    missing_in_example = gen_vars - com_vars
-    extra_in_example = com_vars - gen_vars
-
-    if missing_in_example:
-        print("FAIL: .env.example is missing variables present in Settings:")
-        for v in sorted(missing_in_example):
-            print(f"  - {v}")
-        print("\nRun: python -m scripts.gen_env_example > backend/.env.example")
-
-    if extra_in_example:
-        print("FAIL: .env.example has variables not in Settings (stale?):")
-        for v in sorted(extra_in_example):
-            print(f"  + {v}")
-
-    if missing_in_example or extra_in_example:
+    if failed:
         return 1
-
-    print("PASS: .env.example is in sync with Settings schema")
+    print("PASS: .env and .env.example share the canonical compact layout")
     return 0
 
 

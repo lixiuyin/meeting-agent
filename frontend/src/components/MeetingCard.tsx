@@ -36,7 +36,7 @@ const checkboxContainerStyle: React.CSSProperties = {
   position: "absolute",
   top: 16,
   right: 16,
-  zIndex: 1,
+  zIndex: 2,
 };
 
 const headerStyle: React.CSSProperties = {
@@ -111,17 +111,14 @@ function MeetingCard({
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       whileHover={{ y: -4, transition: { duration: 0.2 } }}
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      role="button"
-      tabIndex={0}
       style={cardStyle}
     >
+      <button
+        type="button"
+        className="card-primary-action"
+        aria-label={`Open meeting ${meeting.title}`}
+        onClick={handleClick}
+      />
       {isSelectionMode && (
         <div
           style={checkboxContainerStyle}
@@ -215,7 +212,7 @@ function MeetingCard({
         </div>
 
         {!isSelectionMode && (
-          <div style={{ display: "flex", gap: 4 }}>
+          <div className="card-interactive-control" style={{ display: "flex", gap: 4 }}>
             {meeting.status === "failed" && (
               <Button
                 size="small"

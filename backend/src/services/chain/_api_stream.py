@@ -12,20 +12,25 @@ from langchain_core.runnables import RunnableLambda
 
 from ...core.config import settings
 from ...core.exceptions import (
+    ContinuationSnapshotError,
     LLMAPIError,
     LLMAuthenticationError,
     LLMCircuitBreakerError,
     LLMConfigError,
     LLMContextWindowError,
+    LLMEmptyResponseError,
+    LLMError,
     LLMRateLimitError,
     LLMTimeoutError,
+    LLMTransientResponseError,
     map_error,
 )
 from ...core.metrics import LLM_REQUEST_DURATION, LLM_REQUEST_TOTAL, RAG_DOCS_AT_STAGE
 from ...core.trace import write_pipeline_log
 from ..llm import get_llm, get_rag_prompt, get_skill_prompt
 from ..llm._parsing import StreamingThinkingFilter, strip_thinking_blocks
-from ..traffic_control import traffic_controller as _tc
+from ..rag._query import is_fast_query
+from ..traffic_control import get_traffic_controller
 from ._anthropic_cache import apply_anthropic_cache_control
 from ._common import logger
 from ._context import PipelineContext
@@ -48,11 +53,77 @@ _PRE_TOKEN_HEARTBEAT_TIMEOUT_S = 8.0
 _ACLOSE_TIMEOUT_S = 3.0
 
 
+def _should_skip_stream_rerank(ctx: PipelineContext) -> bool:
+    """Keep latency-guarded fact lookups off the remote reranker."""
+    return _uses_stream_latency_guard(ctx)
+
+
+def _uses_stream_latency_guard(ctx: PipelineContext) -> bool:
+    """Return whether this stream may trade optional recall for bounded latency.
+
+    The guard is intentionally query-shaped rather than profile-shaped. A user
+    selecting ``balanced`` should not make a short, self-contained fact lookup
+    pay for remote embedding and reranking when the deployment has explicitly
+    enabled its interactive latency guard. Analytical, follow-up, visual and
+    web-search requests continue through the full path.
+    """
+    return bool(
+        settings.CHAT_STREAM_LATENCY_GUARD_ENABLED
+        and not ctx.use_web_search
+        and ctx.web_search_mode == "off"
+        and not is_visual_query(ctx.question)
+        and is_fast_query(ctx.question)
+        and ctx.rag_mode in {None, settings.RAG_FAST_PATH_RETRIEVAL_MODE}
+    )
+
+
+def _normalise_stream_content(event: Any) -> str:
+    """Extract only user-visible text from provider/LangChain stream chunks.
+
+    OpenAI-compatible providers may return a string, a list of typed content
+    blocks, or a mapping.  Reasoning blocks/metadata are deliberately ignored:
+    hidden chain-of-thought must never become the fallback answer.
+    """
+    content = event if isinstance(event, str) else getattr(event, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        if content.get("type") in {"reasoning", "thinking", "reasoning_content"}:
+            return ""
+        value = content.get("text", content.get("content", ""))
+        return value if isinstance(value, str) else ""
+    if isinstance(content, (list, tuple)):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") in {"reasoning", "thinking", "reasoning_content"}:
+                    continue
+                value = block.get("text", block.get("content", ""))
+                if isinstance(value, str):
+                    parts.append(value)
+            else:
+                value = getattr(block, "text", "")
+                if isinstance(value, str):
+                    parts.append(value)
+        return "".join(parts)
+    return ""
+
+
 def _stream_user_error_message(exc: Exception) -> dict:
     """Convert internal exceptions to structured stream error payloads.
 
     Returns a dict with keys: message, code, detail, exception_type.
     """
+    if isinstance(exc, ContinuationSnapshotError):
+        return {
+            "message": str(exc),
+            "code": "SNAPSHOT_UNAVAILABLE",
+            "detail": None,
+            "exception_type": type(exc).__name__,
+        }
+
     mapped = map_error(exc)
 
     if isinstance(mapped, LLMCircuitBreakerError):
@@ -92,6 +163,13 @@ def _stream_user_error_message(exc: Exception) -> dict:
             "detail": None,
             "exception_type": None,
         }
+    if isinstance(mapped, LLMEmptyResponseError):
+        return {
+            "message": "The model returned no usable answer. Please retry.",
+            "code": "EMPTY_LLM_RESPONSE",
+            "detail": None,
+            "exception_type": type(mapped).__name__,
+        }
     if isinstance(mapped, LLMAPIError) and mapped.status_code is not None:
         return {
             "message": "LLM provider is temporarily unavailable. Please retry later.",
@@ -105,6 +183,47 @@ def _stream_user_error_message(exc: Exception) -> dict:
         "detail": None,
         "exception_type": None,
     }
+
+
+def _preserve_incomplete_stream(
+    bus: Any,
+    ctx: PipelineContext,
+    *,
+    evidence_sources: list[dict] | None = None,
+) -> str:
+    """Keep an emitted prefix or return a labelled, source-backed fallback.
+
+    Source excerpts are allowed only when the caller has already established
+    the conservative latency-guard query shape. They are explicitly presented
+    as unsynthesized evidence rather than as a model-generated answer.
+    """
+    if not ctx.answer.strip():
+        from ._steps_generate import _generation_timeout_message
+
+        if evidence_sources:
+            chinese = any("\u3400" <= char <= "\u9fff" for char in ctx.question)
+            heading = (
+                "回答生成超时。以下为检索到的原文摘录 (未经模型综合):"
+                if chinese
+                else "Answer generation timed out. Retrieved source excerpts (not synthesized):"
+            )
+            excerpts = []
+            for index, source in enumerate(evidence_sources[:3], start=1):
+                content = str(source.get("content") or "").strip()
+                if content:
+                    excerpts.append(f"[{index}] {content[:800].rstrip()}")
+            ctx.answer = (
+                "\n\n".join([heading, *excerpts])
+                if excerpts
+                else _generation_timeout_message(ctx.question)
+            )
+        else:
+            ctx.answer = _generation_timeout_message(ctx.question)
+        bus.emit_token(ctx.answer)
+    ctx.degraded = True
+    ctx.degradation_reason = "generation_timeout"
+    bus.emit_status("degraded", reason=ctx.degradation_reason)
+    return ctx.answer
 
 
 async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
@@ -149,8 +268,34 @@ async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
 
         try:
             async for event in _gen:
-                token = getattr(event, "content", str(event))
-                first_token_seen.set()
+                metadata = getattr(event, "response_metadata", {}) or {}
+                if (
+                    metadata.get("finish_reason") == "length"
+                    or metadata.get("stop_reason") == "max_tokens"
+                ):
+                    ctx.degraded = True
+                    ctx.degradation_reason = "output_limit"
+                    bus.emit_status("degraded", reason=ctx.degradation_reason)
+                token = _normalise_stream_content(event)
+                if not token:
+                    continue
+                accumulated += token
+                clean = thinking_filter.feed(token)
+                if clean:
+                    if not ttft_finished:
+                        first_token_seen.set()
+                        ctx.trace.finish_span("llm_ttft")
+                        ctx.trace.start_span(
+                            "llm_streaming",
+                            "generate",
+                            parent_label="generate_answer",
+                        )
+                        ttft_finished = True
+                    ctx.answer += clean
+                    bus.emit_token(clean)
+        finally:
+            remaining = thinking_filter.flush()
+            if remaining:
                 if not ttft_finished:
                     ctx.trace.finish_span("llm_ttft")
                     ctx.trace.start_span(
@@ -159,13 +304,7 @@ async def _emit_stream(bus: Any, ctx: PipelineContext, stream_iter: Any) -> str:
                         parent_label="generate_answer",
                     )
                     ttft_finished = True
-                accumulated += token
-                clean = thinking_filter.feed(token)
-                if clean is not None:
-                    bus.emit_token(clean)
-        finally:
-            remaining = thinking_filter.flush()
-            if remaining:
+                ctx.answer += remaining
                 bus.emit_token(remaining)
             first_token_seen.set()
             if hasattr(_gen, "aclose"):
@@ -210,11 +349,11 @@ async def _complete_casual_stream_short_circuit(
     await asyncio.to_thread(_api_mod.save_messages, ctx)
     ctx.trace.finish_span("pipeline")
     bus.emit_trace(ctx.trace.to_dict())
-    bus.emit_done(ctx.session_id)
+    bus.emit_done(ctx.session_id, message_ids=ctx.saved_message_ids)
     write_pipeline_log(ctx.trace, question, session_id=ctx.session_id)
 
 
-async def _run_stream_pipeline(
+async def _run_stream_pipeline_inner(
     bus: Any,
     ctx: PipelineContext,
     question: str,
@@ -234,11 +373,11 @@ async def _run_stream_pipeline(
         _api_mod.save_messages(ctx)
         persisted = True
 
-    def _schedule_fact_extraction_if_needed() -> None:
+    async def _schedule_fact_extraction_if_needed() -> None:
         nonlocal extraction_scheduled
         if extraction_scheduled or not persisted:
             return
-        _api_mod.schedule_fact_extraction(ctx)
+        await _api_mod.schedule_fact_extraction(ctx)
         extraction_scheduled = True
 
     async def _global_heartbeat() -> None:
@@ -264,6 +403,19 @@ async def _run_stream_pipeline(
 
         # Parallelize: skill_match + session + LLM init + query rewrite
         async def _do_skill_match():
+            from ._query_routes import is_recorded_fact_request
+
+            if is_recorded_fact_request(question, ctx.memory_mode):
+                ctx.trace.start_span("skill_match", "skill", skipped=True, reason="recorded_facts")
+                ctx.trace.finish_span("skill_match")
+                return None
+            if is_fast_query(question) or (
+                bool(ctx.meeting_ids or ctx.file_ids)
+                and is_fast_query(question, include_summary=True)
+            ):
+                ctx.trace.start_span("skill_match", "skill", skipped=True, reason="fast_query")
+                ctx.trace.finish_span("skill_match")
+                return None
             if not settings.SKILL_MATCHING_ENABLED:
                 ctx.trace.start_span("skill_match", "skill", skipped=True)
                 ctx.trace.finish_span("skill_match")
@@ -274,21 +426,25 @@ async def _run_stream_pipeline(
                 ctx.trace.start_span("skill_match", "skill", skipped=True)
                 ctx.trace.finish_span("skill_match")
                 return None
-            ctx.trace.start_span("skill_match", "skill")
+            span = ctx.trace.start_span("skill_match", "skill")
             try:
-                try:
-                    return await asyncio.wait_for(
-                        _api_mod._get_skill_matcher().match(question, summaries),
-                        timeout=settings.SKILL_MATCH_TIMEOUT_S,
-                    )
-                except TimeoutError:
-                    logger.warning(
-                        "skill_match timed out after %.1fs, skipping",
-                        settings.SKILL_MATCH_TIMEOUT_S,
-                    )
-                    return None
-            finally:
+                result = await asyncio.wait_for(
+                    _api_mod._get_skill_matcher().match(question, summaries),
+                    timeout=settings.SKILL_MATCH_TIMEOUT_S,
+                )
                 ctx.trace.finish_span("skill_match")
+                return result
+            except TimeoutError as exc:
+                logger.warning(
+                    "skill_match timed out after %.1fs, skipping",
+                    settings.SKILL_MATCH_TIMEOUT_S,
+                )
+                span.metadata["outcome"] = "timeout_fallback"
+                ctx.trace.finish_span("skill_match", "timeout", error=exc)
+                return None
+            except Exception as exc:
+                ctx.trace.finish_span("skill_match", "error", error=exc)
+                raise
 
         async def _do_session():
             bus.emit_step("session", "start")
@@ -320,36 +476,71 @@ async def _run_stream_pipeline(
 
         # Query rewrite (reuses preloaded history from ctx.raw_history_messages).
         await _api_mod.rewrite_query_step(ctx)
+        # Publish the same immutable scope before parallel readers as ask().
+        await _api_mod.prepare_query_plan(ctx)
 
         # Warm the query-embedding cache so the parallel context-loading
         # branches below all share a single embedding API call (otherwise each
         # branch races into ``embed_query`` and slow providers cause repeated
         # ``context step ... timed out`` warnings).
-        await _api_mod._prewarm_query_embedding(ctx)
+        from ._query_routes import is_recorded_fact_request
+
+        recorded_request = is_recorded_fact_request(question, ctx.memory_mode)
+        if not recorded_request:
+            await _api_mod._prewarm_query_embedding(ctx)
 
         # Steps 3-8: parallel retrieval + context loading. skill_task runs
         # alongside and is consumed just before generate_answer below.
         async def _retrieve_branch() -> None:
             await _api_mod.retrieve_documents(ctx)
+            if ctx.snapshot_restored:
+                # A saved evidence snapshot is immutable; deduplication and
+                # reranking would silently mutate its historical ordering.
+                return
             _api_mod.pre_rerank_dedup(ctx)
-            await asyncio.to_thread(_api_mod.rerank_documents, ctx)
+            if _should_skip_stream_rerank(ctx):
+                # A remote reranker routinely costs more than the complete
+                # interactive budget.  Keep recall from the initial retrieval
+                # and make the intentional quality/latency trade-off visible
+                # in the trace instead of emitting a long running span.
+                ctx.trace.start_span(
+                    "rerank",
+                    "rerank",
+                    skipped=True,
+                    reason="chat_latency_guard",
+                    candidate_count=len(ctx.docs),
+                    top_k=ctx.top_k,
+                )
+            else:
+                await asyncio.to_thread(_api_mod.rerank_documents, ctx)
             await asyncio.to_thread(_api_mod.suppress_near_duplicates, ctx)
 
         ctx.trace.start_span("pipeline", "pipeline")
         bus.emit_step("pipeline", "start")
         context_timeout = _api_mod._context_branch_timeout(ctx)
-        await asyncio.gather(
+        context_tasks = [
             _retrieve_branch(),
             _api_mod._best_effort("memories", _api_mod.load_memories(ctx), context_timeout),
-            _api_mod._best_effort("session", _api_mod.load_session_context(ctx), context_timeout),
-            _api_mod._best_effort("entity", _api_mod.load_entity_context(ctx), context_timeout),
-            _api_mod._best_effort(
-                "web", _api_mod.perform_web_search(ctx), settings.WEB_SEARCH_TIMEOUT_S
-            ),
             # H-7: load_history is non-critical context — wrap in _best_effort
             # to prevent its failure from cancelling other gather branches.
             _api_mod._best_effort("history", _api_mod.load_history(ctx), context_timeout, ctx=ctx),
-        )
+        ]
+        if not recorded_request:
+            context_tasks.extend(
+                [
+                    _api_mod._best_effort(
+                        "session", _api_mod.load_session_context(ctx), context_timeout
+                    ),
+                    _api_mod._best_effort(
+                        "entity", _api_mod.load_entity_context(ctx), context_timeout
+                    ),
+                ]
+            )
+        await asyncio.gather(*context_tasks)
+        if not recorded_request:
+            await _api_mod._best_effort(
+                "web", _api_mod.perform_web_search(ctx), settings.WEB_SEARCH_TIMEOUT_S
+            )
 
         bus.emit_step("pipeline", "done")
 
@@ -371,16 +562,16 @@ async def _run_stream_pipeline(
                 logger.warning("skill definition resolution failed in stream", exc_info=True)
                 skill_definition = None
 
+        _api_mod.assert_settings_epoch(ctx)
         await asyncio.to_thread(_api_mod.build_context, ctx)
         RAG_DOCS_AT_STAGE.labels(stage="truncated").observe(len(ctx.docs))
 
-        # Emit sources before streaming tokens
-        sources = _extract_sources(ctx.docs, max_sources=len(ctx.docs))
-        if sources:
-            bus.emit_sources(sources)
-
-        if ctx.web_results:
-            bus.emit_web_results(ctx.web_results)
+        # Prepare candidate source metadata.  It is emitted only after a valid
+        # answer exists so failed/empty turns cannot masquerade as sourced
+        # successes in the UI.
+        sources = _extract_sources(
+            ctx.docs, max_sources=len(ctx.docs), memory_sources=ctx.memory_sources
+        )
 
         # Build the chain
         ctx.trace.start_span("generate_answer", "generate")
@@ -390,6 +581,12 @@ async def _run_stream_pipeline(
         # with parallel tasks (skill_task, session_task) that also access
         # the shared context (C-H5).
         llm = ctx.llm if ctx.llm is not None else await asyncio.to_thread(get_llm)
+        from ..llm._requested_output import bind_requested_output
+
+        llm = bind_requested_output(llm, ctx.question)
+        _latency_guarded = _uses_stream_latency_guard(ctx)
+        if _latency_guarded:
+            llm = llm.bind(max_tokens=settings.RAG_FAST_PATH_MAX_OUTPUT_TOKENS)
         assert llm is not None  # guaranteed by the guard above
         prompt = get_skill_prompt(skill_definition) if skill_definition else get_rag_prompt()
         chain = prompt | RunnableLambda(apply_anthropic_cache_control) | llm
@@ -419,17 +616,43 @@ async def _run_stream_pipeline(
                 )
 
         # Wrap streaming LLM call with traffic controller
-        _tc_cm = _tc if _tc is not None else None
+        _tc_cm = get_traffic_controller()
 
         # Metrics instrumentation
         _llm_provider = settings.LLM_BINDING
         _llm_status = "success"
         _llm_start = time.monotonic()
+        _latency_guard = _latency_guarded
+        _generation_timeout = (
+            settings.RAG_FAST_PATH_GENERATION_TIMEOUT_S
+            if _latency_guard
+            else settings.LLM_GENERATION_TIMEOUT_S
+        )
+        _llm_deadline = _llm_start + _generation_timeout
+
+        async def _await_with_generation_deadline(factory) -> Any:
+            remaining = _llm_deadline - time.monotonic()
+            if remaining <= 0:
+                raise LLMTimeoutError(
+                    "Generation deadline exhausted",
+                    timeout=_generation_timeout,
+                    provider=settings.LLM_BINDING,
+                )
+            try:
+                return await asyncio.wait_for(factory(), timeout=remaining)
+            except TimeoutError as exc:
+                raise LLMTimeoutError(
+                    "Generation deadline exhausted",
+                    timeout=_generation_timeout,
+                    provider=settings.LLM_BINDING,
+                ) from exc
+
+        from ..llm._prompt_safety import escape_prompt_data
 
         # Build stream inputs (possibly with multimodal image injection)
         _stream_inputs = {
             "context": ctx.combined_context,
-            "question": ctx.question,
+            "question": escape_prompt_data(ctx.question),
             "history": ctx.history_messages,
             "memory_context": "",
         }
@@ -459,6 +682,8 @@ async def _run_stream_pipeline(
                             break
                     return await _emit_stream(bus, ctx, llm.astream(messages))
                 except Exception:
+                    if ctx.answer.strip():
+                        raise
                     logger.warning(
                         "Multimodal streaming failed, falling back to text-only streaming",
                         exc_info=True,
@@ -473,71 +698,141 @@ async def _run_stream_pipeline(
             if _tc_cm is not None:
                 async with _tc_cm:
                     try:
-                        accumulated = await _do_stream()
+                        accumulated = await _await_with_generation_deadline(_do_stream)
+                        if not _strip_internal_tokens(strip_thinking_blocks(accumulated)).strip():
+                            raise LLMEmptyResponseError(
+                                "Provider stream completed without user-visible content",
+                                provider=settings.LLM_BINDING,
+                            )
                         _tc_cm.record_success()
                     except Exception:
-                        _tc_cm.record_failure()
+                        # The traffic-controller context manager owns failure
+                        # accounting; recording here would double-count it.
                         raise
             else:
-                accumulated = await _do_stream()
+                accumulated = await _await_with_generation_deadline(_do_stream)
+                if not _strip_internal_tokens(strip_thinking_blocks(accumulated)).strip():
+                    raise LLMEmptyResponseError(
+                        "Provider stream completed without user-visible content",
+                        provider=settings.LLM_BINDING,
+                    )
         except Exception as exc:
             _llm_status = "error"
-            logger.warning("Streaming failed, falling back to non-streaming", exc_info=True)
-            if is_fallback_circuit_open():
-                raise RuntimeError("Fallback temporarily disabled due repeated failures") from exc
-            full_chain = (
-                prompt | RunnableLambda(apply_anthropic_cache_control) | llm | StrOutputParser()
-            )
-            fallback_inputs = {
-                "context": ctx.combined_context,
-                "question": ctx.question,
-                "history": ctx.history_messages,
-                "memory_context": "",
-            }
-            last_err: Exception | None = None
-            for _ in range(2):
-                try:
+            if isinstance(exc, (TimeoutError, LLMTimeoutError)):
+                accumulated = _preserve_incomplete_stream(
+                    bus,
+                    ctx,
+                    evidence_sources=sources if _latency_guard else None,
+                )
+                _llm_status = "degraded"
+                # A timeout before the first visible token leaves the TTFT span
+                # open. Close it explicitly and create a matching streaming span
+                # so degraded runs remain complete in telemetry.
+                ctx.trace.finish_span("llm_ttft", "degraded", error=exc)
+                if not any(
+                    span.label == "llm_streaming" and span.end_time is None
+                    for span in ctx.trace.spans
+                ):
+                    ctx.trace.start_span(
+                        "llm_streaming",
+                        "generate",
+                        parent_label="generate_answer",
+                        degraded=True,
+                    )
+                logger.warning(
+                    "Streaming exceeded generation deadline of %.1fs; preserving partial output",
+                    _generation_timeout,
+                )
+            else:
+                if ctx.answer.strip():
+                    raise LLMTransientResponseError(
+                        "Provider stream failed after partial visible output",
+                        provider=settings.LLM_BINDING,
+                    ) from exc
+                logger.warning("Streaming failed, falling back to non-streaming", exc_info=True)
+                if is_fallback_circuit_open():
+                    raise RuntimeError(
+                        "Fallback temporarily disabled due repeated failures"
+                    ) from exc
+                full_chain = (
+                    prompt | RunnableLambda(apply_anthropic_cache_control) | llm | StrOutputParser()
+                )
+                fallback_inputs = {
+                    "context": ctx.combined_context,
+                    "question": escape_prompt_data(ctx.question),
+                    "history": ctx.history_messages,
+                    "memory_context": "",
+                }
+                last_err: Exception | None = None
+                fallback_attempts = 1 if isinstance(exc, LLMEmptyResponseError) else 2
+
+                async def _invoke_fallback_once() -> str:
                     if _stream_images:
                         try:
-                            accumulated = await asyncio.to_thread(
-                                _invoke_chain_with_retry_multimodal,
-                                full_chain,
-                                fallback_inputs,
-                                _stream_images,
+                            return await _await_with_generation_deadline(
+                                lambda: asyncio.to_thread(
+                                    _invoke_chain_with_retry_multimodal,
+                                    full_chain,
+                                    fallback_inputs,
+                                    _stream_images,
+                                )
                             )
                         except Exception:
                             logger.warning(
                                 "Multimodal fallback failed, retrying text-only",
                                 exc_info=True,
                             )
-                            accumulated = await asyncio.to_thread(
-                                _invoke_chain_with_retry,
-                                full_chain,
-                                fallback_inputs,
-                            )
-                    else:
-                        accumulated = await asyncio.to_thread(
+                    return await _await_with_generation_deadline(
+                        lambda: asyncio.to_thread(
                             _invoke_chain_with_retry,
                             full_chain,
                             fallback_inputs,
                         )
+                    )
+
+                for _ in range(fallback_attempts):
                     try:
+                        if _tc_cm is not None:
+                            async with _tc_cm:
+                                accumulated = await _invoke_fallback_once()
+                                fallback_visible = _strip_internal_tokens(
+                                    strip_thinking_blocks(accumulated)
+                                )
+                                if not fallback_visible.strip():
+                                    raise LLMEmptyResponseError(
+                                        "Fallback completed without user-visible content",
+                                        provider=settings.LLM_BINDING,
+                                    )
+                                _tc_cm.record_success()
+                        else:
+                            accumulated = await _invoke_fallback_once()
+                            fallback_visible = _strip_internal_tokens(
+                                strip_thinking_blocks(accumulated)
+                            )
+                            if not fallback_visible.strip():
+                                raise LLMEmptyResponseError(
+                                    "Fallback completed without user-visible content",
+                                    provider=settings.LLM_BINDING,
+                                )
                         record_fallback_success()
-                    except Exception:
-                        logger.debug("Fallback success metric recording failed", exc_info=True)
-                    break
-                except Exception as exc:
-                    last_err = exc
-            else:
-                record_fallback_failure()
-                raise RuntimeError("Fallback non-streaming generation failed") from last_err
-            bus.emit_token(_strip_internal_tokens(strip_thinking_blocks(accumulated)))
+                        _llm_status = "fallback_success"
+                        break
+                    except Exception as fallback_exc:
+                        last_err = fallback_exc
+                else:
+                    record_fallback_failure()
+                    if isinstance(last_err, LLMError):
+                        raise last_err
+                    raise RuntimeError("Fallback non-streaming generation failed") from last_err
+                bus.emit_token(fallback_visible)
         finally:
             try:
                 LLM_REQUEST_DURATION.labels(provider=_llm_provider).observe(
                     time.monotonic() - _llm_start
                 )
-                LLM_REQUEST_TOTAL.labels(provider=_llm_provider, status=_llm_status).inc()
+                LLM_REQUEST_TOTAL.labels(
+                    provider=_llm_provider, status="degraded" if ctx.degraded else _llm_status
+                ).inc()
             except Exception:
                 logger.debug("Metrics recording failed", exc_info=True)
 
@@ -545,18 +840,37 @@ async def _run_stream_pipeline(
 
         # Save final answer and messages
         ctx.answer = _strip_internal_tokens(strip_thinking_blocks(accumulated))
-        ctx.trace.finish_span("llm_streaming")
-        ctx.trace.finish_span("generate_answer")
+        if not ctx.answer.strip():
+            raise LLMEmptyResponseError(
+                "Generation completed without user-visible content",
+                provider=settings.LLM_BINDING,
+            )
+        ctx.trace.finish_span("llm_streaming", "degraded" if ctx.degraded else "success")
+        ctx.trace.finish_span("generate_answer", "degraded" if ctx.degraded else "success")
+        for span in reversed(ctx.trace.spans):
+            if span.label == "generate_answer":
+                span.tokens_out = max(1, len(ctx.answer) // 4)
+                span.metadata["visible_chars"] = len(ctx.answer)
+                break
+        _api_mod.assert_settings_epoch(ctx)
         await asyncio.to_thread(_persist_response)
-        _schedule_fact_extraction_if_needed()
+        await asyncio.gather(
+            asyncio.to_thread(_api_mod.commit_memory_recall_side_effects, ctx),
+            asyncio.to_thread(_api_mod.commit_anchor_for_success, ctx),
+        )
+        await _schedule_fact_extraction_if_needed()
         from ...services.memory._service._crud import flush_pending_touches
 
         await asyncio.to_thread(flush_pending_touches)
-        ctx.trace.finish_span("pipeline")
+        ctx.trace.finish_span("pipeline", "degraded" if ctx.degraded else "success")
 
-        # Emit trace and done
+        # Structural evidence belongs to a successfully generated answer.
+        if sources:
+            bus.emit_sources(sources)
+        if ctx.web_results:
+            bus.emit_web_results(ctx.web_results)
         bus.emit_trace(ctx.trace.to_dict())
-        bus.emit_done(ctx.session_id)
+        bus.emit_done(ctx.session_id, message_ids=ctx.saved_message_ids)
         write_pipeline_log(ctx.trace, question, session_id=ctx.session_id)
     except asyncio.CancelledError:
         if skill_task is not None and not skill_task.done():
@@ -565,13 +879,22 @@ async def _run_stream_pipeline(
                 await skill_task
         try:
             if ctx.answer and ctx.session_id:
-                await asyncio.to_thread(_persist_response)
-                _schedule_fact_extraction_if_needed()
+                ctx.degraded = True
+                ctx.degradation_reason = "cancelled"
+                from ...core.chat_run_context import cancelled_partial_commit
+
+                def _persist_cancelled_response() -> None:
+                    with cancelled_partial_commit():
+                        _persist_response()
+
+                await asyncio.to_thread(_persist_cancelled_response)
+                await _schedule_fact_extraction_if_needed()
                 from ...services.memory._service._crud import flush_pending_touches
 
                 await asyncio.to_thread(flush_pending_touches)
         except Exception:
             logger.error("Failed to persist cancelled stream result", exc_info=True)
+        await asyncio.to_thread(_api_mod.cleanup_empty_session, ctx)
         raise
     except Exception as exc:
         if skill_task is not None and not skill_task.done():
@@ -584,21 +907,19 @@ async def _run_stream_pipeline(
         ctx.trace.finish_span("generate_answer", "error", error=exc)
         ctx.trace.finish_span("pipeline", "error", error=exc)
         err_info = _stream_user_error_message(exc)
+        # Trace first; the error itself is the single terminal event.  Sending
+        # a later ``done`` would either erase the error or create an ambiguous
+        # two-terminal protocol.
+        bus.emit_trace(ctx.trace.to_dict())
         bus.emit_error(
             err_info["message"],
             code=err_info.get("code"),
             detail=err_info.get("detail"),
             exception_type=err_info.get("exception_type"),
         )
-        bus.emit_trace(ctx.trace.to_dict())
-        if not ctx.session_id:
-            bus.emit_error(
-                "Pipeline failed before session was established",
-                code="NO_SESSION",
-            )
-            bus.emit_done("", error=True)
-        else:
-            bus.emit_done(ctx.session_id)
+        bus.close()
+        write_pipeline_log(ctx.trace, question, session_id=ctx.session_id)
+        await asyncio.to_thread(_api_mod.cleanup_empty_session, ctx)
     finally:
         _hb_stop.set()
         hb_task.cancel()
@@ -608,3 +929,15 @@ async def _run_stream_pipeline(
             pass
         except Exception:
             logger.warning("Global heartbeat task exited with error", exc_info=True)
+
+
+async def _run_stream_pipeline(
+    bus: Any,
+    ctx: PipelineContext,
+    question: str,
+) -> None:
+    """Run streaming work with a stable request-scoped settings view."""
+    from ...core.config import activate_settings_snapshot
+
+    with activate_settings_snapshot(ctx.settings_snapshot):
+        await _run_stream_pipeline_inner(bus, ctx, question)

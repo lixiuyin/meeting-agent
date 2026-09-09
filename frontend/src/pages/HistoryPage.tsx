@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Button, Popconfirm } from "antd";
+import { Button, Modal } from "antd";
 import {
   DeleteOutlined,
   SearchOutlined,
@@ -18,6 +18,18 @@ export default function HistoryPage() {
 
   const handleContinue = (sessionId: string) => {
     navigate(`/?sessionId=${sessionId}`);
+  };
+
+  const confirmBatchDelete = () => {
+    const count = session.selectedIds.size;
+    if (count === 0) return;
+    Modal.confirm({
+      title: `Delete ${count} conversations?`,
+      content: "This action cannot be undone.",
+      okText: "Delete",
+      okType: "danger",
+      onOk: session.handleBatchDelete,
+    });
   };
 
   return (
@@ -48,6 +60,7 @@ export default function HistoryPage() {
           <Button
             type={session.isSelectionMode ? "primary" : "default"}
             icon={<CheckSquareOutlined />}
+            aria-label={session.isSelectionMode ? "Done selecting" : "Select conversations"}
             onClick={() => {
               session.setIsSelectionMode(!session.isSelectionMode);
               if (session.isSelectionMode) {
@@ -58,24 +71,29 @@ export default function HistoryPage() {
             {session.isSelectionMode ? "Done" : "Select"}
           </Button>
 
-          {session.isSelectionMode && session.selectedIds.size > 0 && (
+          {session.isSelectionMode && (
             <>
               <span style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
                 {session.selectedIds.size} selected
               </span>
-              <Button onClick={session.selectAll}>Select All</Button>
-              <Button onClick={session.clearSelection}>Clear</Button>
-              <Popconfirm
-                title={`Delete ${session.selectedIds.size} conversations?`}
-                description="This action cannot be undone."
-                onConfirm={session.handleBatchDelete}
-                okText="Delete"
-                okButtonProps={{ danger: true }}
+              <Button
+                aria-label="Select all conversations"
+                onClick={() => session.selectAll(session.displaySessions.map((item) => item.id))}
               >
-                <Button danger icon={<DeleteOutlined />}>
-                  Delete
-                </Button>
-              </Popconfirm>
+                Select All
+              </Button>
+              <Button aria-label="Clear conversation selection" onClick={session.clearSelection}>
+                Clear
+              </Button>
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                aria-label="Delete selected conversations"
+                disabled={session.selectedIds.size === 0}
+                onClick={confirmBatchDelete}
+              >
+                Delete
+              </Button>
             </>
           )}
         </div>
@@ -114,6 +132,7 @@ export default function HistoryPage() {
                   messages={session.messagesMap[s.id] || []}
                   loadingMessages={session.loadingMessagesMap[s.id] || false}
                   messagesError={session.messagesErrorMap[s.id] || null}
+                  hasOlderMessages={Boolean(session.messageCursorMap[s.id])}
                   messageRoleFilter={session.messageRoleFilter}
                   summarizing={session.summarizingId === s.id}
                   formatDate={session.formatDate}
@@ -121,6 +140,7 @@ export default function HistoryPage() {
                   onToggleSelect={session.toggleSelection}
                   onDelete={(id) => void session.handleDelete(id)}
                   onRetryLoad={(id) => void session.handleRetryLoad(id)}
+                  onLoadOlder={(id) => void session.handleLoadOlder(id)}
                   onContinue={handleContinue}
                   onSummarize={(id) => void session.handleSummarize(id)}
                   onSetMessageRoleFilter={session.setMessageRoleFilter}

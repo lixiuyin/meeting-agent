@@ -8,7 +8,7 @@ We take security bugs seriously. Thank you for improving the project.
 
 Instead, report them via one of these channels:
 
-- **GitHub Security Advisories**: Use the [private vulnerability reporting](../../security/advisories/new) feature on this repository.
+- **GitHub Security Advisories**: Use the [private vulnerability reporting](https://github.com/lixiuyin/meeting-agent/security/advisories/new) feature on this repository.
 - **Email**: Send details to the maintainer listed in the repository's CODEOWNERS file.
 
 Please include:
@@ -54,3 +54,41 @@ We will acknowledge your report within **48 hours** and aim to send a detailed r
 - Rate limiting on all mutating endpoints
 - Error responses never expose internal details
 - Pre-commit hooks include `gitleaks` and `detect-secrets` for credential scanning
+- Chroma is embedded through a local `PersistentClient`; production startup
+  rejects remote clients, `trust_remote_code`, and vector paths outside `DATA_DIR`.
+
+## Temporary dependency mitigations
+
+The dependency audit has narrowly scoped ignores for advisories that are not
+reachable in this deployment while upstream compatibility catches up:
+
+- Chroma `PYSEC-2026-311` and `CVE-2026-45830/45831/45833` affect the Chroma
+  HTTP server, model-repository loading, or its multi-tenant RBAC provider.
+  Meeting Agent only constructs an embedded `PersistentClient`; it does not
+  start or expose the Chroma server.
+- The default `production` dependency group now requires Starlette 1.6 or
+  newer; its five prior advisory exceptions have been removed. This group is
+  enabled by default in both development and production `uv sync`/`uv export`.
+  The incompatible `multimodal` extra requires an explicitly separate
+  development environment (`--no-group production --extra multimodal`) and
+  remains prohibited outside development.
+
+These ignores name exact advisory IDs, remain blocking for every other finding,
+expire in CI on **2026-10-01**, and must be reviewed before that date by the
+repository maintainers.  A review must either upgrade the dependency or renew
+the deadline here and in `.github/workflows/security.yml` with updated evidence.
+They must be removed as soon as compatible patched releases are available.
+
+Last local review: **2026-09-08**. The installed Chroma 1.5.9 audit still reports
+the four exact exceptions above without a listed fixed version. Runtime policy
+tests continue to reject remote Chroma, remote-code loading, and production
+storage outside DATA_DIR. The upstream [Python server authorization report](https://github.com/chroma-core/chroma/issues/7588)
+remains open; this review does not authorize a server deployment or extend the
+2026-10-01 deadline. Embedded-only mitigation is not a claim of zero dependency risk.
+
+The optional `multimodal` extra currently inherits additional advisories from
+RAGAnything's pinned MinerU/LightRAG stack. The application therefore refuses
+to start with `RAGANYTHING_ENABLED=true` outside development. Native and hybrid
+retrieval remain supported in production; remove this guard only after the
+upstream dependency graph can resolve to patched Gradio, LightRAG and
+Transformers versions.

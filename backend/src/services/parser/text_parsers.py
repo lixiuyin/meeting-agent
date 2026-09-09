@@ -77,27 +77,38 @@ def _format_csv_as_text(file_path: Path) -> str:
 
 
 def _strip_html_tags(html: str) -> str:
-    """Remove HTML tags and return plain text."""
+    """Extract visible text without treating HTML parsing as sanitizing HTML."""
     import re
+    from html.parser import HTMLParser
 
-    # Remove script and style elements
-    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    parts: list[str] = []
 
-    # Remove HTML tags
-    text = re.sub(r"<[^>]+>", "", text)
+    class PlainTextParser(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.hidden_depth = 0
 
-    # Decode common HTML entities
-    text = text.replace("&nbsp;", " ")
-    text = text.replace("&lt;", "<")
-    text = text.replace("&gt;", ">")
-    text = text.replace("&amp;", "&")
-    text = text.replace("&quot;", '"')
+        def handle_starttag(self, tag, attrs):
+            if tag in {"script", "style"}:
+                self.hidden_depth += 1
 
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text)
+        def handle_endtag(self, tag):
+            if tag in {"script", "style"} and self.hidden_depth:
+                self.hidden_depth -= 1
 
-    return text.strip()
+        def handle_startendtag(self, tag, attrs):
+            # Script/style are non-void in HTML: a self-closing flag must not
+            # expose their following contents as ordinary document text.
+            self.handle_starttag(tag, attrs)
+
+        def handle_data(self, data):
+            if not self.hidden_depth:
+                parts.append(data)
+
+    parser = PlainTextParser()
+    parser.feed(html)
+    parser.close()
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
 def _format_json_as_text(json_str: str) -> str:

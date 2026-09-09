@@ -12,12 +12,20 @@ from src.services.rag._strategies import (
 
 def test_resolve_provider_accepts_hybrid(monkeypatch):
     monkeypatch.setattr("src.services.rag._retriever.settings.RAG_RETRIEVER_PROVIDER", "native")
+    monkeypatch.setattr("src.services.rag._retriever.settings.HYBRID_SEARCH_ENABLED", True)
     assert _resolve_provider("hybrid") == "hybrid"
+
+
+def test_resolve_provider_honors_disabled_hybrid_gate(monkeypatch):
+    monkeypatch.setattr("src.services.rag._retriever.settings.RAG_RETRIEVER_PROVIDER", "hybrid")
+    monkeypatch.setattr("src.services.rag._retriever.settings.HYBRID_SEARCH_ENABLED", False)
+    assert _resolve_provider(None) == "vector"
 
 
 def test_resolve_provider_rejects_legacy_raganything(monkeypatch):
     monkeypatch.setattr("src.services.rag._retriever.settings.RAG_RETRIEVER_PROVIDER", "native")
-    assert _resolve_provider("raganything") == "native"
+    monkeypatch.setattr("src.services.rag._retriever.settings.HYBRID_SEARCH_ENABLED", True)
+    assert _resolve_provider("raganything") == "vector"
 
 
 def test_select_strategy_routes_by_provider():

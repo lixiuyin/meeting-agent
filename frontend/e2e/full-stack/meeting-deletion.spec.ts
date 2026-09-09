@@ -1,45 +1,36 @@
-/**
- * E2E: Delete a meeting and verify cascade cleanup of vectors, files, and summaries.
- *
- * Prerequisites: Docker stack running at localhost:8307.
- * Run: npx playwright test meeting-deletion.spec.ts
- */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./fixtures";
+import { deleteMeetingIfPresent, uploadTextFile, waitForMeetingReady } from "./test-data";
 
-const BASE = "http://localhost:8307";
-
-test.describe("Meeting Deletion Cascade", () => {
-  test("delete meeting removes it from list", async ({ request }) => {
-    // List meetings and pick one to delete
-    const listResp = await request.get(`${BASE}/api/v1/meetings`, {
-      headers: { "X-API-Key": process.env.VITE_API_KEY || "" },
-      params: { limit: 5 },
-    });
-    expect(listResp.status()).toBe(200);
-    const body = await listResp.json();
-    const meetings = body.meetings || [];
-
-    if (meetings.length === 0) {
-      test.skip(true, "No meetings to delete");
-      return;
-    }
-
-    const targetId = meetings[0].id;
-
-    // Delete the meeting
-    const deleteResp = await request.delete(
-      `${BASE}/api/v1/meetings/${targetId}`,
-      { headers: { "X-API-Key": process.env.VITE_API_KEY || "" } }
-    );
-    expect(deleteResp.status()).toBe(200);
-
-    // Verify it's gone from the list
-    const afterResp = await request.get(`${BASE}/api/v1/meetings`, {
-      headers: { "X-API-Key": process.env.VITE_API_KEY || "" },
-      params: { limit: 50 },
-    });
-    const afterBody = await afterResp.json();
-    const ids = (afterBody.meetings || []).map((m: { id: number }) => m.id);
-    expect(ids).not.toContain(targetId);
+test("delete meeting button removes only the test-owned meeting", async ({ page, request }) => {
+  const suffix = Date.now();
+  const title = `E2E Delete Meeting ${suffix}`;
+  const { meetingId } = await uploadTextFile(request, {
+    title,
+    name: `delete-meeting-${suffix}.txt`,
+    content:
+      `Disposable meeting created by browser test ${suffix}. ` +
+      "It contains enough deterministic prose for the ingestion pipeline to accept and index. " +
+      "The test deletes this exact meeting through the visible confirmation dialog.",
   });
+
+  try {
+    await waitForMeetingReady(request, meetingId);
+    await page.goto("/materials");
+    await page.getByPlaceholder(/search materials/i).fill(title);
+
+    const openButton = page.getByRole("button", { name: `Open meeting ${title}` });
+    const card = openButton.locator("..");
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "Delete meeting", exact: true }).click();
+
+    const dialog = page.getByRole("dialog", { name: /delete meeting/i });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: /^delete$/i }).click();
+
+    await expect(card).not.toBeVisible();
+    const detail = await request.get(`/api/v1/meetings/${meetingId}`);
+    expect(detail.status()).toBe(404);
+  } finally {
+    await deleteMeetingIfPresent(request, meetingId);
+  }
 });

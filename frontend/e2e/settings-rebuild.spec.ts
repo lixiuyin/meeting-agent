@@ -52,7 +52,8 @@ test("settings rebuild vectors action works", async ({ page }) => {
   });
 
   await page.goto("/settings");
-  await expect(page.getByText("Advanced Actions")).toBeVisible();
+  await page.getByRole("tab", { name: /system/i }).click();
+  await expect(page.getByText("Operations", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /rebuild vectors/i }).click();
   await expect.poll(() => rebuildCalled).toBeTruthy();
 });

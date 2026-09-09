@@ -164,7 +164,7 @@ class LocalFastParser:
 
     def _parse_pdf(self, file_path: Path) -> ParsedDocument:
         """Extract text from PDF using PyMuPDF."""
-        import fitz
+        import pymupdf as fitz
 
         logger.info("Local-fast parsing PDF: %s", file_path.name)
         pages: list[PageContent] = []
@@ -363,7 +363,7 @@ class LocalFastParser:
 
         # Try PyMuPDF for anything it can open
         try:
-            import fitz
+            import pymupdf as fitz
 
             with fitz.open(str(file_path)) as doc:
                 for page in doc:

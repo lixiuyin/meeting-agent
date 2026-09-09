@@ -7,6 +7,7 @@ from src.api.routers.websocket import (
     _validate_ws_token,
     _verify_ws_auth,
 )
+from src.core.security import _derive_user_id_from_api_key
 
 
 class TestWsTokenAuth:
@@ -64,5 +65,23 @@ class TestWsTokenAuth:
         from src.core.config import settings
 
         monkeypatch.setattr(settings, "API_KEY", SecretStr("prod-secret"))
+        monkeypatch.setattr(settings, "PRINCIPAL_PEPPER", SecretStr("stable-pepper"))
         valid, uid = _verify_ws_auth(api_key="wrong", token=None)
         assert valid is False
+
+    def test_production_api_key_and_token_share_principal(self, monkeypatch):
+        """The HTTP-issued token must authenticate as the same principal."""
+        from pydantic import SecretStr
+
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "API_KEY", SecretStr("prod-secret"))
+        monkeypatch.setattr(settings, "PRINCIPAL_PEPPER", SecretStr("stable-pepper"))
+        expected = _derive_user_id_from_api_key("prod-secret")
+
+        via_key = _verify_ws_auth(api_key="prod-secret", token=None)
+        token = _generate_ws_token(user_id=expected)
+        via_token = _verify_ws_auth(api_key=None, token=token)
+
+        assert via_key == (True, expected)
+        assert via_token == (True, expected)

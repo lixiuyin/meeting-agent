@@ -14,6 +14,7 @@ import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+import anyio
 import httpx
 
 from ...core.config import settings
@@ -127,9 +128,9 @@ async def _upload(file_path: Path) -> str:
     client = _get_http_client()
 
     async def _file_iter(p: Path, chunk_size: int = 5 * 1024 * 1024):
-        with open(p, "rb") as f:
+        async with await anyio.open_file(p, "rb") as f:
             while True:
-                chunk = f.read(chunk_size)
+                chunk = await f.read(chunk_size)
                 if not chunk:
                     break
                 yield chunk

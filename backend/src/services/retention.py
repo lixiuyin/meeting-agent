@@ -25,6 +25,22 @@ def purge_old_chat_messages() -> int:
 
     try:
         with get_write_connection() as conn:
+            summary_rows = conn.execute(
+                """
+                SELECT ss.embedding_id
+                FROM session_summaries ss
+                JOIN chat_sessions cs ON cs.id = ss.session_id
+                WHERE cs.updated_at < datetime('now', ?)
+                  AND ss.embedding_id IS NOT NULL
+                """,
+                (f"-{cutoff_days} days",),
+            ).fetchall()
+            conn.executemany(
+                "INSERT OR IGNORE INTO pending_vector_deletions (collection, embedding_id) "
+                "VALUES ('session_summary', ?)",
+                [(row["embedding_id"],) for row in summary_rows],
+            )
+
             # Delete messages from sessions whose last activity is beyond the cutoff
             result = conn.execute(
                 """
@@ -53,7 +69,7 @@ def purge_old_chat_messages() -> int:
         return deleted
     except (sqlite3.DatabaseError, OSError):
         logger.warning("Failed to purge old chat messages", exc_info=True)
-        return 0
+        raise
 
 
 def purge_old_decay_state() -> int:
@@ -88,21 +104,21 @@ def purge_old_decay_state() -> int:
         return deleted
     except (sqlite3.DatabaseError, OSError):
         logger.warning("Failed to purge old decay states", exc_info=True)
-        return 0
+        raise
 
 
 def purge_stale_low_importance_memories() -> int:
-    """Delete memories that are old, low-importance, and never accessed.
+    """Archive recall for old, low-importance memories that were never accessed.
 
     These are memories that have fallen below the decay floor (importance <
     0.5), haven't been accessed in 90+ days, and are not profile memories.
-    Without this policy, old low-importance memories accumulate indefinitely.
+    Their fact versions remain available for business history.
 
-    Returns the number of deleted memories.
+    Returns the number of recall-archived memories; fact history is preserved.
     """
     try:
         with get_write_connection() as conn:
-            # Collect embedding_ids before deletion so we can clean Chroma.
+            # Record vector cleanup before retiring active recall.
             rows = conn.execute(
                 """
                 SELECT id, key, embedding_id FROM user_memories
@@ -110,36 +126,20 @@ def purge_stale_low_importance_memories() -> int:
                   AND (last_accessed IS NULL OR last_accessed < datetime('now', '-90 days'))
                   AND superseded_by IS NULL
                   AND expires_at IS NULL
-                  AND key != '__profile__'
+                  AND key != '__profile__' AND archived_at IS NULL
                 """
             ).fetchall()
 
             if not rows:
                 return 0
 
-            # Queue vectors for deletion.
-            embedding_ids = [r["embedding_id"] for r in rows if r["embedding_id"]]
-            import contextlib
+            from ..core.database.memory_lifecycle import archive_memories
 
-            for eid in embedding_ids:
-                with contextlib.suppress(Exception):
-                    conn.execute(
-                        "INSERT INTO pending_vector_deletions (collection, embedding_id) "
-                        "VALUES ('memory', ?)",
-                        (eid,),
-                    )
-
-            ids = [r["id"] for r in rows]
-            placeholders = ",".join("?" * len(ids))
-            conn.execute(
-                f"DELETE FROM user_memories WHERE id IN ({placeholders})",
-                ids,
-            )
-            deleted = len(ids)
+            deleted = archive_memories(conn, rows, reason="retention")
 
         if deleted:
-            logger.info("Global retention: purged %d stale low-importance memories", deleted)
+            logger.info("Global retention: archived %d stale low-importance memories", deleted)
         return deleted
     except Exception:
         logger.warning("Failed to purge stale low-importance memories", exc_info=True)
-        return 0
+        raise

@@ -76,7 +76,7 @@ def profile_document(file_path: Path) -> DocumentProfile:
 def _profile_pdf(file_path: Path, size_bytes: int) -> DocumentProfile:
     """Profile a PDF using PyMuPDF (fitz)."""
     try:
-        import fitz
+        import pymupdf as fitz
 
         with fitz.open(str(file_path)) as doc:
             page_count = len(doc)

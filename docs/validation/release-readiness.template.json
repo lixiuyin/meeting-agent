@@ -1,0 +1,32 @@
+{
+  "release_ready": false,
+  "implementation_fingerprints": {
+    "dataset_fingerprint_sha256": "replace-with-current-clean-run",
+    "harness_fingerprint_sha256": "replace-with-current-clean-run",
+    "implementation_fingerprint_sha256": "replace-with-current-clean-run"
+  },
+  "release_gates": {
+    "production_quality_passed": false,
+    "human_business_review_passed": false,
+    "performance_slo_passed": false,
+    "security_review_passed": false
+  },
+  "evidence_references": {
+    "production_quality_passed": {
+      "path": "docs/validation/evidence/production-quality.json",
+      "sha256": "replace-with-artifact-sha256"
+    },
+    "human_business_review_passed": {
+      "path": "docs/validation/evidence/human-business-review.json",
+      "sha256": "replace-with-artifact-sha256"
+    },
+    "performance_slo_passed": {
+      "path": "docs/validation/evidence/performance-slo.json",
+      "sha256": "replace-with-artifact-sha256"
+    },
+    "security_review_passed": {
+      "path": "docs/validation/evidence/security-review.json",
+      "sha256": "replace-with-artifact-sha256"
+    }
+  }
+}

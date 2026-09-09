@@ -7,11 +7,20 @@ llm:
   model: gpt-4o-mini
   temperature: 0.3
   max_tokens: 2048
+  # OpenRouter reasoning uses the completion budget. Keep it bounded so
+  # broad summaries cannot spend the whole budget before emitting an answer.
+  reasoning_effort: low
+  generation_timeout_s: 100       # Hard deadline for one answer, including streaming
+  # Keep self-contained fact lookups within the interactive latency budget in
+  # every retrieval profile. Complex summaries/comparisons retain the full
+  # generation deadline and can still be selected explicitly.
+  stream_latency_guard_enabled: true
   # Hard cap on total prompt tokens (context + history + overhead).
   # Raised from default 6000 because broad recall over many files was
   # truncating tail chunks before they reached the LLM. Bump back down
   # if you switch to a small-context model.
   prompt_total_budget_tokens: 12000
+  history_budget_tokens: 4000     # Recent dialogue retained in the answer prompt
 
 embedding:
   binding: openai           # openai, azure_openai, jina, cohere, huggingface, google, ollama, lm_studio
@@ -21,6 +30,12 @@ embedding:
   # (45s for local providers, 15s for cloud). Override when experiencing
   # "Embedding followers fell through stampede protection" warnings.
   # stampede_wait_s: 0
+
+vector:
+  # Chroma runs as an embedded local store. Remote HTTP clients and model
+  # loading with trust_remote_code are intentionally disabled.
+  chroma_remote_enabled: false
+  chroma_trust_remote_code: false
 
 asr:
   provider: assemblyai         # Only assemblyai is supported
@@ -36,6 +51,9 @@ ocr:
   provider: marker              # marker (default) | mineru | paddleocr
   language: en                   # OCR language code (e.g., en, chi_sim, jpn)
   dpi: 300                       # DPI for PDF to image conversion
+  # Signed upload/result URL hosts accepted from MinerU. Suffix rules start
+  # with a dot. Add the provider's documented object-storage host if needed.
+  mineru_result_allowed_hosts: "mineru.net,.mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com"
 
 tts:
   binding:                     # openai, azure_openai, elevenlabs, coqui, pyttsx3
@@ -47,6 +65,8 @@ vision:
   model: ""                    # Optional vision model; defaults to llm.model when empty
   base_url: ""                 # Optional OpenAI-compatible endpoint; defaults to llm base_url
   api_key: ""                  # Optional API key; defaults to llm api key
+  reasoning_effort: none       # Preserve the output budget for caption/OCR content
+  combined_max_tokens: 2048    # Room for caption + OCR + semantics JSON
   retry_max_attempts: 3
   retry_base_delay_seconds: 0.5
   retry_max_delay_seconds: 2.0
@@ -64,11 +84,15 @@ rag:
   distance_metric: l2          # "l2" or "cosine"
   chunk_size: 1024
   chunk_overlap: 128
+  chunk_size_tokens: 384        # Language-neutral primary chunk budget
+  chunk_overlap_tokens: 64
+  child_chunk_size_tokens: 160  # Used only when parent_child_enabled=true
+  child_chunk_overlap_tokens: 24
   top_k: 8
   query_rewrite_enabled: true
   query_rewrite_model: ""       # empty = same as LLM_MODEL
   score_threshold: 1.5
-  reranker_binding: "cohere"    # "cohere", "bge", or "" (disabled)
+  reranker_binding: ""          # "cohere", "http", "bge", or ""; opt in with credentials
   reranker_model: "cohere/rerank-4-pro"
   reranker_api_key: ""
   reranker_base_url: "https://openrouter.ai/api/v1"
@@ -77,7 +101,7 @@ rag:
   child_chunk_size: 256
   child_chunk_overlap: 32
   hybrid_search_enabled: true
-  hybrid_alpha: 0.5              # 0.0 = pure vector, 1.0 = pure BM25
+  hybrid_alpha: 0.5              # vector weight: 0.0 = pure BM25, 1.0 = pure vector
   rerank_fetch_multiplier: 6    # Fetch multiplier before reranking (6×top_k=48 candidates)
   unscoped_diversity_enabled: true   # Cap per-meeting contribution when no meeting is selected
   unscoped_max_per_meeting: 5        # Max chunks a single meeting may contribute to unscoped pool
@@ -87,7 +111,7 @@ rag:
   non_text_chunking_strategy: native  # native | text; text routes non-text artefact.text through text chunking
   multi_query_enabled: false
   multi_query_count: 3
-  retriever_provider: native  # native | raganything | hybrid_multimodal
+  retriever_provider: hybrid  # vector | hybrid | multimodal | hybrid_multimodal
   raganything_enabled: false      # feature flag for partial rollout
   raganything_fallback_to_native: true
   raganything_working_dir: ""      # defaults to VECTOR_DB_DIR/raganything
@@ -114,8 +138,18 @@ rag:
   skill_match_timeout_s: 15.0
   skill_route_timeout_s: 15.0
   semantic_embed_timeout_s: 15.0
-  # Hierarchical (funnel) RAG: meetings → files → chunks
-  hierarchical_enabled: true             # Master switch; false = legacy retrieve() path
+  # Short standalone fact lookups avoid remote rewrite/resolver and semantic
+  # embedding work. Follow-ups, summaries, comparisons, and long questions
+  # continue through the full hybrid/vector path.
+  fast_path_enabled: true
+  fast_path_max_words: 12
+  fast_path_retrieval_mode: bm25
+  fast_path_max_output_tokens: 256
+  # Leave headroom below the 3s chat P95 SLO for retrieval and stream framing;
+  # slower providers use the transparent evidence fallback after this budget.
+  fast_path_generation_timeout_s: 2.5
+  # Hierarchical (funnel) RAG: meetings → files → chunks. Broad/scoped retrieval
+  # is selected by file scope; RAG_FILE_SCOPING_MODE chooses the broad strategy.
   funnel_fetch_multiplier: 10            # Over-fetch factor for wide chunk fetch
   funnel_top_meetings: 12                # Max meetings selected in stage 1
   funnel_top_files: 12                   # Max files selected in stage 2
@@ -156,10 +190,8 @@ rag:
   # How file-level title prior is applied: additive (default, back-compat) or
   # multiplicative (score *= 1 + prior, stronger effect for title matches).
   funnel_file_prior_mode: additive
-  # wide-fetch + chunk evidence.  Multi-query variants in this mode hit the
-  # same wide-fetch cache (dedup collapses identical chunks) and lose their
-  # diversity benefit, so default off.  Flip to ``true`` only after a
-  # benchmark uplift on your corpus.
+  # Multi-query in broad recall. Candidate caches include the semantic query,
+  # so variants remain independent; keep opt-in because it increases latency/cost.
   broad_recall_multi_query_enabled: false
   anchor_boost_in_broad_recall: true     # Append anchor files into broad recall scope
   anchor_quota_ratio: 0.5               # Max fraction of scope reserved for anchor files
@@ -179,19 +211,20 @@ rag:
   min_chunks_per_file: 3                # Min chunks per file in broad recall mode
   fair_concurrency: 8                   # Max parallel file retrievals in fair mode
   broad_recall_max_files: 50            # SQL LIMIT for legacy enumerate fallback (no meeting filter)
-  summary_intent_top_k: 25              # top_k floor when summary intent detected
+  summary_intent_top_k: 16              # broad enough for coverage without citation overload
   # Summary-vector router (Plan B): pre-narrow files by per-file summary
-  # embedding similarity before chunk-level retrieval. Off by default;
-  # enable after running scripts/backfill_summary_vectors.py.
+  # embedding similarity before chunk-level retrieval. Enabled by default;
+  # missing summaries fail open to chunk-level funnel retrieval.
   summary_router_enabled: true
   summary_router_top_files: 12          # Files surfaced to fair retrieve when router fires
-  summary_router_min_score: 0.0         # Distance/sim threshold (0 = keep all)
+  summary_router_min_score: 0.0         # Normalized relevance threshold (0 = keep all)
   summary_router_fallback_to_chunk: true # If router returns empty, fall back to legacy enum
   # Meeting-summary vector router: pre-narrows meetings in unscoped mode
   meeting_summary_router_enabled: true
   meeting_summary_router_top_meetings: 15  # Meetings surfaced to file-level routing
   meeting_summary_router_min_score: 0.4    # Similarity threshold (0-1, higher=stricter)
   meeting_summary_router_min_hits: 1       # Min meetings before fail-open to all-meetings
+  meeting_summary_router_exploration_ratio: 0.2  # Reserve global files outside summary priors
   # Summary context truncation (chars per summary injected into the LLM prompt)
   file_summary_context_chars: 1400          # Per-file summary budget (was 300)
   meeting_summary_context_chars: 2800       # Per-meeting summary budget (was 800)
@@ -210,19 +243,26 @@ memory:
   auto_extract: true
   max_facts_per_turn: 3
   extraction_model: ""               # Model for fact/entity extraction; empty = same as LLM_MODEL
-  decay_enabled: true                # Apply importance decay to memories over time
+  ingest_chunk_chars: 5000            # Evidence window size for post-ingest extraction
+  ingest_chunk_overlap: 300           # Preserve facts that cross window boundaries
+  ingest_max_chunks_per_file: 20      # Scheduling burst size; source tails are never dropped
+  decay_enabled: true                # Decay freshness without changing stable salience
   decay_interval_hours: 24           # Minimum interval between automatic decay runs
-  decay_rate_per_day: 0.01           # ~1% decay/day; ~70 days to halve importance
-  ttl_days: 90                       # Default TTL for auto-extracted memories (days)
+  decay_rate_per_day: 0.01           # ~1% decay/day; ~70 days to halve freshness
+  ttl_days: 90                       # Recall TTL for general memories; domain facts use business validity
   max_context_items: 6
-  max_per_user: 500                  # Memory cap per user; excess evicted by lowest importance
+  max_per_user: 500                  # Active recall cap; excess archived with fact history preserved
   dedup_threshold: 0.75              # Semantic similarity threshold for duplicate detection
   initial_importance: 3              # Default importance for new memories (1-5 scale)
   min_importance: 1                  # Floor for importance clamping
   max_importance: 5                  # Ceiling for importance clamping
-  scoring_semantic_weight: 0.3       # Weight for semantic similarity in retrieval scoring
-  scoring_decay_weight: 0.4          # Weight for decay score in retrieval scoring
-  scoring_importance_weight: 0.3     # Weight for importance in retrieval scoring
+  scoring_semantic_weight: 0.35      # Query relevance
+  scoring_decay_weight: 0.15         # Fact freshness (legacy key name)
+  scoring_importance_weight: 0.25    # Stable salience (legacy key name)
+  scoring_confidence_weight: 0.15    # Evidence/extraction confidence
+  scoring_usefulness_weight: 0.10    # Explicit downstream usefulness feedback
+  multi_hop_enabled: true            # Bounded second-hop recall with multilingual bridge selection
+  multi_hop_seed_count: 3            # Max first-hop facts used in the bounded expansion query
   session_max_history: 50
   session_max_tokens: 4096           # Max tokens in session history (0=disable)
   session_summary_enabled: true
@@ -230,21 +270,29 @@ memory:
   session_summary_max_items: 3
   session_summary_max_messages: 100
   session_summary_idle_minutes: 15   # Auto-summarize idle sessions every N minutes
-  consolidation_enabled: true
+  consolidation_enabled: false       # LLM rewrite path; opt in after retention-policy review
   consolidation_min_cluster: 3
-  semantic_cluster_enabled: true     # Use Chroma semantic similarity for clustering
-  knowledge_graph_enabled: true      # Knowledge graph entity extraction
+  semantic_cluster_enabled: false    # Research feature; text dedup remains available
+  knowledge_graph_enabled: false     # Research feature; opt in for entity extraction
   extraction_mode: balanced          # "precise" | "balanced" | "aggressive"
   entity_relations_limit: 50         # Maximum relations returned per entity
   global_memory_limit: 3             # Max global (unscoped) memories when meeting selection is active
-  scoped_memory_strict: false        # When true + scope active: exclude untagged memories except user_profile
+  scoped_memory_strict: true         # With an active scope, exclude untagged memories except user_profile
   search_oversample_factor: 5        # Over-fetch multiplier from vector store before post-filtering by scope
   session_summary_startup_backfill: false  # Disable startup bulk backfill by default
   session_context_skip_threshold: 3        # Skip cross-session summaries for tight meeting selection
 
 server:
   host: "0.0.0.0"
-  port: 8000
+  port: 7008
+  durable_job_execution_mode: embedded  # embedded | off
+  durable_job_workers: 2
+  durable_job_lease_seconds: 300
+  durable_job_poll_seconds: 1.0
+  mcp_api_url: "http://127.0.0.1:7008/api/v1"
+  mcp_transport: stdio
+  mcp_host: "127.0.0.1"
+  mcp_http_port: 9000
   cors_origins: ""
   api_key: ""
   trusted_hosts: ""

@@ -26,12 +26,13 @@ import {
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import { ThemeProvider, useTheme } from "./components/ThemeProvider";
 import { useHealthCheck } from "./hooks/useHealthCheck";
-import { cleanupFileToken, initFileToken } from "./api/client";
+import { initFileToken } from "./api/client";
 import { ViewerProvider } from "./contexts/ViewerContext";
 import { ChatProvider } from "./contexts/ChatContext";
 import { ErrorBoundary } from "./components/app/ErrorBoundaries";
 import AppRoutes from "./components/app/AppRoutes";
 import { BREAKPOINT_COMPACT, BREAKPOINT_MOBILE } from "./constants/breakpoints";
+import { useIntl } from "react-intl";
 
 const { Header, Content } = Layout;
 
@@ -42,15 +43,16 @@ function getStyleNonce(): string {
 }
 
 const TAB_ITEMS = [
-  { key: "/", label: "Chat", icon: <MessageOutlined /> },
-  { key: "/generate", label: "Generate", icon: <ThunderboltOutlined /> },
-  { key: "/materials", label: "Materials", icon: <FolderOutlined /> },
-  { key: "/history", label: "History", icon: <HistoryOutlined /> },
-  { key: "/memory", label: "Memory", icon: <BranchesOutlined /> },
-  { key: "/settings", label: "Settings", icon: <SettingOutlined /> },
+  { key: "/", messageId: "nav.chat", icon: <MessageOutlined /> },
+  { key: "/generate", messageId: "nav.generate", icon: <ThunderboltOutlined /> },
+  { key: "/materials", messageId: "nav.materials", icon: <FolderOutlined /> },
+  { key: "/history", messageId: "nav.history", icon: <HistoryOutlined /> },
+  { key: "/memory", messageId: "nav.memory", icon: <BranchesOutlined /> },
+  { key: "/settings", messageId: "nav.settings", icon: <SettingOutlined /> },
 ];
 
 function AppLayout() {
+  const { formatMessage } = useIntl();
   const navigate = useNavigate();
   const location = useLocation();
   const { theme: currentTheme, toggleTheme } = useTheme();
@@ -97,8 +99,8 @@ function AppLayout() {
       TAB_ITEMS.map((t) => ({
         key: t.key,
         label: (
-          <button
-            type="button"
+          <span
+            aria-label={formatMessage({ id: t.messageId })}
             style={{
               display: "flex",
               alignItems: "center",
@@ -107,20 +109,16 @@ function AppLayout() {
               background: "none",
               padding: 0,
               margin: 0,
-              cursor: "pointer",
               font: "inherit",
               color: "inherit",
-              outline: "none",
             }}
-            onMouseEnter={() => prefetchRoute(t.key)}
-            onFocus={() => prefetchRoute(t.key)}
           >
             {t.icon}
-            {!isCompact && t.label}
-          </button>
+            {!isCompact && formatMessage({ id: t.messageId })}
+          </span>
         ),
       })),
-    [isCompact, prefetchRoute],
+    [formatMessage, isCompact],
   );
 
   return (
@@ -168,8 +166,9 @@ function AppLayout() {
         <MotionConfig reducedMotion="user">
           <ErrorBoundary>
             <a href="#main-content" className="skip-link">
-              Skip to main content
+              {formatMessage({ id: "nav.skipToMain" })}
             </a>
+            <h1 className="sr-only">Meeting Agent</h1>
             <Layout style={{ minHeight: "100vh", background: "var(--color-bg-primary)" }}>
               <Header
                 style={{
@@ -193,13 +192,15 @@ function AppLayout() {
                       type="text"
                       icon={<MenuOutlined />}
                       onClick={() => setMobileMenuOpen(true)}
-                      aria-label="Open navigation menu"
+                      aria-label={formatMessage({ id: "nav.openMenu" })}
                       style={{ color: "var(--color-text-secondary)", width: 40, height: 40 }}
                     />
                   )}
 
                   {/* Logo */}
-                  <motion.div
+                  <motion.button
+                    type="button"
+                    aria-label={formatMessage({ id: "nav.chat" })}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.98 }}
                     style={{
@@ -208,6 +209,10 @@ function AppLayout() {
                       gap: isCompact ? 8 : 12,
                       cursor: "pointer",
                       height: 42,
+                      border: 0,
+                      padding: 0,
+                      background: "transparent",
+                      color: "inherit",
                     }}
                     onClick={() => navigate("/")}
                   >
@@ -228,7 +233,7 @@ function AppLayout() {
                       <RobotOutlined />
                     </div>
                     {!isMobile && (
-                      <h1
+                      <span
                         className="gradient-heading"
                         style={{
                           margin: 0,
@@ -244,14 +249,34 @@ function AppLayout() {
                         }}
                       >
                         Meeting Agent
-                      </h1>
+                      </span>
                     )}
-                  </motion.div>
+                  </motion.button>
 
                   {!isMobile && (
                     <Tabs
+                      className="app-navigation-tabs"
                       activeKey={activeKey}
-                      onChange={(key) => navigate(key)}
+                      // Route transitions may leave Tabs' controlled selection one render
+                      // behind the URL. Every explicit tab activation must navigate.
+                      onTabClick={(key) => navigate(key)}
+                      onMouseOver={(event) => {
+                        const tab = (event.target as HTMLElement).closest<HTMLElement>(
+                          "[data-node-key]",
+                        );
+                        if (tab?.dataset.nodeKey) prefetchRoute(tab.dataset.nodeKey);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        const tab = (event.target as HTMLElement).closest<HTMLElement>(
+                          "[data-node-key]",
+                        );
+                        const path = tab?.dataset.nodeKey;
+                        if (path) {
+                          event.preventDefault();
+                          navigate(path);
+                        }
+                      }}
                       items={tabItems}
                       style={{ marginBottom: 0, height: 42, display: "flex", alignItems: "center" }}
                       size={isCompact ? "small" : "middle"}
@@ -269,14 +294,18 @@ function AppLayout() {
                       exit={{ opacity: 0, scale: 0.8, rotate: 90 }}
                       transition={{ duration: 0.3, ease: "easeOut" }}
                     >
-                      <Tooltip title={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+                      <Tooltip
+                        title={formatMessage({ id: isDark ? "nav.lightMode" : "nav.darkMode" })}
+                      >
                         <Button
                           type="text"
                           shape="circle"
                           size={isCompact ? "middle" : "large"}
                           icon={isDark ? <SunOutlined /> : <MoonOutlined />}
                           onClick={toggleTheme}
-                          aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                          aria-label={formatMessage({
+                            id: isDark ? "nav.lightMode" : "nav.darkMode",
+                          })}
                           style={{
                             color: "var(--color-text-secondary)",
                             width: isCompact ? 34 : 40,
@@ -292,7 +321,7 @@ function AppLayout() {
                       status={isOnline ? "success" : "error"}
                       text={
                         <span style={{ color: "var(--color-text-tertiary)", fontSize: 13 }}>
-                          {isOnline ? "Online" : "Offline"}
+                          {formatMessage({ id: isOnline ? "nav.online" : "nav.offline" })}
                         </span>
                       }
                       style={{ marginLeft: 8 }}
@@ -329,7 +358,7 @@ function AppLayout() {
                         setMobileMenuOpen(false);
                       }}
                     >
-                      {t.label}
+                      {formatMessage({ id: t.messageId })}
                     </Button>
                   ))}
                 </div>
@@ -358,8 +387,9 @@ function AppLayout() {
 
 export default function App() {
   useEffect(() => {
-    initFileToken();
-    return cleanupFileToken;
+    // Asset-token warmup is best-effort and must never block the application
+    // shell when the backend is slow or temporarily offline.
+    void initFileToken();
   }, []);
 
   return (

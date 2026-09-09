@@ -19,7 +19,7 @@ def init_sentry() -> None:
         return
 
     try:
-        import sentry_sdk
+        import sentry_sdk  # pyright: ignore[reportMissingImports] - optional extra
 
         _SENSITIVE_FIELDS = frozenset(
             {
@@ -100,14 +100,17 @@ def init_sentry() -> None:
 def run_alembic_upgrade() -> None:
     """Run Alembic migrations to bring the database schema up to date.
 
-    Falls back to the legacy init_db() path if Alembic is not available.
+    Development may fall back to the legacy runner. Production fails closed
+    because silently skipping versioned migrations can corrupt application data.
     """
     try:
         from alembic.config import Config
 
         from alembic import command
-    except ImportError:
-        logger.warning("alembic not installed; using legacy init_db()")
+    except ImportError as exc:
+        if settings.ENVIRONMENT != "dev":
+            raise RuntimeError("Alembic is required in non-development deployments") from exc
+        logger.warning("alembic not installed in dev; using legacy init_db()")
         from ...core.database import init_db
 
         init_db()
@@ -116,7 +119,9 @@ def run_alembic_upgrade() -> None:
     backend_dir = Path(__file__).resolve().parent.parent.parent.parent
     alembic_ini = backend_dir / "alembic.ini"
     if not alembic_ini.exists():
-        logger.warning("alembic.ini not found at %s; using legacy init_db()", alembic_ini)
+        if settings.ENVIRONMENT != "dev":
+            raise RuntimeError(f"Required Alembic configuration is missing: {alembic_ini}")
+        logger.warning("alembic.ini not found at %s in dev; using legacy init_db()", alembic_ini)
         from ...core.database import init_db
 
         init_db()
@@ -126,50 +131,59 @@ def run_alembic_upgrade() -> None:
     try:
         command.upgrade(alembic_cfg, "head")
         try:
-            from ...core.database import get_write_connection
+            from ...core.database import get_connection
 
-            with get_write_connection() as conn:
+            # wal_checkpoint cannot run inside the BEGIN IMMEDIATE transaction
+            # opened by get_write_connection(). The migration itself is already
+            # complete, so use a non-transactional pooled connection here.
+            with get_connection() as conn:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except Exception:
             logger.warning("WAL checkpoint after migration failed", exc_info=True)
-        # H3: verify both migration tracks agree — schema_version (legacy) and
-        # alembic_version (Alembic) must both contain at least one row after upgrade.
+        # Verify both migration tracks agree exactly. Merely checking for one
+        # row allowed a partially applied legacy schema to start at Alembic head.
         try:
             from ...core.database import get_connection
+            from ...core.database._migrations import _MIGRATIONS
 
             with get_connection() as conn:
-                sv = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-                av = conn.execute("SELECT COUNT(*) FROM alembic_version").fetchone()[0]
-            if sv is None:
-                logger.warning("schema_version table is empty (legacy migrations not applied)")
-            if av == 0:
-                logger.warning("alembic_version table is empty (Alembic migrations not applied)")
-            if sv is not None and av > 0:
-                logger.info(
-                    "Migration consistency check passed: schema_version=%s, alembic rows=%s",
-                    sv,
-                    av,
+                applied_versions = {
+                    row[0] for row in conn.execute("SELECT version FROM schema_version").fetchall()
+                }
+                av = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+            expected_versions = {version for version, _description, _sql in _MIGRATIONS}
+            missing_versions = sorted(expected_versions - applied_versions)
+            unexpected_versions = sorted(applied_versions - expected_versions)
+            if missing_versions or unexpected_versions or av is None:
+                raise RuntimeError(
+                    "Migration consistency check failed: "
+                    f"missing schema versions={missing_versions!r}, "
+                    f"unexpected schema versions={unexpected_versions!r}, "
+                    f"alembic_version={av[0] if av else None!r}"
                 )
-        except Exception:
-            logger.warning("Migration consistency check failed", exc_info=True)
+            logger.info(
+                "Migration consistency check passed: schema_version=1-%s, alembic=%s",
+                max(applied_versions),
+                av[0],
+            )
+        except Exception as exc:
+            raise RuntimeError("Migration consistency check failed after Alembic upgrade") from exc
 
         logger.info("Alembic upgrade complete")
     except Exception as exc:
         logger.critical(
-            "Alembic upgrade failed: %s. "
-            "The database may need manual migration. "
-            "Set MIGRATION_AUTO_UPGRADE=false to bypass and start degraded.",
+            "Alembic upgrade failed: %s. The database may need manual migration.",
             exc,
             exc_info=True,
         )
         raise RuntimeError(
-            "Database migration failed. Fix the schema manually or set "
-            "MIGRATION_AUTO_UPGRADE=false to skip migrations at startup."
+            "Database migration failed. Fix the schema manually before restarting."
         ) from exc
 
 
 async def run_critical_startup() -> None:
     """Initialize critical startup dependencies required for core app behavior."""
+    from ...core.chroma_security import configure_chroma_environment
     from ...core.tracing import setup_tracing
     from ...services.embedder import get_embeddings
     from ...services.llm import get_llm
@@ -180,6 +194,7 @@ async def run_critical_startup() -> None:
     setup_tracing()
 
     init_sentry()
+    configure_chroma_environment()
 
     if settings.ENVIRONMENT != "dev" and not settings.API_KEY.get_secret_value():
         logger.critical(
@@ -195,15 +210,17 @@ async def run_critical_startup() -> None:
         await asyncio.wait_for(asyncio.to_thread(get_llm), timeout=30)
         logger.info("LLM singleton initialized")
     except TimeoutError:
+        record_best_effort_failure("llm_initialization")
         logger.warning("LLM initialization timed out after 30s; chat may fail on first use")
     except Exception as e:
+        record_best_effort_failure("llm_initialization")
         logger.warning("LLM initialization failed: %s; chat may fail on first use", e)
 
     init_traffic_controller()
 
     # Pre-initialize stream semaphore so concurrent requests never race on lazy init.
     try:
-        from ...api.routers.chat import set_stream_semaphore
+        from ...services.concurrency import set_stream_semaphore
 
         set_stream_semaphore(asyncio.Semaphore(settings.STREAM_CONCURRENT_LIMIT))
         logger.info("Stream semaphore initialized (limit=%d)", settings.STREAM_CONCURRENT_LIMIT)
@@ -237,30 +254,16 @@ async def run_critical_startup() -> None:
         embeddings = await asyncio.wait_for(asyncio.to_thread(get_embeddings), timeout=30)
         logger.info("Embeddings singleton initialized")
     except TimeoutError:
-        _retriever_needs_embeddings = settings.RAG_RETRIEVER_PROVIDER.lower() in (
-            "native",
-            "hybrid_multimodal",
-        )
-        if settings.ENVIRONMENT == "production" and _retriever_needs_embeddings:
-            raise RuntimeError(
-                "Embeddings initialization timed out in production with "
-                f"RAG_RETRIEVER_PROVIDER={settings.RAG_RETRIEVER_PROVIDER!r}. "
-                "This is a fatal startup error."
-            ) from None
+        record_best_effort_failure("embeddings_initialization")
         logger.warning("Embeddings initialization timed out after 30s; vector ops may fail")
         embeddings = None
     except Exception as e:
-        _retriever_needs_embeddings = settings.RAG_RETRIEVER_PROVIDER.lower() in (
-            "native",
-            "hybrid_multimodal",
-        )
-        if settings.ENVIRONMENT == "production" and _retriever_needs_embeddings:
-            raise RuntimeError(f"Embeddings initialization failed in production: {e}") from e
+        record_best_effort_failure("embeddings_initialization")
         logger.warning("Embeddings initialization failed: %s; vector ops may fail", e)
         embeddings = None
 
     if embeddings is not None:
-        max_retries = 3
+        max_retries = 1
         last_exc: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
@@ -291,6 +294,7 @@ async def run_critical_startup() -> None:
                     )
                     await asyncio.sleep(2 * attempt)
         if last_exc is not None:
+            record_best_effort_failure("embeddings_connectivity")
             logger.warning(
                 "Embedding connectivity check failed after %d attempts: %s. "
                 "Vector operations may fail until the embedding service is available.",
@@ -322,6 +326,7 @@ async def run_critical_startup() -> None:
         get_vectorstore()
         logger.info("Vector store singleton initialized")
     except Exception as e:
+        record_best_effort_failure("vectorstore_initialization")
         logger.warning("Vector store initialization failed: %s; retrieval may fail", e)
 
     try:
@@ -333,11 +338,22 @@ async def run_critical_startup() -> None:
         get_entity_vectorstore()
         logger.info("Memory/session/entity vectorstores pre-warmed")
 
+        from ...services.knowledge_graph._vectorstore import reconcile_orphan_entity_vectors
+        from ...services.memory._summary_vectorstore import reconcile_orphan_summary_vectors
         from ...services.memory._vectorstore import reconcile_orphan_memory_vectors
 
-        orphan_count = await asyncio.to_thread(reconcile_orphan_memory_vectors)
-        if orphan_count:
-            logger.info("Cleaned up %d orphan memory vectors from prior crash", orphan_count)
+        memory_orphans, summary_orphans, entity_orphans = await asyncio.gather(
+            asyncio.to_thread(reconcile_orphan_memory_vectors),
+            asyncio.to_thread(reconcile_orphan_summary_vectors),
+            asyncio.to_thread(reconcile_orphan_entity_vectors),
+        )
+        if memory_orphans or summary_orphans or entity_orphans:
+            logger.info(
+                "Cleaned orphan vectors: memory=%d session_summary=%d entity=%d",
+                memory_orphans,
+                summary_orphans,
+                entity_orphans,
+            )
     except Exception:
         record_best_effort_failure("vectorstore_pre_warm")
         logger.warning("Vectorstore pre-warm failed (non-fatal)", exc_info=True)
@@ -357,15 +373,17 @@ async def run_critical_startup() -> None:
         from ...services.rag._raganything import is_raganything_available
 
         if not is_raganything_available():
-            raise RuntimeError(
-                "RAGANYTHING_ENABLED=true but the 'raganything' package is not installed. "
-                "Run: uv sync --extra multimodal"
+            record_best_effort_failure("raganything_unavailable")
+            logger.warning(
+                "RAGANYTHING_ENABLED=true but the package is unavailable; "
+                "multimodal retrieval will degrade to its configured fallback"
             )
-        from ...services.rag._raganything import _get_raganything
+        else:
+            from ...services.rag._raganything import _get_raganything
 
-        try:
-            await asyncio.to_thread(_get_raganything)
-            logger.info("RAGAnything pre-warmed")
-        except Exception as exc:
-            record_best_effort_failure("raganything_pre_warm")
-            logger.warning("RAGAnything pre-warm failed (continuing): %s", exc, exc_info=True)
+            try:
+                await asyncio.to_thread(_get_raganything)
+                logger.info("RAGAnything pre-warmed")
+            except Exception as exc:
+                record_best_effort_failure("raganything_pre_warm")
+                logger.warning("RAGAnything pre-warm failed (continuing): %s", exc, exc_info=True)

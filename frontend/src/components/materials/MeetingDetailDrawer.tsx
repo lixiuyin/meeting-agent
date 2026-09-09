@@ -1,8 +1,20 @@
+import MeetingReviewPanel from "../memory/MeetingReviewPanel";
+import { useIntl } from "react-intl";
 import { useCallback, useRef, useState } from "react";
-import { Alert, Button, Modal, message } from "antd";
+import { Alert, Button, Input, Modal, Spin, Tag, Timeline, message } from "antd";
 import { FileTextOutlined } from "@ant-design/icons";
 import type { MeetingDetailInfo, MeetingInfo, FileTimelineResponse } from "../../api/client";
-import { getFileTimeline, getMeetingAssetUrl, getMeetingFileUrl } from "../../api/client";
+import {
+  getFileTimeline,
+  getMeetingFileSemanticHistory,
+  getMeetingAssetUrl,
+  getMeetingFileUrl,
+  updateMeetingFileSemantics,
+  type ApprovalStatus,
+  type MaterialRole,
+  type BusinessDomain,
+  type MeetingFileSemanticEvent,
+} from "../../api/client";
 import {
   buildPerFileMarkdownBundle,
   createMarkdownZipBlob,
@@ -17,6 +29,7 @@ import { MeetingDetailHeader } from "./detail/MeetingDetailHeader";
 import { MeetingDocumentModal } from "./detail/MeetingDocumentModal";
 import { MeetingFilesSection } from "./detail/MeetingFilesSection";
 import type { DrawerFileItem } from "./detail/types";
+import { formatLocalTime } from "../../utils/time";
 
 const DETAIL_MODAL_WIDTH = "min(96vw, 980px)";
 const DETAIL_MODAL_BODY_MAX_HEIGHT = "calc(100vh - 140px)";
@@ -61,12 +74,23 @@ function MeetingDetailDrawerInner({
   onReprocessFile,
 }: MeetingDetailDrawerProps) {
   const [expandedSummaryFileId, setExpandedSummaryFileId] = useState<number | null>(null);
+  const intl = useIntl();
   const [timelineCache, setTimelineCache] = useState<Record<number, FileTimelineResponse>>({});
   const [timelineLoading, setTimelineLoading] = useState<Record<number, boolean>>({});
   const [timelineError, setTimelineError] = useState<Record<number, string | null>>({});
   const inflightTimelineRef = useRef<Set<number>>(new Set());
   const [pdfModal, setPdfModal] = useState<{ fileId: number } | null>(null);
   const [docModal, setDocModal] = useState<{ fileId: number } | null>(null);
+  const [semanticOverrides, setSemanticOverrides] = useState<Record<number, DrawerFileItem>>({});
+  const [rejectionDraft, setRejectionDraft] = useState<{
+    file: DrawerFileItem;
+    reason: string;
+  } | null>(null);
+  const [semanticHistory, setSemanticHistory] = useState<{
+    file: DrawerFileItem;
+    events: MeetingFileSemanticEvent[];
+    loading: boolean;
+  } | null>(null);
 
   useMainContentScrollLock(Boolean(docModal));
 
@@ -170,7 +194,66 @@ function MeetingDetailDrawerInner({
     onClose();
   };
 
-  const files = (detailFull?.files ?? []) as DrawerFileItem[];
+  const files = ((detailFull?.files ?? []) as DrawerFileItem[]).map(
+    (file) => semanticOverrides[file.id] ?? file,
+  );
+
+  const persistFileSemantics = useCallback(
+    async (
+      file: DrawerFileItem,
+      update: {
+        material_role?: MaterialRole;
+        business_domain?: BusinessDomain;
+        approval_status?: ApprovalStatus;
+        approval_reason?: string | null;
+      },
+    ) => {
+      try {
+        const response = await updateMeetingFileSemantics(detailMeeting.id, file.id, update);
+        const updated = response.data as unknown as DrawerFileItem;
+        setSemanticOverrides((previous) => ({
+          ...previous,
+          [file.id]: { ...file, ...updated },
+        }));
+        message.success("Evidence semantics updated; retrieval metadata rebuild was queued.");
+      } catch {
+        message.error("Failed to update evidence semantics.");
+      }
+    },
+    [detailMeeting.id],
+  );
+
+  const handleUpdateFileSemantics = useCallback(
+    async (
+      file: DrawerFileItem,
+      update: {
+        material_role?: MaterialRole;
+        approval_status?: ApprovalStatus;
+        business_domain?: BusinessDomain;
+      },
+    ) => {
+      if (update.approval_status === "rejected") {
+        setRejectionDraft({ file, reason: file.approval_reason ?? "" });
+        return;
+      }
+      await persistFileSemantics(file, update);
+    },
+    [persistFileSemantics],
+  );
+
+  const handleOpenSemanticHistory = useCallback(
+    async (file: DrawerFileItem) => {
+      setSemanticHistory({ file, events: [], loading: true });
+      try {
+        const response = await getMeetingFileSemanticHistory(detailMeeting.id, file.id);
+        setSemanticHistory({ file, events: response.data, loading: false });
+      } catch {
+        setSemanticHistory(null);
+        message.error("Failed to load evidence review history.");
+      }
+    },
+    [detailMeeting.id],
+  );
 
   return (
     <Modal
@@ -211,6 +294,13 @@ function MeetingDetailDrawerInner({
           </Button>
         </div>
 
+        <details style={{ marginBottom: 20 }}>
+          <summary style={{ cursor: "pointer", padding: 12 }}>
+            {intl.formatMessage({ id: "materials.reviewActions" })}
+          </summary>
+          <MeetingReviewPanel key={detailMeeting.id} meetingId={detailMeeting.id} />
+        </details>
+
         <MeetingFilesSection
           meetingId={detailMeeting.id}
           files={files}
@@ -224,6 +314,8 @@ function MeetingDetailDrawerInner({
           onDeleteFile={onDeleteFile}
           onOpenDocumentViewer={handleOpenDocumentViewer}
           onDownloadFileMarkdown={handleDownloadFileMarkdown}
+          onUpdateFileSemantics={handleUpdateFileSemantics}
+          onOpenSemanticHistory={(file) => void handleOpenSemanticHistory(file)}
         />
       </div>
 
@@ -257,6 +349,68 @@ function MeetingDetailDrawerInner({
           onReprocessFile={onReprocessFile}
         />
       )}
+
+      <Modal
+        open={!!rejectionDraft}
+        title="Reject meeting evidence"
+        okText="Reject and rebuild"
+        okButtonProps={{ danger: true, disabled: !rejectionDraft?.reason.trim() }}
+        onCancel={() => setRejectionDraft(null)}
+        onOk={() => {
+          if (!rejectionDraft?.reason.trim()) return;
+          const { file, reason } = rejectionDraft;
+          setRejectionDraft(null);
+          void persistFileSemantics(file, {
+            approval_status: "rejected",
+            approval_reason: reason.trim(),
+          });
+        }}
+      >
+        <p>Rejected evidence is excluded from current answers and automatic memory extraction.</p>
+        <Input.TextArea
+          aria-label="Rejection reason"
+          value={rejectionDraft?.reason ?? ""}
+          placeholder="Explain why this material must not support current conclusions"
+          rows={4}
+          onChange={(event) =>
+            setRejectionDraft((current) =>
+              current ? { ...current, reason: event.target.value } : current,
+            )
+          }
+        />
+      </Modal>
+
+      <Modal
+        open={!!semanticHistory}
+        title={`Evidence history · ${semanticHistory?.file.file_name ?? ""}`}
+        footer={null}
+        onCancel={() => setSemanticHistory(null)}
+      >
+        {semanticHistory?.loading ? (
+          <Spin />
+        ) : semanticHistory?.events.length ? (
+          <Timeline
+            items={semanticHistory.events.map((event) => ({
+              children: (
+                <div>
+                  <div>
+                    <Tag>revision {event.source_revision}</Tag>
+                    <Tag>{event.business_domain}</Tag>
+                    <Tag>{event.material_role}</Tag>
+                    <Tag color={event.approval_status === "rejected" ? "red" : "default"}>
+                      {event.approval_status}
+                    </Tag>
+                  </div>
+                  <div>{formatLocalTime(event.changed_at)}</div>
+                  {event.approval_reason && <div>{event.approval_reason}</div>}
+                </div>
+              ),
+            }))}
+          />
+        ) : (
+          <p>No review changes have been recorded yet.</p>
+        )}
+      </Modal>
     </Modal>
   );
 }

@@ -1,5 +1,6 @@
 import { Button, Modal, Spin } from "antd";
-import { getMeetingFileUrl, type FileTimelineResponse } from "../../../api/client";
+import { type FileTimelineResponse } from "../../../api/client";
+import { useMeetingFileUrl } from "../../../hooks/useMeetingFileUrl";
 import { getKindCapabilities } from "../../../types/fileKinds";
 import DocFileView from "../file-views/DocFileView";
 import ImageFileView from "../file-views/ImageFileView";
@@ -30,6 +31,7 @@ export function MeetingDocumentModal({
   onRetry,
   onReprocessFile,
 }: Props) {
+  const selectedFileUrl = useMeetingFileUrl(meetingId, selectedFile?.id ?? 0);
   return (
     <Modal
       title={fileName}
@@ -111,9 +113,16 @@ export function MeetingDocumentModal({
           );
         }
         if (timeline.kind === "captions") {
+          if (!selectedFileUrl) {
+            return (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <Spin size="small" />
+              </div>
+            );
+          }
           return (
             <ImageFileView
-              fileUrl={getMeetingFileUrl(meetingId, selectedFile.id)}
+              fileUrl={selectedFileUrl}
               fileName={selectedFile.file_name}
               captions={timeline.captions}
             />

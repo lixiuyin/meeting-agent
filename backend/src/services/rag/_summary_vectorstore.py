@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _COLLECTION_NAME = "meeting_files_summaries"
 
 _summary_store: Chroma | None = None
+_summary_store_embeddings_id: int | None = None
 _lock = threading.Lock()
 
 
@@ -38,9 +39,10 @@ def reset_summary_vectorstore() -> None:
     Called when embedding settings change so the collection is rebuilt
     against the new dimension.
     """
-    global _summary_store
+    global _summary_store, _summary_store_embeddings_id
     with _lock:
         _summary_store = None
+        _summary_store_embeddings_id = None
     logger.info("Summary vectorstore singleton reset")
 
 
@@ -51,11 +53,12 @@ def get_summary_vectorstore() -> Chroma:
     config and stored vectors causes the collection to be dropped and
     recreated rather than failing at query time.
     """
-    global _summary_store
-    if _summary_store is None:
+    global _summary_store, _summary_store_embeddings_id
+    embeddings = get_embeddings()
+    embeddings_id = id(embeddings)
+    if _summary_store is None or _summary_store_embeddings_id != embeddings_id:
         with _lock:
-            if _summary_store is None:
-                embeddings = get_embeddings()
+            if _summary_store is None or _summary_store_embeddings_id != embeddings_id:
                 expected_dim = _resolve_dimension(embeddings, settings.EMBEDDING_DIMENSION)
                 _ensure_collection_dimension(
                     str(settings.VECTOR_DB_DIR),
@@ -68,6 +71,7 @@ def get_summary_vectorstore() -> Chroma:
                     embedding_function=embeddings,
                     persist_directory=str(settings.VECTOR_DB_DIR),
                 )
+                _summary_store_embeddings_id = embeddings_id
     return _summary_store
 
 
@@ -146,25 +150,15 @@ def delete_file_summary(file_id: int) -> None:
     """Remove one file's summary vector. No-op if it doesn't exist."""
     store = get_summary_vectorstore()
     doc_id = _summary_doc_id(file_id)
-    try:
-        with _db_write_lock:
-            store._collection.delete(ids=[doc_id])
-    except Exception:
-        logger.warning("Summary vector delete failed for file %d", file_id, exc_info=True)
+    with _db_write_lock:
+        store._collection.delete(ids=[doc_id])
 
 
 def delete_meeting_summaries(meeting_id: int) -> None:
     """Remove all summary vectors belonging to a meeting."""
     store = get_summary_vectorstore()
-    try:
-        with _db_write_lock:
-            store._collection.delete(where={"meeting_id": int(meeting_id)})
-    except Exception:
-        logger.warning(
-            "Summary vector delete-by-meeting failed for meeting %d",
-            meeting_id,
-            exc_info=True,
-        )
+    with _db_write_lock:
+        store._collection.delete(where={"meeting_id": int(meeting_id)})
 
 
 def sync_missing_file_summary_vectors() -> int:
@@ -182,14 +176,21 @@ def sync_missing_file_summary_vectors() -> int:
 
     try:
         store = get_summary_vectorstore()
-        existing_payload = store._collection.get(include=[])
-        existing_ids = set(existing_payload.get("ids") or [])
+        existing_payload = store._collection.get(include=["metadatas"])
+        existing_ids = list(existing_payload.get("ids") or [])
+        existing_metadata = list(existing_payload.get("metadatas") or [])
+        existing_owners = {
+            str(doc_id): (metadata or {}).get("user_id")
+            for doc_id, metadata in zip(existing_ids, existing_metadata, strict=False)
+        }
 
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT id, meeting_id, file_name, file_type, summary "
-                "FROM meeting_files "
-                "WHERE summary IS NOT NULL AND TRIM(summary) != ''"
+                "SELECT mf.id, mf.meeting_id, mf.file_name, mf.file_type, mf.summary, "
+                "COALESCE(m.user_id, mf.user_id, 'default') AS user_id "
+                "FROM meeting_files mf "
+                "JOIN meetings m ON m.id = mf.meeting_id "
+                "WHERE mf.summary IS NOT NULL AND TRIM(mf.summary) != ''"
             ).fetchall()
     except Exception:
         logger.warning("File-summary vector sync enumeration failed", exc_info=True)
@@ -197,7 +198,9 @@ def sync_missing_file_summary_vectors() -> int:
 
     indexed = 0
     for row in rows:
-        if _summary_doc_id(row["id"]) in existing_ids:
+        doc_id = _summary_doc_id(row["id"])
+        user_id = row["user_id"] or "default"
+        if existing_owners.get(doc_id) == user_id:
             continue
         try:
             upsert_file_summary(
@@ -206,6 +209,7 @@ def sync_missing_file_summary_vectors() -> int:
                 meeting_id=row["meeting_id"],
                 file_name=row["file_name"],
                 file_type=row["file_type"],
+                extra_metadata={"user_id": user_id},
             )
             indexed += 1
         except Exception:

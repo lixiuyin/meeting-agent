@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "label_contract": {
+    "1": "effective: correct and advances the task",
+    "0": "neutral: valid exploration that neither advances nor harms the task",
+    "-1": "harmful: incorrect, invalid, or causes downstream failure",
+    "propagation": "After a harmful step, dependent steps remain harmful until an explicit correction."
+  },
+  "span_aliases": {
+    "parse_or_transcribe": ["parse", "transcribe"]
+  },
+  "metric_contract": {
+    "step_accuracy": "Successful observed required spans divided by all required spans across captured success trajectories; missing, running, or failed required spans are harmful.",
+    "first_error_accuracy": "Exact match between the predeclared expected_error_span and the earliest causal error_span; null when no labeled failure trace is captured.",
+    "error_type_accuracy": "Exact match between the predeclared exception class and the exception class recorded on the earliest causal error span."
+  },
+  "failure_cases": [
+    {
+      "id": "ingest_missing_file_record",
+      "runner": "ingest_missing_file",
+      "expected_error_span": "fetch_metadata",
+      "expected_error_type": "LookupError"
+    },
+    {
+      "id": "ingest_extraction_failure",
+      "runner": "ingest_extraction_failure",
+      "expected_error_span": "parse",
+      "expected_error_type": "RuntimeError"
+    },
+    {
+      "id": "ingest_index_failure",
+      "runner": "ingest_index_failure",
+      "expected_error_span": "index_meeting",
+      "expected_error_type": "ConnectionError"
+    },
+    {
+      "id": "ingest_persistence_failure",
+      "runner": "ingest_persistence_failure",
+      "expected_error_span": "db_persist",
+      "expected_error_type": "OSError"
+    },
+    {
+      "id": "chat_retrieval_failure",
+      "runner": "chat_retrieval_failure",
+      "expected_error_span": "retrieve",
+      "expected_error_type": "ConnectionError"
+    },
+    {
+      "id": "chat_generation_failure",
+      "runner": "chat_generation_failure",
+      "expected_error_span": "generate_answer",
+      "expected_error_type": "RuntimeError"
+    },
+    {
+      "id": "chat_persistence_failure",
+      "runner": "chat_persistence_failure",
+      "expected_error_span": "save_messages",
+      "expected_error_type": "OSError"
+    }
+  ],
+  "trajectories": {
+    "chat_success": {
+      "required_terminal_status": "success",
+      "required_spans": [
+        "pipeline",
+        "ensure_session",
+        "retrieve",
+        "build_context",
+        "generate_answer",
+        "save_messages"
+      ],
+      "required_artifacts": ["trace_id", "sources", "answer", "session_id"]
+    },
+    "ingest_success": {
+      "required_terminal_status": "success",
+      "required_spans": ["fetch_metadata", "parse_or_transcribe", "index_meeting", "db_persist"],
+      "required_artifacts": ["trace_id", "file_id", "ready_status"]
+    },
+    "failure": {
+      "required_terminal_status": "error",
+      "required_artifacts": ["trace_id", "error_span", "error_type", "terminal_status"],
+      "first_error_rule": "Record the earliest causally harmful step, not only the outer wrapper."
+    }
+  }
+}

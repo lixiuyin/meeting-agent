@@ -37,7 +37,7 @@ export function SourceDetailModal({ selectedCitation, onClose }: Props) {
             {formatSourceLocation(selectedCitation.source) ?? "No location metadata"}
           </div>
           <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-            Score: {(selectedCitation.source.score * 100).toFixed(0)}%
+            Retrieval score: {selectedCitation.source.score.toFixed(3)} (not a probability)
           </div>
           <div
             style={{

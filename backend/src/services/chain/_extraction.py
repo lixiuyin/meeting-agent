@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from ...core.config import settings
@@ -21,6 +22,22 @@ from ..tokenizer import count_tokens
 logger = logging.getLogger(__name__)
 
 _CHARS_PER_TOKEN = 3.5
+
+
+def _empty_facts_need_review(evidence: str | None) -> bool:
+    """Retry a silent omission of an explicit durable assertion, never fabricate one."""
+    from ...core.untrusted_material import has_embedded_directive
+
+    return bool(
+        evidence
+        and not has_embedded_directive(evidence)
+        and re.search(
+            r"\b(?:prefers?|owns|deadline|retention|decided|assigned)\b|"
+            r"首选|偏好|负责|截止|决定|留存|保留期限",
+            evidence,
+            re.IGNORECASE,
+        )
+    )
 
 
 def should_skip_extraction(question: str, answer: str) -> bool:
@@ -191,21 +208,37 @@ async def run_combined_extraction(
     session_id: str | None = None,
     meeting_ids: list[int] | None = None,
     file_ids: list[int] | None = None,
+    evidence_message_ids: list[int] | None = None,
+    evidence_text: str | None = None,
+    source_event_time: str | None = None,
+    evidence_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Extract facts + entities + relations in a single LLM call, then dispatch.
 
-    Returns {"facts_added": n, "entities_added": n, "relations_added": n}.
-    Falls back to {all zeros} on parse / LLM failure (caller already logs).
+    Returns extraction counts. Unparseable/non-text combined output falls back
+    to the legacy dedicated extractors; provider failures propagate so durable
+    jobs can retry instead of recording false success.
     """
-    if should_skip_extraction(question, answer):
+    # Retrieved or ingested evidence can contain a complete durable assertion
+    # in very few characters (especially CJK). The chat-length cost heuristic
+    # must never suppress authoritative evidence.
+    if not evidence_text and should_skip_extraction(question, answer):
         return {"facts_added": 0, "entities_added": 0, "relations_added": 0}
 
     from ..knowledge_graph import settings as _kg_settings
     from ..knowledge_graph._storage import _store_entities, _store_relations
-    from ..llm import cached_retry_invoke, get_combined_extraction_prompt, get_llm
+    from ..llm import (
+        cached_retry_invoke,
+        escape_prompt_data,
+        get_combined_extraction_prompt,
+        get_llm,
+    )
     from ..memory import memory_service
 
+    memory_enabled = settings.MEMORY_AUTO_EXTRACT
     kg_enabled = _kg_settings.KNOWLEDGE_GRAPH_ENABLED
+    if not memory_enabled and not kg_enabled:
+        return {"facts_added": 0, "entities_added": 0, "relations_added": 0}
 
     capped_answer = truncate_for_extraction(
         answer, settings.EXTRACTION_INPUT_MAX_TOKENS, settings.LLM_MODEL
@@ -215,27 +248,31 @@ async def run_combined_extraction(
     )
 
     existing_ctx = ""
-    try:
-        existing = memory_service.search_important(user_id, min_importance=2, limit=5)
-        if existing:
-            keys_only = ", ".join(m["key"] for m in existing)
-            existing_ctx = f"Known memory keys (avoid duplicates): {keys_only}\n\n"
-    except Exception:
-        logger.debug("Could not load existing memory keys for extraction context", exc_info=True)
+    if memory_enabled:
+        try:
+            existing = memory_service.search_important(user_id, min_importance=2, limit=5)
+            if existing:
+                keys_only = ", ".join(m["key"] for m in existing)
+                existing_ctx = f"Known memory keys (avoid duplicates): {keys_only}\n\n"
+        except Exception:
+            logger.debug(
+                "Could not load existing memory keys for extraction context",
+                exc_info=True,
+            )
 
     llm = get_llm()
     prompt_template = get_combined_extraction_prompt()
     prompt = prompt_template.format(
-        question=capped_question,
-        answer=capped_answer,
-        user_context=existing_ctx,
+        question=escape_prompt_data(capped_question),
+        answer=escape_prompt_data(capped_answer),
+        user_context=escape_prompt_data(existing_ctx),
     )
 
     try:
         response: Any = await asyncio.to_thread(cached_retry_invoke, llm, prompt)
     except Exception:
         logger.warning("Combined extraction LLM call failed", exc_info=True)
-        return {"facts_added": 0, "entities_added": 0, "relations_added": 0}
+        raise
 
     content = response.content
     if isinstance(content, list):
@@ -245,11 +282,37 @@ async def run_combined_extraction(
         content = "\n".join(text_parts)
         if not content.strip():
             logger.warning("Combined extraction received non-text-only response")
-            return {"facts_added": 0, "entities_added": 0, "relations_added": 0}
+            return await _run_legacy_extraction_fallback(
+                user_id=user_id,
+                question=question,
+                answer=answer,
+                session_id=session_id,
+                meeting_ids=meeting_ids,
+                file_ids=file_ids,
+                evidence_message_ids=evidence_message_ids,
+                evidence_text=evidence_text,
+                source_event_time=source_event_time,
+                evidence_refs=evidence_refs,
+                memory_enabled=memory_enabled,
+                kg_enabled=kg_enabled,
+            )
 
     parsed = _parse_combined(content)
     if not parsed:
-        return {"facts_added": 0, "entities_added": 0, "relations_added": 0}
+        return await _run_legacy_extraction_fallback(
+            user_id=user_id,
+            question=question,
+            answer=answer,
+            session_id=session_id,
+            meeting_ids=meeting_ids,
+            file_ids=file_ids,
+            evidence_message_ids=evidence_message_ids,
+            evidence_text=evidence_text,
+            source_event_time=source_event_time,
+            evidence_refs=evidence_refs,
+            memory_enabled=memory_enabled,
+            kg_enabled=kg_enabled,
+        )
 
     # M-6: Validate parsed output to prevent storage bloat from malformed
     # LLM output (overlong keys, invalid entity types, etc.).
@@ -261,17 +324,52 @@ async def run_combined_extraction(
     # request, which is an N+1 (5 facts + 8 entities = 13 sequential HTTP
     # calls). Issuing one batched embed_documents up front populates the
     # per-text LRU cache so each downstream call becomes a cache hit.
-    await _prewarm_extraction_embeddings(parsed)
-
-    facts_added = await _dispatch_facts(
-        user_id,
-        capped_question,
-        capped_answer,
-        parsed["facts"],
-        session_id,
-        meeting_ids=meeting_ids,
-        file_ids=file_ids,
+    await _prewarm_extraction_embeddings(
+        {
+            "facts": parsed["facts"] if memory_enabled else [],
+            "entities": parsed["entities"] if kg_enabled else [],
+            "relations": parsed["relations"] if kg_enabled else [],
+        }
     )
+
+    facts_added = 0
+    fallback_used = 0
+    if memory_enabled:
+        dispatch_diagnostics: dict[str, int] = {}
+        facts_added = await _dispatch_facts(
+            user_id,
+            capped_question,
+            capped_answer,
+            parsed["facts"],
+            session_id,
+            meeting_ids=meeting_ids,
+            file_ids=file_ids,
+            evidence_message_ids=evidence_message_ids,
+            evidence_text=evidence_text,
+            source_event_time=source_event_time,
+            evidence_refs=evidence_refs,
+            diagnostics=dispatch_diagnostics,
+        )
+        if facts_added == 0 and (
+            (parsed["facts"] and dispatch_diagnostics.get("validated", 0) == 0)
+            or (not parsed["facts"] and _empty_facts_need_review(evidence_text))
+        ):
+            fallback = await _run_legacy_extraction_fallback(
+                user_id=user_id,
+                question=question,
+                answer=answer,
+                session_id=session_id,
+                meeting_ids=meeting_ids,
+                file_ids=file_ids,
+                evidence_message_ids=evidence_message_ids,
+                evidence_text=evidence_text,
+                source_event_time=source_event_time,
+                evidence_refs=evidence_refs,
+                memory_enabled=True,
+                kg_enabled=False,
+            )
+            facts_added = fallback["facts_added"]
+            fallback_used = 1
 
     entities_added = 0
     relations_added = 0
@@ -284,14 +382,82 @@ async def run_combined_extraction(
                 meeting_ids=meeting_ids,
                 file_ids=file_ids,
             )
-            relations_added = await _store_relations(user_id, parsed["relations"], session_id)
+            relations_added = await _store_relations(
+                user_id,
+                parsed["relations"],
+                session_id,
+                evidence_message_ids=evidence_message_ids,
+                evidence_text=evidence_text or question,
+            )
         except Exception:
             logger.warning("Entity/relation storage failed", exc_info=True)
+            # A durable extraction job must retry partial graph writes instead
+            # of reporting a clean success with missing provenance edges.
+            raise
 
     return {
         "facts_added": facts_added,
+        "facts_candidates": len(parsed["facts"]) if memory_enabled else 0,
+        "facts_rejected": max(0, len(parsed["facts"]) - facts_added) if memory_enabled else 0,
+        "fallback_used": fallback_used,
         "entities_added": entities_added,
         "relations_added": relations_added,
+    }
+
+
+async def _run_legacy_extraction_fallback(
+    *,
+    user_id: str,
+    question: str,
+    answer: str,
+    session_id: str | None,
+    meeting_ids: list[int] | None,
+    file_ids: list[int] | None,
+    evidence_message_ids: list[int] | None,
+    evidence_text: str | None,
+    source_event_time: str | None,
+    evidence_refs: list[dict[str, Any]] | None,
+    memory_enabled: bool,
+    kg_enabled: bool,
+) -> dict[str, int]:
+    """Run dedicated extractors after combined-output failure."""
+    from ..knowledge_graph import kg_service
+    from ..memory import memory_service
+
+    facts_added = 0
+    if memory_enabled:
+        facts_added = await memory_service.auto_extract_facts(
+            user_id,
+            question,
+            answer,
+            session_id=session_id,
+            meeting_ids=meeting_ids,
+            file_ids=file_ids,
+            evidence_message_ids=evidence_message_ids,
+            evidence_text=evidence_text,
+            source_event_time=source_event_time,
+            evidence_refs=evidence_refs,
+        )
+    graph_result = {"entities_added": 0, "relations_added": 0}
+    if kg_enabled:
+        graph_result = await kg_service.extract_entities(
+            user_id,
+            question,
+            answer,
+            session_id=session_id,
+            meeting_ids=meeting_ids,
+            file_ids=file_ids,
+            evidence_message_ids=evidence_message_ids,
+            evidence_text=evidence_text,
+            raise_on_error=True,
+        )
+    return {
+        "facts_added": facts_added,
+        "facts_candidates": 0,
+        "facts_rejected": 0,
+        "fallback_used": 1,
+        "entities_added": int(graph_result.get("entities_added", 0)),
+        "relations_added": int(graph_result.get("relations_added", 0)),
     }
 
 
@@ -455,6 +621,11 @@ async def _dispatch_facts(
     *,
     meeting_ids: list[int] | None = None,
     file_ids: list[int] | None = None,
+    evidence_message_ids: list[int] | None = None,
+    evidence_text: str | None = None,
+    source_event_time: str | None = None,
+    evidence_refs: list[dict[str, Any]] | None = None,
+    diagnostics: dict[str, int] | None = None,
 ) -> int:
     """Reuse memory service parsing + dedup + storage on pre-parsed fact dicts."""
     from ..memory import memory_service
@@ -470,23 +641,46 @@ async def _dispatch_facts(
         question=question,
         answer=answer,
         max_facts=settings.MEMORY_MAX_FACTS_PER_TURN,
+        evidence_text=evidence_text,
     )
+    if diagnostics is not None:
+        diagnostics["validated"] = len(facts)
     added = 0
+    failures: list[str] = []
     for fact in facts:
         try:
-            memory_service.set(
+            stored = await memory_service.store_extracted_fact(
                 user_id,
-                fact.key,
-                fact.value,
-                source="auto_extracted",
+                key=fact.key,
+                value=fact.value,
                 importance=fact.importance,
                 expires_at=fact.expires_at,
                 category=fact.category,
+                confidence=fact.confidence,
+                fact_type=fact.fact_type,
+                project_id=fact.project_id,
+                subject=fact.subject,
+                predicate=fact.predicate,
+                object_value=fact.object_value,
+                valid_from=fact.valid_from or source_event_time,
+                valid_to=fact.valid_to,
+                evidence_quote=fact.evidence_quote,
+                action_status=fact.action_status,
+                assignee=fact.assignee,
+                due_at=fact.due_at,
+                question=question,
+                answer=answer,
                 session_id=session_id,
                 meeting_ids=meeting_ids,
                 file_ids=file_ids,
+                evidence_message_ids=evidence_message_ids,
+                evidence_text=evidence_text,
+                evidence_refs=evidence_refs,
             )
-            added += 1
+            added += int(stored)
         except Exception:
-            logger.debug("Failed to persist extracted fact %s", fact.key, exc_info=True)
+            failures.append(fact.key)
+            logger.warning("Failed to persist extracted fact %s", fact.key, exc_info=True)
+    if failures:
+        raise RuntimeError("failed to persist extracted facts: " + ", ".join(failures))
     return added

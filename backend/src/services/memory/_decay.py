@@ -6,7 +6,7 @@ import time
 from ...core import database as db
 from ...core.database import get_write_connection
 from . import settings
-from ._common import _DECAY_RATE_PER_DAY, _MEMORY_TTL_DAYS, logger
+from ._common import logger
 
 # ---- Background decay loop ----
 _decay_loop_task: "asyncio.Task[None] | None" = None
@@ -14,9 +14,9 @@ _decay_stop_event: asyncio.Event = asyncio.Event()
 
 
 def _compute_decay_score(
-    importance: int,
+    importance: float,
     last_accessed: str | None,
-    decay_rate: float = _DECAY_RATE_PER_DAY,
+    decay_rate: float | None = None,
     created_at: str | None = None,
     expires_at: str | None = None,
 ) -> float:
@@ -30,6 +30,8 @@ def _compute_decay_score(
     immediately so expired memories are short-circuited without further
     computation.
     """
+    if decay_rate is None:
+        decay_rate = float(settings.MEMORY_DECAY_RATE_PER_DAY)
     if expires_at is not None:
         try:
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S+00:00"):
@@ -64,53 +66,47 @@ def _compute_decay_score(
     except (ValueError, TypeError):
         return float(importance)
     days_elapsed = (time.time() - last_ts) / 86400
-    if days_elapsed > _MEMORY_TTL_DAYS:
+    if days_elapsed > settings.MEMORY_TTL_DAYS:
         return 0.0
     return importance * math.exp(-decay_rate * days_elapsed)
 
 
 def _get_last_decay_time(user_id: str) -> str | None:
     """Get the last decay time for a user from the decay state table."""
-    try:
-        with db.get_connection() as conn:
-            row = conn.execute(
-                "SELECT last_decay_time FROM memory_decay_state WHERE user_id=?",
-                (user_id,),
-            ).fetchone()
-            return row["last_decay_time"] if row else None
-    except Exception:
-        logger.warning("Failed to get last decay time for user %s", user_id, exc_info=True)
-        return None
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT last_decay_time FROM memory_decay_state WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        return row["last_decay_time"] if row else None
 
 
 def _set_last_decay_time(user_id: str) -> None:
     """Set the last decay time for a user."""
-    try:
-        with get_write_connection() as conn:
-            conn.execute(
-                """INSERT INTO memory_decay_state (user_id, last_decay_time)
-                   VALUES (?, CURRENT_TIMESTAMP)
-                   ON CONFLICT(user_id) DO UPDATE SET last_decay_time=CURRENT_TIMESTAMP""",
-                (user_id,),
-            )
-    except Exception:
-        logger.warning("Failed to set last decay time for user %s", user_id, exc_info=True)
+    with get_write_connection() as conn:
+        conn.execute(
+            """INSERT INTO memory_decay_state (user_id, last_decay_time)
+               VALUES (?, CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET last_decay_time=CURRENT_TIMESTAMP""",
+            (user_id,),
+        )
 
 
 def _get_active_user_ids() -> list[str]:
     """Get all user IDs that have memories in the database."""
-    try:
-        with db.get_connection() as conn:
-            rows = conn.execute("SELECT DISTINCT user_id FROM user_memories").fetchall()
-            return [r["user_id"] for r in rows]
-    except Exception:
-        logger.warning("Failed to get active user IDs for decay", exc_info=True)
-        return []
+    with db.get_connection() as conn:
+        rows = conn.execute("SELECT DISTINCT user_id FROM user_memories").fetchall()
+        return [r["user_id"] for r in rows]
 
 
 async def start_memory_decay_loop() -> None:
     """Background loop that runs decay every decay_interval_hours."""
     global _decay_loop_task, _decay_stop_event
+    if _decay_stop_event.is_set():
+        # An ASGI lifespan may be started more than once in the same process
+        # (embedded servers and TestClient both do this). A shutdown signal from
+        # the previous lifespan must not permanently disable decay processing.
+        _decay_stop_event = asyncio.Event()
     logger.info(
         "Memory decay loop started (interval: %d hours)",
         settings.MEMORY_DECAY_INTERVAL_HOURS,
@@ -148,10 +144,15 @@ async def start_memory_decay_loop() -> None:
                                 exc_info=True,
                             )
 
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *[_process_user(uid) for uid in user_ids],
                 return_exceptions=True,
             )
+            failures = [result for result in results if isinstance(result, BaseException)]
+            if failures:
+                for failure in failures:
+                    logger.error("Memory decay user task failed: %s", failure)
+                raise RuntimeError(f"{len(failures)} memory decay user task(s) failed")
             consecutive_failures = 0
         except Exception:
             logger.exception("Decay loop error")

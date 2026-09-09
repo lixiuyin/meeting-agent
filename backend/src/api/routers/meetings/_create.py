@@ -29,21 +29,22 @@ async def create_meeting(
 
     def _create():
         with get_write_connection() as conn:
-            return db.create_meeting(
+            meeting_id = db.create_meeting(
                 conn,
                 title=body.title,
                 description=body.description,
                 meeting_date=body.meeting_date.isoformat() if body.meeting_date else None,
                 user_id=principal["user_id"],
             )
+            response = CreateMeetingResponse(
+                meeting_id=meeting_id,
+                message="Meeting created successfully",
+            )
+            guard.save_in_transaction(conn, response.model_dump(mode="json"))
+            return response
 
-    meeting_id = await asyncio.to_thread(_create)
+    response = await asyncio.to_thread(_create)
+    await guard.finish_transaction()
 
-    audit_log("create", "meeting", meeting_id, detail=f"title={body.title}")
-
-    response = CreateMeetingResponse(
-        meeting_id=meeting_id,
-        message="Meeting created successfully",
-    )
-    await guard.save(response.model_dump(mode="json"))
+    audit_log("create", "meeting", response.meeting_id, detail=f"title={body.title}")
     return response

@@ -1,90 +1,174 @@
-# 记忆系统 & 知识图谱
+# Memory system & knowledge graph
 
-> 长期记忆（事实 / 偏好 / 目标）与知识图谱（实体 + 关系）的实现细节。
+**Verified against backend and frontend implementation:** 2026-09-09.
+
+The subsystem is not a single vector search. SQLite owns the fact ledger,
+projects, lifecycle, business/system time, provenance, audit data, sessions,
+entities, and relations. Chroma contains rebuildable semantic indexes. A
+SQLite-backed durable queue separates response latency from extraction and
+re-indexing, while revision/source fences prevent stale jobs from publishing.
+The `/memory` UI exposes seven views: Projects, Memories, Decisions & tasks,
+State changes, Meeting review, Entities, and Past Sessions.
+
+The current architecture and its storage boundaries are summarized in the
+[repository-level diagram](../../docs/diagrams/memory-and-kg.md). Evaluation
+protocols and the currently published evidence are documented in
+[`benchmarking.md`](./benchmarking.md) and the
+[documentation index](../../docs/README.md#historical-audits-and-implementation-records).
+
+> Implementation details of long-term memory (facts/preferences/goals) and knowledge graph (entities + relationships).
 >
-> 代码位置：
-> - `backend/src/services/memory/` — 记忆服务（提取、衰减、合并、画像、搜索、历史、会话摘要）
->   - `_entry.py` — 顶层入口（`MemoryEntry` dataclass，统一记忆条目结构）
->   - `_service/` — 核心服务层（CRUD、搜索、提取、合并、衰减同步、画像）
->   - `_summary_service.py` — 会话摘要服务（跨会话记忆）
->   - `_summary_vectorstore.py` / `_vectorstore.py` — 摘要与记忆向量库封装
->   - `_history.py` — `SQLiteChatMessageHistory`（LangChain 兼容）
->   - `_extractor.py` — 底层事实提取器
->   - `_parsers.py` — 提取 / 合并 / 聚类解析
->   - `_decay.py` — 衰减分数计算
-> - `backend/src/services/knowledge_graph/` — 实体 / 关系 / 向量化
+> Code location:
+> - `backend/src/services/memory/` — memory services (extraction, decay, merge, profiling, search, history, session summary)
+> - `_entry.py` — top-level entry (`MemoryEntry` dataclass, unified memory entry structure)
+> - `_service/` — core service layer (CRUD, search, extraction, merge, decay synchronization, portrait)
+> - `_summary_service.py` — Session summary service (memory across sessions)
+> - `_summary_vectorstore.py` / `_vectorstore.py` — summary and memory vector library encapsulation
+> - `_history.py` — `SQLiteChatMessageHistory` (LangChain compatible)
+> - `_extractor.py` — low-level fact extractor
+> - `_parsers.py` — extract/merge/cluster parsing
+> - `_decay.py` — Decay fraction calculation
+> - `backend/src/services/knowledge_graph/` — entities/relationships/vectorization
 
-## 1. 为什么需要长期记忆
+## 1. Why long-term memory is needed
 
-会议助手面对的是**跨会话、跨时间的用户上下文**：用户偏好、组织结构、重复出现的项目……这些信息不属于任何单次会议记录，但会反复出现在对话里。系统将它们提取出来、独立存储、周期性衰减与合并，实现"AI 记得我"的体验。
+The meeting assistant faces **cross-session and cross-time user context**: user preferences, organizational structure, recurring items... This information does not belong to any single meeting record, but will appear repeatedly in the conversation. The system extracts them, stores them independently, and periodically decays and merges them to achieve the "AI remembers me" experience.
 
-## 2. 总体架构
+## 2. Overall architecture
 
 ```
- 对话流（chain pipeline）
+ Conversation flow (chain pipeline)
       │
-      ├─► 生成答案
+      ├─► Generate answer
       │
       ▼
  schedule_fact_extraction(ctx)
-      │
+      │ commit before producer returns
       ▼
- MemoryService.auto_extract_facts()
-      │                           ┌──► LLM prompt: get_fact_extraction_prompt()
-      │                           │
-      ├─► 从最近消息里抽 fact ─────┤
-      │                           └──► 解析 JSON → list[FactCandidate]
+ durable_jobs(kind=fact_extraction)
+      │ lease / retry / dead-letter
+      ▼
+ run_fact_extraction_job() → MemoryService.auto_extract_facts()
+      │ ┌──► LLM prompt: get_fact_extraction_prompt()
+      │ │
+      ├─► Extract facts from the latest dialogue turn ─┤
+      │ └──► Parse JSON → list[FactCandidate]
       │
-      ├─► 对每条 fact：
-      │     ├─ upsert user_memories (unique user_id+key)
-      │     ├─ 写入 embedding id → Chroma（memories collection）
-      │     └─ 更新 `last_accessed` / `access_count`
+      ├─► For each fact:
+      │ ├─ upsert user_memories (unique user_id+key)
+      │ ├─ Write embedding id → Chroma (memories collection)
+      │ └─ Update `last_accessed` / `access_count`
       │
-      └─► 触发 KnowledgeGraphService.extract_entities()
+      └─► Trigger KnowledgeGraphService.extract_entities()
             ├─ LLM prompt: get_entity_extraction_prompt()
             ├─ upsert memory_entities
-            └─ upsert memory_relations（解析为 subject_id / object_id + predicate）
+            └─ upsert memory_relations (resolved as subject_id / object_id + predicate)
+
+ Ingest flow (independent of chat questions)
+      │
+      └─► ready file transcript/document text
+            ├─ bounded overlapping evidence windows
+            ├─ durable content-addressed `fact_extraction` jobs
+            └─ exact meeting/file scope + verbatim evidence quote
 ```
 
-## 3. 数据模型回顾
+## 3. Data model review
 
-（详见 [`database.md`](./database.md)）
+(See [`database.md`](./database.md) for details)
 
-- **`user_memories`**：`(user_id, key)` 唯一；存 `value`、`category`、`importance`（REAL）、`expires_at`、`embedding_id`、`last_accessed` / `access_count`、`session_id` / `turn_index`（溯源）、`superseded_by` / `relevance_score` 等（完整列见 [`database.md`](./database.md)）
-- **`memory_decay_state`**：每用户一行，记录上次衰减时间（列名以 `_migrations.py` / 仓储 SQL 为准）
-- **`memory_entities`**：`(user_id, name, entity_type)` 唯一；`description`、`embedding_id`、出现次数与会话溯源字段等
-- **`memory_relations`**：外键 **`subject_id` / `object_id`** 指向 `memory_entities.id`，`predicate` 表示关系类型；`(user_id, subject_id, predicate, object_id)` 唯一。LLM 侧可能输出实体名称，入库前解析为 id（见 `knowledge_graph` 服务与 `core/database/knowledge_graph.py`）
-- **`memory_scopes`**：记忆的作用域关联（meeting_id / file_id），用于限定检索范围
-- **`entity_scopes`**：实体的作用域关联，与 `memory_scopes` 对称
-- **`memory_audit_log`**：记忆变更审计日志，记录 CRUD 操作的上下文
+- **`user_memories`**: `(user_id, key)` is unique. `salience` is the stable user/extraction judgment; `freshness_score` decays independently; `confidence` records evidence quality; `usefulness_score` is updated only through explicit feedback. `valid_from` / `valid_to`, evidence message IDs/excerpt, and conflict links make assertions temporal and auditable. `importance` remains a compatibility alias for salience.
+- **`memory_decay_state`**: One row per user, recording the last decay time (column names are subject to `_migrations.py` / warehousing SQL)
+- **`memory_entities`**: `(user_id, name, entity_type)` unique; `description`, `embedding_id`, number of occurrences and session traceability fields, etc.
+- **`memory_relations`**: foreign key **`subject_id` / `object_id`** points to `memory_entities.id`; relations carry confidence, evidence message IDs, and validity timestamps. `(user_id, subject_id, predicate, object_id)` is unique and a repeated assertion refreshes its provenance.
+- **`memory_scopes`**: memory scope association (meeting_id / file_id), used to limit the retrieval scope
+- **`entity_scopes`**: Entity scope association, symmetrical with `memory_scopes`
+- **`memory_audit_log`**: Memory change audit log, recording the context of CRUD operations
+- **`memory_fact_versions`**: append-only assertion snapshots keyed by
+  `(memory_id, revision)`. `valid_from` / `valid_to` describe when the fact is
+  true in the business world; `recorded_at` / `recorded_to` describe when that
+  version was known by this system. A later transition may close either open
+  interval without rewriting the captured value or provenance. Every upsert, CAS
+  edit, supersession, dispute, confirmation, and retraction
+  retains the value, validity window, confidence, evidence, project, and scope
+  that were authoritative at that revision.
+- Action items additionally expose indexed `action_status`, `assignee`, and
+  `due_at` fields for deterministic open/completed/overdue lists.
 
-## 4. 事实提取（Fact Extraction）
+Current facts are typed as `preference`, `project_fact`, `decision`,
+`action_item`, or `fact`, and carry a lifecycle state: `pending`, `confirmed`,
+`disputed`, `superseded`, or `retracted`. Only `confirmed` facts are eligible
+for answer-time recall. Retraction is reversible/auditable and is distinct from
+hard deletion for privacy or retention requests.
 
-代码：`services/memory/_service/_extraction.py`。
+## 4. Fact Extraction
 
-### 4.1 提取时机
+Code: `services/memory/_service/_extraction.py`.
 
-- **每轮对话结束**后由 `services/chain/_steps_generate.py` 调用 `schedule_fact_extraction(ctx)`
-- 提取是**后台异步**的（`asyncio.create_task(...)`），不阻塞响应返回
-- 失败时写入 `ctx.failed_extraction_count`，不抛给调用方
+### 4.0 Public operating modes
 
-### 4.2 模式：`MEMORY_EXTRACTION_MODE`
+Clients select one stable `memory_mode` instead of coordinating individual
+thresholds:
+
+| Mode | Recall | Extraction | Knowledge graph | Intended use |
+| --- | --- | --- | --- | --- |
+| `off` | disabled, including past-session summaries | disabled | disabled | no long-term personalization |
+| `focused` | up to 3 items, single-hop | precise | disabled | low latency and low noise |
+| `balanced` | configured production defaults | balanced | configured default | normal use |
+| `deep` | up to 8 items, multi-hop | aggressive | enabled | complex cross-session reasoning |
+
+The selected mode is captured in the immutable request snapshot and copied
+into the durable extraction job. A restarted worker therefore replays the
+originating mode rather than whichever global settings happen to be active
+later. Low-level settings remain deployment-level escape hatches.
+`off` is also enforced independently at the fact, entity/KG, and prior-session
+context steps. Their trace spans are marked as skipped with
+`skip_reason=memory_mode_off`, so the boundary does not depend only on the outer
+orchestration snapshot.
+
+Before memory, entity, summary, contradiction, consolidation, or profile text
+is inserted into an LLM prompt, structural markup is escaped. This prevents
+stored content from closing its trusted data wrapper and opening a forged
+prompt section; system-level data-only instructions remain in place as a
+second layer.
+
+### 4.1 Extraction timing
+
+- **Schedule_fact_extraction(ctx)` is called by `services/chain/_steps_generate.py` after each round of dialogue**
+- The extraction is persisted as a restart-safe durable job and does not block the response return
+- `memory_mode=off` does not enqueue an extraction job
+- Write `ctx.failed_extraction_count` on failure and do not throw it to the caller
+- Successful file ingestion also schedules extraction directly from bounded,
+  overlapping source windows. Meeting/project memory coverage no longer
+  depends on which passages users later retrieve in chat. Every source window
+  is scheduled; the legacy per-file setting is only a cooperative scheduling
+  burst size and never drops the document tail. Each job carries the immutable
+  file revision, character range, content hash, and source event time. A worker
+  discards a job if the file was deleted or replaced before execution. The same
+  source revision is fenced again inside every outer SQL write transaction, so
+  a deletion or replacement during the LLM call rolls the derived write back.
+  Chat-triggered jobs preserve every retrieved evidence coordinate (meeting,
+  file, page/slide, media timestamps, chunk index, and document revision) and
+  carry a revision fence for every referenced file. A multi-file job is rejected
+  if even one referenced file is missing, replaced, or lacks a matching fence;
+  it is never committed against a partially current evidence set.
+
+### 4.2 Mode: `MEMORY_EXTRACTION_MODE`
 
 ```python
 _mode_limits = {
-    "precise":    1,                             # 极保守，仅关键事实
-    "balanced":   settings.MEMORY_MAX_FACTS_PER_TURN,  # 默认 3
-    "aggressive": 5,                             # 尽量多
+    "precise": 1, # Extremely conservative, only key facts
+    "balanced": settings.MEMORY_MAX_FACTS_PER_TURN, #default 3
+    "aggressive": 5, # as many as possible
 }
 ```
 
-- **precise**：只提取最明显的 1 条事实；并且**跳过知识图谱实体提取**以降低噪声
-- **balanced**：常规生产模式
-- **aggressive**：训练数据收集 / 用户画像冷启动阶段用
+- **precise**: Extract only the most obvious 1 fact; and **skip knowledge graph entity extraction** to reduce noise
+- **balanced**: regular production mode
+- **aggressive**: training data collection/user portrait cold start phase
 
-### 4.3 上下文注入
+### 4.3 Context injection
 
-提取 prompt 中会附带**当前已有的 top-N 重要记忆**，让 LLM 知道哪些事实已经存在，避免反复提取相同内容：
+The extraction prompt will be accompanied by **currently existing top-N important memories** to let LLM know which facts already exist and avoid repeatedly extracting the same content:
 
 ```python
 existing = memory_service.list_important(user_id, limit=10)
@@ -95,124 +179,299 @@ prompt = get_fact_extraction_prompt(
 )
 ```
 
-### 4.4 去重与替换
+### 4.4 Deduplication and replacement
 
-新提取的 fact 按 `key` upsert：
+Each fact is compared against both high-salience rows and vector-nearest
+neighbours. Exact, multilingual lexical, and semantic duplicates are collapsed;
+conflicting values go through the contradiction resolver. Same-key updates are
+retained as append-only assertion revisions. Different-key replacements record
+`superseded_by`; unresolved same-key conflicts are stored under a deterministic
+candidate key with `disputed` status instead of being silently discarded.
+Semantic duplicate lookup uses the candidate's meeting/file scope, preventing a
+same-named person or project in another meeting from being treated as the same
+fact. Automatic extraction never uses the assistant's generated answer as its
+own evidence: candidates must be supported by the user's explicit message or by
+the retrieved source chunks persisted with the durable extraction job. Local
+clause matching includes English and Chinese negation/unknown polarity checks.
+The extraction schema also carries explicit fact type, project, subject,
+predicate, object, validity window, action state/owner/deadline, and a verbatim
+`evidence_quote`. A supplied quote must occur in the authoritative input.
+Identity-bearing names/codes, polarity, and multilingual value coverage are
+checked against the same local evidence clause. Unsupported optional routing
+metadata is stripped while the verbatim assertion is retained; contradictory
+directional fields still fail closed. If the model paraphrases the display
+value but supplies an exact source quote, that quote becomes the stored value
+instead of treating the paraphrase as evidence. Model confidence alone never
+confirms an assertion: automatic confirmation requires literal support for the
+asserted value inside its authoritative quote; all other candidates remain
+`pending`. Repeated observations merge scope and append a versioned,
+source-window evidence record. Deleting a file removes its scope and evidence
+references; a source-extracted assertion is retracted only after its final file
+source disappears.
 
-- **同 key 存在** → 比较 `relevance_score` / 时间戳，决定是更新 `value` 还是保留
-- **合并**时把旧 id 写入新记录的 `superseded_by`（审计追踪）
+Stable logical keys are derived from project/entity/predicate identity rather
+than the current object value (for example, an owner change retains one
+`...owner` identity). Exact-key lookup is performed before scoped semantic
+deduplication. Writes use revision compare-and-swap, so concurrent workers
+cannot silently overwrite a newer assertion. A disputed candidate is confirmed
+through `POST /api/v1/memory/resolve-conflict`, which checks the expected winner
+revision and atomically supersedes every selected declared alternative.
 
-## 5. 记忆衰减
+Directional owner/assignee constructions receive an additional tuple check:
+the asserted owner and target must match the same parsed source relation. A
+known model schema inversion (`subject=owner`, `object=owned item`) is repaired
+only when the human-readable assertion independently matches the quote.
+This prevents token-equivalent reversals such as “Bob replaced Alice” being
+stored as “Alice replaced Bob”. Recognized older source events cannot overwrite
+a newer materialized value; they are retained as disputed candidates for
+review. Memory and knowledge-graph extraction share the same assertion
+validator: subject, predicate cue, object, polarity, and direction must occur
+inside one locally assertive clause. Questions, conditions, attributed claims,
+proposals/future statements, negations, empty evidence, and cross-sentence token
+synthesis cannot create a confirmed assertion.
 
-代码：`services/memory/_decay.py` + `_service/_decay_sync.py`。
+### 4.5 Task-specific recall and user control
 
-### 5.1 公式
+Queries about decisions, action items, owners, deadlines, risks, dependencies,
+or current project status first run an exact typed SQL lookup, then add semantic
+neighbours. Known project identifiers are resolved before limiting. Open,
+completed, and overdue task queries use indexed action state/deadline predicates;
+explicit historical markers can apply a fact-validity cutoff. `valid_at`
+selects business time and `known_at` selects system/transaction time; API values
+must include an explicit UTC offset so browser-local times cannot be silently
+reinterpreted. For
+historical queries, current semantic recall is excluded so the answer receives
+one coherent bitemporal snapshot across all fact types. Current-only profile, entity
+graph, and session-summary views are also omitted until they implement the same
+valid-time API. Exhaustive typed queries do
+not apply a row cap; if the final prompt still exceeds its token budget,
+generation receives an explicit truncation warning and must not claim the list
+is complete.
+Meeting/file scope is pushed into vector retrieval as a SQL-derived key
+allow-list; the final SQL validation remains defense in depth.
+
+Natural absolute cutoffs such as `as of 2025-03-01`,
+`截至2025年3月1日`, and `截止到 2025/03/01` are normalized once in the
+shared query plan. Comparison questions retain every explicitly named cutoff
+and load a separately labelled memory snapshot for each one; a single latest
+date is never silently substituted for a multi-date comparison. Document
+`date_to` remains an independent corpus filter, while explicit `valid_at` and
+`known_at` remain authoritative memory coordinates. Relative phrases without
+an absolute date are deliberately not guessed.
+
+The Memory page maps the storage and governance model into these views:
+
+| View | What it exposes | Main contract |
+|---|---|---|
+| Projects | Project directory, aliases, linked materials, preparation shortcuts | project revisions prevent silent concurrent overwrite |
+| Memories | Personal/project facts and reference knowledge; CRUD, import/export, decay, feedback, lifecycle and vector state | virtualized records scroll inside the bounded card; filters remain visible |
+| Decisions & tasks | Deterministic decision/action/project-fact lists with project, assignee, status, due date, material, `valid_at`, and `known_at` filters | SQL query and stable paging, not semantic top-k pretending to be exhaustive |
+| State changes | Before/after bitemporal comparison | compares authoritative fact revisions |
+| Meeting review | Evidence-backed candidates, conflicts, source links, confirm/retract/edit actions | snapshot paging and expected revision protect review consistency |
+| Entities | Entity search, relations, batch delete, and alias merge | SQLite graph is authoritative; vectors accelerate lookup |
+| Past Sessions | Session summaries and cross-session context | episodic summaries remain separate from typed facts |
+
+Fact cards display type, lifecycle state, project, task owner/deadline,
+business/system-time validity, source scope, evidence, and vector health. Each
+file-backed evidence record links to its meeting/material location. Users can
+filter, edit typed/temporal fields, confirm, dispute/retract, open sources, and
+inspect immutable revisions. Session deletion separately controls whether facts
+derived from that conversation are retracted. Conflict confirmation is an
+atomic domain operation, not a cosmetic status edit.
+
+The versioning migration backfills one baseline snapshot for memories that existed
+before immutable revisions were introduced. It preserves their current value and
+scope but does not fabricate earlier states that were never recorded.
+
+Persisted task continuation uses schema version 4 (root/current objective, open
+questions, active scope, temporal coordinates, memory/source references, and a
+checksum-bound frozen context); readers accept versions 1–4.
+`continuation_mode=latest` reruns against current
+indexes and state. `saved_scope` restores the prior scope and temporal controls
+but retrieves current evidence. `saved_snapshot` restores the exact assembled
+context and complete citation documents bound to the prior AI message. Its hash
+and session/message ownership are checked before use. Document, memory, entity,
+cross-session, web, recall-feedback, anchor, and extraction branches are disabled
+for that turn, so a historical continuation cannot silently mix old and new
+evidence. A missing, malformed, tampered, or unsupported snapshot fails with
+`SNAPSHOT_UNAVAILABLE` instead of falling back to current retrieval. Legacy v1-v3
+sessions replay their frozen citation preview only when it remains recoverable;
+exact full-context replay begins with v4 turns.
+
+Historical structured-memory queries first resolve the authoritative version of
+each logical key under business time (`valid_at`) and system knowledge time
+(`known_at`), then apply fact-type, lifecycle, project, and scope filters. This
+prevents an older confirmed/type-compatible revision from resurfacing after a
+newer lifecycle or type transition. A `known_at` document query also excludes
+meeting files whose `content_recorded_at` is later than the cutoff, and disables
+current-only meeting/file summaries, session summaries, KG projections, and web
+search. It does not reconstruct document text that was overwritten before file
+content versioning existed; use a saved v4 continuation snapshot when exact
+answer-time document replay is required.
+
+Meeting-file review changes use a monotonic `source_revision`, not a
+second-resolution timestamp. The semantic update, native-index dirty state, and
+durable reindex job are committed in one SQLite transaction. Extraction jobs
+carry the revision and are fenced again immediately before commit. Rejecting a
+file retracts auto-extracted facts only when no non-rejected file evidence still
+supports them; retained scopes and immutable semantic events provide the audit
+trail. Metadata-only reindexing does not enqueue fact extraction again; only a
+real transcript/content-hash change creates new extraction windows.
+
+## 5. Memory decay
+
+Code: `services/memory/_decay.py` + `_service/_decay_sync.py`.
+
+### 5.1 Formula
 
 ```python
-# 摘录自 services/memory/_decay.py（需 calendar, time, math）
-def _compute_decay_score(importance, last_accessed, decay_rate=_DECAY_RATE_PER_DAY):
-    if last_accessed is None:
-        return float(importance)
-    last_ts = calendar.timegm(time.strptime(last_accessed, "%Y-%m-%d %H:%M:%S"))
-    days_elapsed = (time.time() - last_ts) / 86400
+# Excerpt from services/memory/_decay.py (requires calendar, time, math)
+def _compute_decay_score(importance, reference_time, decay_rate=_DECAY_RATE_PER_DAY):
+    reference_ts = calendar.timegm(time.strptime(reference_time, "%Y-%m-%d %H:%M:%S"))
+    days_elapsed = (time.time() - reference_ts) / 86400
     return importance * math.exp(-decay_rate * days_elapsed)
 ```
 
-指数衰减；`decay_rate` 默认 `_DECAY_RATE_PER_DAY`。列 **`last_accessed`** 在记忆被召回时更新，使用越频繁衰减越慢。
+Exponential decay applies only to `freshness_score`. It never mutates salience,
+confidence, or usefulness. Recall updates access metadata but is not treated as
+confirmation or positive feedback.
 
-### 5.1.1 检索评分权重
+### 5.1.1 Retrieve rating weight
 
-记忆检索使用加权评分公式：
+Memory retrieval uses a weighted scoring formula:
 
 ```python
-score = (MEMORY_SCORING_SEMANTIC_WEIGHT * semantic_similarity
-       + MEMORY_SCORING_DECAY_WEIGHT * decay_score
-       + MEMORY_SCORING_IMPORTANCE_WEIGHT * importance)
+score = weighted_mean(semantic_similarity, freshness, salience,
+                      confidence, usefulness)
 ```
 
-默认权重：`SEMANTIC=0.3`、`DECAY=0.4`、`IMPORTANCE=0.3`，可通过配置调整。
+Default weights are `0.35 / 0.15 / 0.25 / 0.15 / 0.10`. Legacy decay and
+importance configuration names are retained as aliases for freshness and
+salience. Weights are normalized at runtime.
 
-### 5.2 执行方式
+### 5.2 Execution method
 
-- **周期任务** `memory_decay_loop`（lifespan best-effort task）每 `MEMORY_DECAY_INTERVAL_HOURS` 执行一次
-- **TTL**：硬过期，`MEMORY_TTL_DAYS` 之后直接删除
-- **每用户单独跟踪** `memory_decay_state.last_decay_time` 实现增量衰减
+- **Periodic task** `memory_decay_loop` (lifespan best-effort task) is executed every `MEMORY_DECAY_INTERVAL_HOURS`
+- **TTL**: hard expiration deletes the SQL row and durably queues derived-vector cleanup
+- **Separate tracking per user** `memory_decay_state.last_decay_time` implements incremental decay; maintenance scans the full corpus rather than the paginated list API
 
-### 5.3 低分记忆的命运
+### 5.3 The fate of low-scoring memories
 
-- **importance < threshold** → 不再注入 prompt（但不物理删除，保留以防历史查询）
-- **过 TTL** → 物理删除 + 清 Chroma embedding
+- **salience < threshold** → no longer inject prompt (but not physically deleted)
+- **Over TTL** → physical SQL deletion + immediate/best-effort Chroma cleanup backed by `pending_vector_deletions`
+- **Capacity or low-value stale recall** → set `archived_at` and remove the active vector, while retaining the business/version ledger
 
-## 6. 合并（Consolidation）
+## 6. Consolidation
 
-代码：`services/memory/_parsers.py`。
+Code: `services/memory/_parsers.py`.
 
-当同一用户的若干条记忆在语义上高度相似时，合并为一条更权威的记忆：
+When several memories of the same user are highly similar in semantics, they are merged into a more authoritative memory:
 
-### 6.1 聚类策略（双模式）
+### 6.1 Clustering strategy (dual mode)
 
-- **`MEMORY_SEMANTIC_CLUSTER_ENABLED=True`**（默认）：用 Chroma 查相邻向量，按相似度阈值聚类
-- **`False`**：退化到纯文本重叠（token Jaccard）
+- **`MEMORY_SEMANTIC_CLUSTER_ENABLED=True`** (opt in): Use Chroma to check adjacent vectors and cluster them according to the similarity threshold
+- **`False`**: Degenerate to plain text overlap (token Jaccard)
 
-### 6.2 合并规则
+### 6.2 Merge Rules
 
-- 簇大小 ≥ `MEMORY_CONSOLIDATION_MIN_CLUSTER`（默认 3）才触发
-- LLM 根据簇内所有记忆生成一条综合文本
-- 旧记忆的 `superseded_by` 指向新记忆 id（不物理删除，可追溯）
+- Triggered only when cluster size ≥ `MEMORY_CONSOLIDATION_MIN_CLUSTER` (default 3)
+- LLM generates a comprehensive text based on all memories in the cluster
+- The `superseded_by` of the old memory points to the new memory id (not physically deleted, traceable)
 
-### 6.3 触发时机
+### 6.3 Trigger timing
 
-- `MEMORY_CONSOLIDATION_ENABLED=True` 时，每次画像刷新（见 §7）之后触发一次
-- 也可通过 `POST /api/v1/memory/decay` 手动触发（接口名略有误导，实际包含 consolidation 步骤）
+- When `MEMORY_CONSOLIDATION_ENABLED=True`, triggered once after each portrait refresh (see §7)
+- It can also be triggered manually via `POST /api/v1/memory/decay` (the interface name is slightly misleading and actually contains the consolidation step)
 
-## 7. 用户画像刷新（Profile Refresh）
+## 7. User profile refresh (Profile Refresh)
 
-代码：`services/memory/_service/_profile.py`。
+Code: `services/memory/_service/_profile.py`.
 
-- **触发**：每 `MEMORY_PROFILE_REFRESH_INTERVAL` 次交互刷新一次
-- **行为**：LLM 读取 top-N 重要记忆 → 生成一段"用户画像描述"存为一条特殊记忆（`category=profile`, `key=user_profile`）
-- **用途**：在 chain pipeline 的 memory 注入步骤作为 system-level 上下文
+- **Trigger**: Refreshed every `MEMORY_PROFILE_REFRESH_INTERVAL` interactions
+- **Behavior**: LLM reads top-N important memories → generates a user profile and saves it as the reserved memory (`category=user_profile`, `key=__profile__`)
+- **Use**: used as system-level context in the memory injection step of the chain pipeline
 
-## 8. 会话摘要（Episodic Memory）
+## 8. Session Summary (Episodic Memory)
 
-代码：`services/memory/_summary_service.py`（`SessionSummaryService` 类）。
+Code: `services/memory/_summary_service.py` (`SessionSummaryService` class).
 
-### 8.1 生成条件
+### 8.1 Generation conditions
 
 - `SESSION_SUMMARY_ENABLED=True`
-- 当前会话消息数 ≥ `SESSION_SUMMARY_MIN_TURNS`
-- `POST /api/v1/sessions/{id}/summarize` 手动触发 **或** 后台补跑
+- The number of current session messages ≥ `SESSION_SUMMARY_MIN_TURNS`
+- `POST /api/v1/sessions/{id}/summarize` manually trigger ** or ** background compensatory running
 
-### 8.2 写入
+### 8.2 Writing
 
-```sql
-INSERT INTO session_summaries (session_id, summary, key_topics, message_count, generated_at)
-```
+SQLite is the source of truth. Each row stores `summary`, `topics`,
+`key_entities`, `decisions`, `turn_count`, and the optional Chroma
+`embedding_id`. Updates are monotonic by `turn_count`: a late LLM result that
+covers fewer messages cannot overwrite a newer summary. A retry covering the
+same number of messages may replace an older result.
 
-### 8.3 使用
+SQLite persistence happens before vector indexing. The service then re-reads
+the authoritative row while holding the shared session-vector write lock;
+only that exact version is written to the deterministic Chroma ID. The
+`embedding_id` backfill uses the same session, user, turn count, and summary as
+a compare-and-set guard. This prevents concurrent summarizers from publishing
+a stale vector or returning stale API data.
 
-- **当前会话**：命中 `SESSION_MAX_HISTORY`/`SESSION_MAX_TOKENS` 上限时，用 summary 替换老消息进入 prompt
-- **跨会话**：`POST /sessions/search` 能查出历史摘要命中，chain pipeline 可将相关历史会话摘要以 "session_context" 形式注入
+### 8.3 Use
 
-### 8.4 关键子模块
+- **Current session**: `SESSION_MAX_HISTORY` bounds the SQLite history read. If
+  the loaded history still exceeds `SESSION_MAX_TOKENS`, older turns are
+  summarized and recent turns remain verbatim. The generated summary is
+  inserted as explicitly untrusted historical data at human-message priority;
+  it is never promoted to a system instruction, and structural tags are
+  escaped before reuse.
+- **Cross-session**: `POST /sessions/search` and the chain pipeline use hybrid
+  recall: summary-vector search supplies semantic matches, while user-scoped
+  chat FTS5 supplies exact names, numbers, and identifiers. Results are
+  deduplicated by session and fused with reciprocal-rank fusion (RRF). If
+  Chroma is unavailable, FTS remains an operational fallback. Returned scores
+  are normalized ranking signals, not calibrated probabilities.
+- Summary vectors retain both `meetings_covered` and `files_covered`; strict
+  scoped recall recovers missing legacy provenance from persisted message sources.
+- Each completed turn also persists a version-3 task-state checkpoint.
+  `root_objective` preserves where the session began, while `objective` tracks
+  the active task and `objective_history` records task switches; a genuine
+  follow-up does not reset it. Open questions are retained only when the answer
+  remains unresolved. Retrieved sources include file/meeting/chunk identity,
+  index generation and content hash, and recalled memories include the exact
+  revision used. Resuming a session restores this as untrusted data in addition
+  to replaying raw messages; it does not replace the message history.
 
-| 模块 | 职责 |
+### 8.4 Repair and observability
+
+Startup reconciliation rebuilds session-summary vectors that are missing from
+Chroma or have a missing/stale `embedding_id` in SQLite. The periodic index
+reconciliation loop performs the same repair in bounded batches, so a
+transient indexing failure does not permanently remove episodic memories from
+semantic recall. Healthy rows are skipped, and every repair candidate is
+re-read under the shared vector lock before replacement.
+
+`session_summary_search_total{path=...}` records the effective retrieval path:
+`hybrid`, `vector_only`, `fts_only`, `fts_fallback`, `empty`, or `error`.
+
+### 8.5 Key submodules
+
+| Modules | Responsibilities |
 |---|---|
-| `_summary_service.py` | 跨会话记忆服务：管理 session summary 的生命周期、启动回填、空闲时定期摘要生成（位于 `services/memory/_summary_service.py`，不在 `_service/` 子目录内） |
-| `_history.py` | `SQLiteChatMessageHistory`（LangChain 兼容）：将对话历史持久化到 SQLite，供 chain pipeline 读取 |
-| `_extractor.py` | 底层事实提取器：封装 LLM 调用与 JSON 解析，供 `_service/_extraction.py` 使用 |
-| `_entry.py` | 顶层入口：导出 `MemoryEntry` dataclass，统一记忆条目的结构 |
+| `_summary_service.py` | Cross-session memory service: manages the life cycle of session summary, starts backfilling, and generates periodic summary when idle (located in `services/memory/_summary_service.py`, not in the `_service/` subdirectory) |
+| `_history.py` | `SQLiteChatMessageHistory` (LangChain compatible): persist the conversation history to SQLite for reading by chain pipeline |
+| `_extractor.py` | Low-level fact extractor: encapsulates LLM calls and JSON parsing for use by `_service/_extraction.py` |
+| `_entry.py` | Top-level entry: export `MemoryEntry` dataclass to unify the structure of memory entries |
 
-## 9. 知识图谱
+## 9. Knowledge graph
 
-代码：`services/knowledge_graph/`。
+Code: `services/knowledge_graph/`.
 
-### 9.1 实体提取
+### 9.1 Entity extraction
 
 ```python
 # _service.py::extract_entities
 if settings.MEMORY_EXTRACTION_MODE == "precise":
-    return  # skip KG in precise mode
+    return # skip KG in precise mode
 
 prompt = get_entity_extraction_prompt(messages, existing_entities)
 response = await llm.ainvoke(prompt)
@@ -222,85 +481,96 @@ await _store_entities(entities)
 await _store_relations(relations)
 ```
 
-### 9.2 实体存储
+### 9.2 Entity Storage
 
-- upsert `memory_entities`（`(user_id, name, entity_type)` 唯一）
-- 同时 embed name+description 到 Chroma 的 `entities` collection
-- 失败时**结构化日志**记录（不回滚 SQL 侧写入）
+- upsert `memory_entities` (`(user_id, name, entity_type)` unique)
+- Also embed name+description into Chroma's `entities` collection
+- **Structured logging** logging on failure (no rollback of SQL side writes)
 
-### 9.3 关系存储
+### 9.3 Relational storage
 
 - upsert `memory_relations`
-- 元数据存在 `metadata` JSON 字段
-- `ENTITY_RELATIONS_LIMIT` 控制单实体返回关系数量上限（避免超大名人节点爆炸）
+- Relations persist bounded confidence, evidence message IDs, validity intervals,
+  source session, and update time in SQLite
+- LLM relation output is treated as an untrusted proposal. Before persistence,
+  both endpoints and a predicate cue must occur in the same authoritative
+  evidence window. Directional owner/lead relations additionally require the
+  parsed subject and object in the asserted direction; reversed or target-wrong
+  tuples are dropped locally.
+- A relation write failure is propagated to the durable extraction job so it can
+  retry. Partial per-relation failures are not reported as successful extraction.
+- `ENTITY_RELATIONS_LIMIT` controls the upper limit of the number of relationships returned by a single entity (to avoid the explosion of very large celebrity nodes)
 
-### 9.4 查询路径
+### 9.4 Query path
 
-| API | 行为 |
+| API | Behavior |
 |---|---|
-| `GET /api/v1/memory/entities` | 列出所有实体（分页） |
-| `GET /api/v1/memory/entities/{name}` | 返回实体 + 所有出入关系 + 相关记忆 |
-| `DELETE /api/v1/memory/entities/{name}` | 删除实体、关系及向量 |
-| `POST /api/v1/memory/entities/merge` | 把多个同义实体合并到一个主实体 |
+| `GET /api/v1/memory/entities` | List all entities (paginated) |
+| `POST /api/v1/memory/entities/batch-delete` | Delete up to 100 entities in one transaction |
+| `GET /api/v1/memory/entities/{name}` | Return entities + all incoming and outgoing relationships + related memories |
+| `DELETE /api/v1/memory/entities/{name}` | Delete entities, relationships and vectors |
+| `POST /api/v1/memory/entities/merge` | Merge multiple synonymous entities into one main entity |
 
-### 9.5 注入到 RAG
+### 9.5 Injection into RAG
 
-chain pipeline 的 `load_entity_context` 步骤：
+The `load_entity_context` step of the chain pipeline:
 
-1. 对用户查询做实体识别（LLM 或正则）
-2. 查 Chroma `entities` collection 找相似实体
-3. 根据实体查 `memory_relations` 扩一跳 / 两跳
-4. 把"实体 + 关系摘要"注入到最终 prompt 的 `entity_context` 段
+1. Perform entity recognition (LLM or regular) on user queries
+2. Search Chroma `entities` collection to find similar entities
+3. Check `memory_relations` based on the entity and expand one hop/two hops
+4. Inject the "entity + relationship summary" into the `entity_context` section of the final prompt
 
-## 10. 记忆注入到 Prompt 的顺序
+## 10. The order of memory injection into Prompt
 
-chain pipeline 的 `build_context` 步骤按如下优先级拼装：
+The `build_context` step of the chain pipeline is assembled according to the following priority:
 
 ```
-[user_profile]                        ← 画像（如存在）
-[important_memories (top 6)]          ← 按 decay score 降序
-[session_context]                     ← 历史会话摘要（跨会话）
-[entity_context]                      ← 知识图谱扩展
-[web_results]                         ← 可选
-[retrieved_chunks]                    ← RAG 文档
-[history]                             ← 当前会话最近 N 轮
-→ 生成 prompt
+[user_profile] ← Profile (if exists)
+[important_memories (top 6)] ← Sort descending by decay score
+[session_context] ← Historical session summary (across sessions)
+[entity_context] ← Knowledge graph extension
+[web_results] ← optional
+[retrieved_chunks] ← RAG documentation
+[history] ← The last N rounds of the current session
+→ generate prompt
 ```
 
-每一段都有 token budget，超过时按相似度降序截断。
+Each segment has a token budget, which is truncated in descending order of similarity when exceeded.
 
-## 11. API 一览
+## 11. API Overview
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/memory` | 列表（支持过滤、排序） |
-| `POST` | `/api/v1/memory` | 创建 |
-| `PUT` | `/api/v1/memory` | 更新 |
-| `DELETE` | `/api/v1/memory` | 删除 |
-| `POST` | `/api/v1/memory/batch` | 批量导入 |
-| `GET` | `/api/v1/memory/export` | JSON 导出 |
-| `POST` | `/api/v1/memory/search` | 语义搜索 |
-| `POST` | `/api/v1/memory/decay` | 手动衰减 + 合并 |
-| `GET` | `/api/v1/memory/entities` | 列表实体 |
-| `GET` | `/api/v1/memory/entities/{name}` | 实体详情 |
-| `DELETE` | `/api/v1/memory/entities/{name}` | 删除实体 |
-| `POST` | `/api/v1/memory/entities/merge` | 合并实体 |
+| `GET` | `/api/v1/memory` | List (supports filtering and sorting) |
+| `POST` | `/api/v1/memory` | Create |
+| `PUT` | `/api/v1/memory` | Update |
+| `DELETE` | `/api/v1/memory` | Delete |
+| `POST` | `/api/v1/memory/batch` | Batch import |
+| `POST` | `/api/v1/memory/batch-delete` | Delete up to 100 memories in one transaction |
+| `GET` | `/api/v1/memory/export` | Cursor-paginated JSON export |
+| `POST` | `/api/v1/memory/search` | Semantic search |
+| `POST` | `/api/v1/memory/decay` | Manual decay + merge |
+| `GET` | `/api/v1/memory/entities` | List entities |
+| `POST` | `/api/v1/memory/entities/batch-delete` | Batch-delete entities |
+| `GET` | `/api/v1/memory/entities/{name}` | Entity details |
+| `DELETE` | `/api/v1/memory/entities/{name}` | Delete entity |
+| `POST` | `/api/v1/memory/entities/merge` | Merge entities |
 
-## 12. 调优与故障排查
+## 12. Tuning and troubleshooting
 
-| 症状 | 调优方向 |
+| Symptoms | Tuning directions |
 |---|---|
-| 记忆提取太多噪声 | `MEMORY_EXTRACTION_MODE=precise` 或降低 `MAX_FACTS_PER_TURN` |
-| 记忆不更新 | 检查 `auto_extract` 是否 True；查后台任务异常日志 |
-| 旧偏好一直不消失 | 调大 `decay_rate` / 调小 `TTL_DAYS` / 手动 `DELETE` |
-| 实体爆炸 | 降 `aggressive` → `balanced`；提高 entity 去重阈值 |
-| Chroma entities 维度不匹配 | 切 embedding 后 `rebuild-vectors` |
-| 跨会话历史无法回忆 | 确认 `SESSION_SUMMARY_ENABLED=True`；检查 `session_summaries` 是否有数据 |
+| Too much noise in memory retrieval | `MEMORY_EXTRACTION_MODE=precise` or lower `MAX_FACTS_PER_TURN` |
+| Memory is not updated | Confirm `MEMORY_AUTO_EXTRACT=True`; inspect the `fact_extraction` durable job state, dead-letter count, and worker logs |
+| Old preferences never disappear | Increase `decay_rate` / Decrease `TTL_DAYS` / Manual `DELETE` |
+| Entity explosion | Decrease `aggressive` → `balanced`; increase entity deduplication threshold |
+| Chroma entity dimensions do not match | Apply embedding changes through a controlled restart, then monitor reconciliation/reprocessing |
+| Cross-session history cannot be recalled | Confirm `SESSION_SUMMARY_ENABLED=True`; check if `session_summaries` has data |
 
-## 13. 扩展方向
+## 13. Extension direction
 
-1. **时间衰减可配**：目前 `decay_rate` 是全局常量，可按 category 区分（如 "preference" 衰减慢于 "task"）
-2. **向量-文本混合去重**：现在合并依赖纯向量聚类，加入文本规则可减少误合并
-3. **Fact 置信度**：LLM 提取时要求 `confidence`，低置信走确认回合
-4. **多用户隔离增强**：当前按 `user_id` 切分，可考虑加 `workspace_id` 多租户
-5. **图谱 2-hop 推理**：当前只取一跳关系，可以根据查询展开更多步
+1. **Time decay is configurable**: Currently `decay_rate` is a global constant and can be distinguished by category (such as "preference" decays slower than "task")
+2. **Vector-Text Hybrid Deduplication**: Now merging relies on pure vector clustering, adding text rules can reduce mis-merging
+3. **Fact Confidence**: LLM requires `confidence` when extracting, low confidence goes to the confirmation round
+4. **Multi-user isolation enhancement**: Currently segmented by `user_id`, you may consider adding `workspace_id` for multi-tenancy
+5. **Graph 2-hop reasoning**: Currently only one hop relationship is taken, and more steps can be expanded based on the query.

@@ -1,56 +1,29 @@
-# Restore Guide
+# Complete Restore Guide
 
-## From SQLite backup
-
-```bash
-# 1. Stop the application
-systemctl stop meeting-agent
-
-# 2. Verify backup integrity
-sqlite3 /backups/meetings-20260414-1200.db "PRAGMA integrity_check;"
-
-# 3. Replace the current database
-cp data/meetings.db data/meetings.db.pre-restore  # keep current as safety
-cp /backups/meetings-20260414-1200.db data/meetings.db
-
-# 4. Remove WAL/SHM files (they will be recreated)
-rm -f data/meetings.db-wal data/meetings.db-shm
-
-# 5. Start the application
-systemctl start meeting-agent
-
-# 6. Verify
-curl http://localhost:8000/api/v1/health/ready
-```
-
-## From Litestream
+Restore accepts the `.tar.gz` archive produced by `scripts/backup.sh`. It
+rejects path traversal and archive links, verifies every SHA256 checksum,
+runs SQLite integrity and foreign-key checks, and swaps the complete data
+directory atomically. Restored files are created under a private process umask
+so database and user material are not made group/world-readable.
 
 ```bash
-# Restore to a specific point in time
-litestream restore -o data/meetings.db -timestamp 2026-04-14T12:00:00Z s3://my-bucket/meeting-agent/db
-
-# Or restore the latest snapshot
-litestream restore -o data/meetings.db s3://my-bucket/meeting-agent/db
+docker compose stop backend frontend
+./scripts/restore.sh backups/meeting-agent-20260903-120000.tar.gz data
+docker compose start backend frontend
+curl -fsS http://localhost:7008/api/v1/health/ready
 ```
 
-## Vector store recovery
+If `data/` already exists, it is moved to a timestamped
+`data.pre-restore.*` rollback directory. Do not delete that directory until
+meetings, sessions, uploads, and RAG retrieval have been verified.
 
-Vectors are stored in `data/chroma/`. If lost, they can be rebuilt:
+For non-interactive CI, the final argument may be `--force`; this bypasses
+local process detection only and does not make an online restore safe.
 
-```bash
-# Trigger vector rebuild via API
-curl -X POST http://localhost:8000/api/v1/settings/rebuild-vectors \
-  -H "X-API-Key: your-key"
-```
+After startup verify:
 
-This re-indexes all meeting transcripts from the database into Chroma.
-
-## Verification checklist
-
-After restoring, verify:
-
-1. `GET /api/v1/health/ready` returns `status: ok`
-2. `GET /api/v1/meetings` lists expected meetings
-3. `GET /api/v1/sessions` shows chat history
-4. `GET /api/v1/memory` returns stored memories
-5. Upload a test file and ask a question to confirm RAG works
+1. readiness returns HTTP 200;
+2. expected meetings and sessions are present;
+3. an uploaded file can be opened;
+4. scoped retrieval returns citations;
+5. `PRAGMA foreign_key_check` remains empty.

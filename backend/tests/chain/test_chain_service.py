@@ -7,6 +7,7 @@ Tests cover:
 """
 
 import asyncio
+import json
 import logging
 import os
 import tempfile
@@ -25,7 +26,6 @@ from src.core import constants as constants_module
 constants_module.DATA_DIR = Path(os.environ["DATA_DIR"])
 constants_module.DATABASE_PATH = constants_module.DATA_DIR / "test.db"
 
-from src.services import chain  # noqa: E402
 from src.services.chain import (  # noqa: E402
     PipelineContext,
     PipelineResult,
@@ -35,7 +35,6 @@ from src.services.chain import (  # noqa: E402
     _format_docs,
     _format_memory_context,
     _is_trivially_short,
-    cancel_background_tasks,
 )
 
 
@@ -192,17 +191,6 @@ class TestPipelineResult:
         assert len(result.sources) == 1
 
 
-class TestBackgroundTasks:
-    """Test background task management."""
-
-    def test_cancel_empty_tasks(self):
-        """Should handle empty task set."""
-        chain._background_tasks.clear()
-        # Should not raise exception
-        cancel_background_tasks()
-        assert len(chain._background_tasks) == 0
-
-
 class TestFormatDocs:
     """Test document formatting."""
 
@@ -238,6 +226,24 @@ class TestFormatDocs:
         result = _format_docs(docs)
         assert "[Speaker]" not in result
         assert "Alex: We found that..." in result
+
+    def test_format_exposes_evidence_authority_to_generation(self):
+        docs = [
+            {
+                "content": "Candidate decision",
+                "metadata": {
+                    "meeting_id": 1,
+                    "file_name": "draft.md",
+                    "material_role": "agenda",
+                    "approval_status": "draft",
+                },
+            }
+        ]
+
+        result = _format_docs(docs)
+
+        assert "role=agenda" in result
+        assert "approval=draft" in result
 
 
 class TestFormatMemoryContext:
@@ -332,10 +338,180 @@ class TestScopedContextLoading:
             "scope_ctx_user",
             query="q",
             limit=min(settings.MEMORY_MAX_CONTEXT_ITEMS, 8),
-            min_importance=3,
+            min_importance=settings.MEMORY_MIN_IMPORTANCE,
             meeting_ids=[101],
             file_ids=[501],
+            exclude_reference=True,
+            project_ids=(),
+            action_constraints=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_profile_is_not_duplicated_in_generic_memory_context(self):
+        from types import SimpleNamespace
+
+        from src.services.chain._steps_context import load_memories
+
+        profile = SimpleNamespace(key="__profile__", value="profile copy")
+        fact = SimpleNamespace(key="timezone", value="Asia/Taipei")
+        ctx = PipelineContext(question="q", user_id="profile_dedup_user")
+        with (
+            patch(
+                "src.services.memory.memory_service.get",
+                return_value='{"name": "Alice"}',
+            ),
+            patch(
+                "src.services.memory.memory_service.search_semantic",
+                new=AsyncMock(return_value=[profile, fact]),
+            ),
+        ):
+            await load_memories(ctx)
+
+        assert ctx.memory_context.count("[User Profile Summary]") == 1
+        assert "profile copy" not in ctx.memory_context
+        assert "Asia/Taipei" in ctx.memory_context
+        assert ctx.recalled_memory_entries == [fact]
+
+    @pytest.mark.asyncio
+    async def test_historical_memory_query_never_mixes_current_semantic_rows(self):
+        import datetime
+        from types import SimpleNamespace
+
+        from src.services.chain._steps_context import load_memories
+
+        ctx = PipelineContext(question="截至 2026-01-02 谁负责 Atlas?", user_id="history-user")
+        ctx.query_plan = SimpleNamespace(
+            date_to=datetime.date(2026, 1, 2),
+            intent="factual",
+        )
+        historical = {
+            "key": "project.atlas.owner",
+            "value": "Alice",
+            "assertion_status": "confirmed",
+            "fact_type": "project_fact",
+            "source": "meeting",
+            "confidence": 1.0,
+        }
+        with (
+            patch("src.services.memory.memory_service.get", return_value=None),
+            patch(
+                "src.services.memory.memory_service.search_semantic",
+                new=AsyncMock(return_value=[SimpleNamespace(key="owner", value="Bob")]),
+            ) as semantic,
+            patch(
+                "src.services.chain._steps_context.db.search_structured_memories",
+                return_value=([historical], 1),
+            ) as structured,
+        ):
+            await load_memories(ctx)
+
+        semantic.assert_not_awaited()
+        assert structured.call_args.kwargs["as_of"] == "2026-01-02"
+        assert "Alice" in ctx.memory_context
+        assert "Bob" not in ctx.memory_context
+
+    @pytest.mark.asyncio
+    async def test_historical_query_skips_current_only_derived_contexts(self):
+        import datetime
+        from types import SimpleNamespace
+
+        from src.services.chain._steps_context import load_entity_context, load_session_context
+
+        ctx = PipelineContext(
+            question="截至 2026-01-02 Atlas 当时由谁负责?",
+            user_id="history-user",
+            session_id="current",
+        )
+        ctx.query_plan = SimpleNamespace(date_to=datetime.date(2026, 1, 2), intent="factual")
+        with (
+            patch(
+                "src.services.knowledge_graph.kg_service.get_entity_context",
+                new=AsyncMock(return_value="current graph data"),
+            ) as entity,
+            patch(
+                "src.services.memory.session_summary_service.search_sessions",
+                new=AsyncMock(return_value=[]),
+            ) as sessions,
+        ):
+            await load_entity_context(ctx)
+            await load_session_context(ctx)
+
+        entity.assert_not_awaited()
+        sessions.assert_not_awaited()
+        assert ctx.entity_context == ""
+        assert ctx.session_context == ""
+
+    @pytest.mark.asyncio
+    async def test_comparison_loads_each_requested_memory_snapshot(self):
+        import datetime
+        from types import SimpleNamespace
+
+        from src.services.chain._steps_context import load_memories
+
+        ctx = PipelineContext(
+            question="比较2025年1月1日与截至2025年3月1日的 Orbit 状态",
+            user_id="history-user",
+        )
+        ctx.query_plan = SimpleNamespace(
+            date_to=datetime.date(2025, 3, 1),
+            historical_cutoffs=(datetime.date(2025, 1, 1), datetime.date(2025, 3, 1)),
+            valid_at=None,
+            known_at=None,
+            intent="comparison",
+        )
+
+        def _snapshot(*_args, **kwargs):
+            value = "Alice" if kwargs["as_of"].startswith("2025-01-01") else "Bob"
+            return (
+                [
+                    {
+                        "key": "project.orbit.owner",
+                        "value": value,
+                        "assertion_status": "confirmed",
+                        "fact_type": "project_fact",
+                        "source": "meeting",
+                        "confidence": 1.0,
+                    }
+                ],
+                1,
+            )
+
+        with (
+            patch("src.services.memory.memory_service.get", return_value=None),
+            patch(
+                "src.services.chain._steps_context.db.search_structured_memories",
+                side_effect=_snapshot,
+            ) as structured,
+        ):
+            await load_memories(ctx)
+
+        assert structured.call_count == 2
+        assert "snapshot=2025-01-01" in ctx.memory_context
+        assert "snapshot=2025-03-01" in ctx.memory_context
+        assert "Alice" in ctx.memory_context
+        assert "Bob" in ctx.memory_context
+
+    @pytest.mark.asyncio
+    async def test_exhaustive_memory_query_is_bounded_and_reports_total(self):
+        from types import SimpleNamespace
+
+        from src.services.chain._steps_context import load_memories
+
+        ctx = PipelineContext(question="列出所有未完成任务", user_id="all-user")
+        ctx.query_plan = SimpleNamespace(date_to=None, intent="exhaustive")
+        with (
+            patch("src.services.memory.memory_service.get", return_value=None),
+            patch(
+                "src.services.memory.memory_service.search_semantic",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "src.services.chain._steps_context.db.search_structured_memories",
+                return_value=([], 0),
+            ) as structured,
+        ):
+            await load_memories(ctx)
+        assert structured.call_args.kwargs["limit"] == 200
 
     @pytest.mark.asyncio
     async def test_load_entity_context_filtered(self):
@@ -372,7 +548,120 @@ class TestScopedContextLoading:
             query="q",
             limit=settings.SESSION_SUMMARY_MAX_ITEMS,
             meeting_ids=[101],
+            file_ids=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_branch_excludes_ancestor_summary_and_memories(self):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+        from src.services.chain._steps_context import load_memories, load_session_context
+        from src.services.memory._entry import MemoryEntry
+
+        with get_write_connection() as conn:
+            parent = db.create_session(conn, user_id="branch-user")
+            branch = db.branch_session(
+                conn,
+                source_session_id=parent,
+                user_id="branch-user",
+                before_message_id=None,
+                reason="withdraw",
+            )
+        entry = MemoryEntry(
+            key="withdrawn.fact",
+            value="must not return",
+            importance=5,
+            category=None,
+            source="auto_extracted",
+            last_accessed=None,
+            access_count=0,
+            expires_at=None,
+            updated_at="",
+            metadata={"session_id": parent},
+        )
+        ctx = PipelineContext(question="previous history", user_id="branch-user", session_id=branch)
+
+        with (
+            patch("src.services.memory.memory_service.get", return_value=None),
+            patch(
+                "src.services.memory.memory_service.search_semantic",
+                new=AsyncMock(return_value=[entry]),
+            ),
+            patch(
+                "src.services.memory.evidence_admission.filter_context_memories",
+                side_effect=lambda memories, _user_id: memories,
+            ),
+            patch(
+                "src.services.memory.session_summary_service.search_sessions",
+                new=AsyncMock(
+                    return_value=[
+                        {"session_id": parent, "summary": "withdrawn summary", "score": 1.0},
+                        {"session_id": "unrelated", "summary": "allowed summary", "score": 0.5},
+                    ]
+                ),
+            ),
+        ):
+            await load_memories(ctx)
+            await load_session_context(ctx)
+
+        assert "must not return" not in ctx.memory_context
+        assert "withdrawn summary" not in ctx.session_context
+        assert "allowed summary" in ctx.session_context
+
+    @pytest.mark.asyncio
+    async def test_branch_excludes_profile_derived_from_ancestor_memory(self):
+        from src.core import database as db
+        from src.core.database import get_write_connection
+        from src.services.chain._steps_context import load_memories
+
+        user_id = "branch-profile-user"
+        with get_write_connection() as conn:
+            parent = db.create_session(conn, user_id=user_id)
+            branch = db.branch_session(
+                conn,
+                source_session_id=parent,
+                user_id=user_id,
+                before_message_id=None,
+                reason="edit",
+            )
+            db.set_memory(
+                conn,
+                user_id=user_id,
+                key="preference.language",
+                value="OBSOLETE_PARENT_PROFILE_SOURCE",
+                source="manual",
+                fact_type="preference",
+            )
+            conn.execute(
+                "UPDATE user_memories SET session_id=? WHERE user_id=? AND key=?",
+                (parent, user_id, "preference.language"),
+            )
+            source = db.get_memory_full(conn, user_id=user_id, key="preference.language")
+            assert source is not None
+            db.set_memory(
+                conn,
+                user_id=user_id,
+                key="__profile__",
+                value="OBSOLETE_PARENT_PROFILE",
+                source="profile",
+                category="user_profile",
+            )
+            profile = db.get_memory_full(conn, user_id=user_id, key="__profile__")
+            assert profile is not None
+            conn.execute(
+                "INSERT INTO memory_profile_provenance"
+                "(user_id,profile_revision,source_revisions) VALUES(?,?,?)",
+                (user_id, profile["revision"], json.dumps({source["key"]: source["revision"]})),
+            )
+
+        ctx = PipelineContext(question="hello", user_id=user_id, session_id=branch)
+        with patch(
+            "src.services.memory.memory_service.search_semantic",
+            new=AsyncMock(return_value=[]),
+        ):
+            await load_memories(ctx)
+
+        assert "OBSOLETE_PARENT_PROFILE" not in ctx.memory_context
 
     @pytest.mark.asyncio
     async def test_load_session_context_skips_for_tight_scope(
@@ -470,7 +759,9 @@ class TestScopedContextLoading:
             AsyncMock(side_effect=lambda c, _skill=None: setattr(c, "answer", "ok")),
         )
         monkeypatch.setattr("src.services.chain._api.save_messages", lambda _ctx: None)
-        monkeypatch.setattr("src.services.chain._api.schedule_fact_extraction", lambda _ctx: None)
+        monkeypatch.setattr(
+            "src.services.chain._api.schedule_fact_extraction", AsyncMock(return_value=None)
+        )
 
         caplog.set_level("WARNING")
         ctx = PipelineContext(question="timeout test")
@@ -559,7 +850,9 @@ class TestContextBranchTimeout:
             AsyncMock(side_effect=lambda c, _skill=None: setattr(c, "answer", "ok")),
         )
         monkeypatch.setattr("src.services.chain._api.save_messages", lambda _ctx: None)
-        monkeypatch.setattr("src.services.chain._api.schedule_fact_extraction", lambda _ctx: None)
+        monkeypatch.setattr(
+            "src.services.chain._api.schedule_fact_extraction", AsyncMock(return_value=None)
+        )
 
         caplog.set_level(logging.WARNING)
         ctx = PipelineContext(question="timeout test", file_ids=["f1"])
@@ -593,3 +886,103 @@ def test_rerank_documents_skips_for_single_file_scope(monkeypatch: pytest.Monkey
     rerank_spans = [span for span in ctx.trace.spans if span.label == "rerank"]
     assert rerank_spans
     assert rerank_spans[-1].skipped is True
+
+
+def test_rerank_trace_marks_backend_fallback_as_degraded(monkeypatch: pytest.MonkeyPatch):
+    from src.services.chain._steps_retrieve import rerank_documents
+
+    monkeypatch.setattr("src.services.chain._steps_retrieve.settings.RERANKER_BINDING", "cohere")
+    monkeypatch.setattr("src.services.chain._steps_retrieve.settings.RERANKER_TOP_N", 6)
+
+    ctx = PipelineContext(question="q", top_k=6)
+    ctx.docs = [
+        {"content": f"evidence {index}", "metadata": {"file_id": 1}, "score": 1 - index / 20}
+        for index in range(12)
+    ]
+    fallback = [{**doc, "reranked": False} for doc in ctx.docs]
+
+    with patch("src.services.rag.rerank", return_value=fallback):
+        rerank_documents(ctx)
+
+    span = [item for item in ctx.trace.spans if item.label == "rerank"][-1]
+    assert span.status == "degraded"
+    assert span.metadata["backend"] == "cohere"
+    assert span.metadata["candidate_count"] == 12
+    assert span.metadata["output_count"] == 6
+    assert span.metadata["reranked_count"] == 0
+    assert span.metadata["degrade_reason"] == "backend_fallback"
+
+
+def test_rerank_trace_records_success_metadata(monkeypatch: pytest.MonkeyPatch):
+    from src.services.chain._steps_retrieve import rerank_documents
+
+    monkeypatch.setattr("src.services.chain._steps_retrieve.settings.RERANKER_BINDING", "cohere")
+    monkeypatch.setattr("src.services.chain._steps_retrieve.settings.RERANKER_TOP_N", 6)
+
+    ctx = PipelineContext(question="q", top_k=6)
+    ctx.docs = [
+        {"content": f"evidence {index}", "metadata": {"file_id": 1}, "score": 1 - index / 20}
+        for index in range(12)
+    ]
+    reranked = [
+        {**doc, "score": 0.99 - index / 100, "reranked": True}
+        for index, doc in enumerate(ctx.docs[:6])
+    ]
+
+    with patch("src.services.rag.rerank", return_value=reranked):
+        rerank_documents(ctx)
+
+    span = [item for item in ctx.trace.spans if item.label == "rerank"][-1]
+    assert span.status == "success"
+    assert span.metadata["executed"] is True
+    assert span.metadata["candidate_count"] == 12
+    assert span.metadata["output_count"] == 6
+    assert span.metadata["reranked_count"] == 6
+    assert span.metadata["top_score"] == 0.99
+    assert span.metadata["min_score"] == 0.94
+
+
+def test_final_selector_runs_without_reranker():
+    from src.services.chain._retrieve_post import _select_final_documents
+
+    ctx = PipelineContext(question="broad", top_k=3)
+    ctx.docs = [
+        {
+            "content": f"distinct evidence text number {index}",
+            "metadata": {"meeting_id": 1, "file_id": index + 1},
+            "score": 1.0 - index / 100,
+        }
+        for index in range(10)
+    ]
+
+    _select_final_documents(ctx)
+
+    assert len(ctx.docs) == 3
+    assert len({doc["metadata"]["file_id"] for doc in ctx.docs}) == 3
+
+
+def test_final_selector_factual_query_can_focus_one_file():
+    from src.services.chain._retrieve_post import _select_final_documents
+
+    ctx = PipelineContext(question="What is the exact deadline?", top_k=2)
+    ctx.docs = [
+        {"content": "deadline is Friday", "metadata": {"file_id": 1}, "score": 0.99},
+        {"content": "owner is Alex", "metadata": {"file_id": 1}, "score": 0.95},
+        {"content": "unrelated budget", "metadata": {"file_id": 2}, "score": 0.2},
+    ]
+    _select_final_documents(ctx)
+    assert [doc["metadata"]["file_id"] for doc in ctx.docs] == [1, 1]
+
+
+def test_final_selector_summary_uses_coverage_above_relevance_floor():
+    from src.services.chain._retrieve_post import _select_final_documents
+
+    ctx = PipelineContext(question="Summarize the project", top_k=2)
+    ctx.docs = [
+        {"content": "plan alpha", "metadata": {"file_id": 1}, "score": 1.0},
+        {"content": "plan beta", "metadata": {"file_id": 1}, "score": 0.9},
+        {"content": "risk gamma", "metadata": {"file_id": 2}, "score": 0.8},
+        {"content": "noise", "metadata": {"file_id": 3}, "score": 0.1},
+    ]
+    _select_final_documents(ctx)
+    assert {doc["metadata"]["file_id"] for doc in ctx.docs} == {1, 2}

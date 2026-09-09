@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Avatar } from "antd";
-import { RobotOutlined, UserOutlined } from "@ant-design/icons";
+import { Alert, Avatar, Button } from "antd";
+import { EditOutlined, RobotOutlined, UserOutlined } from "@ant-design/icons";
 import { motion } from "framer-motion";
 import { getMeetingAssetUrl, type SourceItem } from "../../api/client";
 import type { ChatMessage } from "../../hooks/useChatStream";
@@ -9,9 +9,14 @@ import { useMessageActions } from "../../contexts/MessageActionsContext";
 import { CitationMarkdown } from "./chat-bubble/CitationMarkdown";
 import { AgentMetaPanels, type CitationSelection } from "./chat-bubble/AgentMetaPanels";
 import { CitationModal } from "./chat-bubble/CitationModal";
-import { sanitizeAgentAnswer, isImageDerivedSource } from "./chat-bubble/sourceHelpers";
+import {
+  sanitizeAgentAnswer,
+  isLegacyPartialAnswer,
+  isImageDerivedSource,
+} from "./chat-bubble/sourceHelpers";
 import { sourcePrimaryImageUrl } from "./chat-bubble/sourceLinks";
 import { openExternalInNewTab } from "../../utils/url";
+import { useIntl } from "react-intl";
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -50,6 +55,7 @@ function ThinkingDots() {
 }
 
 function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleProps) {
+  const { formatMessage } = useIntl();
   const {
     copiedId,
     onCopy,
@@ -58,11 +64,16 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
     onOpenMeetingSummary,
     onOpenFileSummary,
     onCopySourceSnippet,
+    onEditUserMessage,
   } = useMessageActions();
   const [openSourcePopoverKey, setOpenSourcePopoverKey] = useState<string | null>(null);
   const [selectedCitation, setSelectedCitation] = useState<CitationSelection | null>(null);
   const msgKey = msg.id || `${idx}`;
   const displayContent = msg.role === "agent" ? sanitizeAgentAnswer(msg.content) : msg.content;
+  const effectiveDisplayContent =
+    msg.role === "agent" && !isStreaming && !displayContent
+      ? formatMessage({ id: "chat.emptyResponse" })
+      : displayContent;
   const allSources = useMemo(() => msg.sources ?? [], [msg.sources]);
 
   const openSource = useCallback(
@@ -79,7 +90,7 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
       // File summary → open file-summary modal view (not raw file viewer)
       if (source.source_kind === "file_summary" && source.meeting_id != null) {
         if (source.file_id == null) {
-          message.warning("File summary source is missing file identifier");
+          message.warning(formatMessage({ id: "chat.fileIdMissing" }));
           return;
         }
         onOpenFileSummary(source.meeting_id, source.file_id, fallback);
@@ -106,9 +117,9 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
         return;
       }
       // Fallback: source without file info — cannot open viewer
-      message.warning("Source file is not available for viewing");
+      message.warning(formatMessage({ id: "chat.sourceUnavailable" }));
     },
-    [onOpenFileSummary, onOpenViewer, onOpenMeetingSummary],
+    [formatMessage, onOpenFileSummary, onOpenViewer, onOpenMeetingSummary],
   );
 
   const handleCiteClick = useCallback(
@@ -117,12 +128,12 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
       const srcLen = allSources.length;
       // Guard: sources may not have arrived yet during streaming
       if (isStreaming && isLast && citeIdx > srcLen) {
-        message.info("Answer still generating, please wait before clicking citations");
+        message.info(formatMessage({ id: "chat.citationGenerating" }));
         return;
       }
       const src = citeIdx >= 1 && citeIdx <= srcLen ? allSources[citeIdx - 1] : undefined;
       if (!src) {
-        message.warning(`Source [${citeIdx}] not found`);
+        message.warning(formatMessage({ id: "chat.sourceNotFound" }, { index: citeIdx }));
         return;
       }
       setOpenSourcePopoverKey(null);
@@ -142,7 +153,7 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
         setSelectedCitation({ index: citeIdx, source: src });
       }
     },
-    [allSources, openSource, isStreaming, isLast],
+    [allSources, formatMessage, openSource, isStreaming, isLast],
   );
 
   return (
@@ -184,6 +195,13 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
             alignItems: msg.role === "user" ? "flex-end" : "flex-start",
           }}
         >
+          {msg.role === "agent" && (msg.degraded || isLegacyPartialAnswer(msg.content)) && (
+            <Alert
+              type="warning"
+              showIcon
+              message={formatMessage({ id: "chat.partialResponse" })}
+            />
+          )}
           <div
             style={{
               padding: "14px 18px",
@@ -199,14 +217,17 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
           >
             {msg.role === "agent" ? (
               msg.content === "" && isStreaming && isLast ? (
-                <ThinkingDots />
-              ) : (
                 <div
-                  aria-live={isStreaming && isLast ? "polite" : undefined}
-                  aria-atomic={isStreaming && isLast ? false : undefined}
+                  role="status"
+                  aria-live="polite"
+                  aria-label={formatMessage({ id: "chat.generating" })}
                 >
+                  <ThinkingDots />
+                </div>
+              ) : (
+                <div>
                   <CitationMarkdown
-                    content={displayContent}
+                    content={effectiveDisplayContent}
                     sourceCount={allSources.length}
                     onCiteClick={handleCiteClick}
                     resolveAssetUrl={getMeetingAssetUrl}
@@ -215,14 +236,28 @@ function ChatMessageBubble({ msg, idx, isStreaming, isLast }: ChatMessageBubbleP
                 </div>
               )
             ) : (
-              displayContent
+              effectiveDisplayContent
             )}
           </div>
+
+          {msg.role === "user" && msg.serverId && (
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              disabled={isStreaming}
+              onClick={() => onEditUserMessage(msg)}
+              aria-label={formatMessage({ id: "chat.editAndBranch" })}
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              {formatMessage({ id: "chat.edit" })}
+            </Button>
+          )}
 
           <AgentMetaPanels
             msg={msg}
             msgKey={msgKey}
-            displayContent={displayContent}
+            displayContent={effectiveDisplayContent}
             copiedId={copiedId}
             isLast={isLast}
             isStreaming={isStreaming}

@@ -34,24 +34,27 @@ logger = logging.getLogger(__name__)
 _COLLECTION_NAME = "meeting_summaries"
 
 _store: Chroma | None = None
+_store_embeddings_id: int | None = None
 _lock = threading.Lock()
 
 
 def reset_meeting_summary_vectorstore() -> None:
     """Reset the singleton.  Called when embedding settings change."""
-    global _store
+    global _store, _store_embeddings_id
     with _lock:
         _store = None
+        _store_embeddings_id = None
     logger.info("Meeting summary vectorstore singleton reset")
 
 
 def get_meeting_summary_vectorstore() -> Chroma:
     """Get or create the singleton meeting summary collection (thread-safe)."""
-    global _store
-    if _store is None:
+    global _store, _store_embeddings_id
+    embeddings = get_embeddings()
+    embeddings_id = id(embeddings)
+    if _store is None or _store_embeddings_id != embeddings_id:
         with _lock:
-            if _store is None:
-                embeddings = get_embeddings()
+            if _store is None or _store_embeddings_id != embeddings_id:
                 expected_dim = _resolve_dimension(embeddings, settings.EMBEDDING_DIMENSION)
                 _ensure_collection_dimension(
                     str(settings.VECTOR_DB_DIR),
@@ -64,6 +67,7 @@ def get_meeting_summary_vectorstore() -> Chroma:
                     embedding_function=embeddings,
                     persist_directory=str(settings.VECTOR_DB_DIR),
                 )
+                _store_embeddings_id = embeddings_id
     return _store
 
 
@@ -95,6 +99,7 @@ def upsert_meeting_summary(
     contributing_file_ids: list[int] | None = None,
     contributing_file_names: list[str] | None = None,
     content_hash: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Upsert a meeting-level summary into the dedicated collection.
 
@@ -110,6 +115,8 @@ def upsert_meeting_summary(
         "title": title,
         "content_type": "meeting_summary",
     }
+    if user_id is not None:
+        metadata["user_id"] = user_id
     if content_hash:
         metadata["content_hash"] = content_hash
     if contributing_file_ids:
@@ -126,7 +133,8 @@ def upsert_meeting_summary(
             existing = store._collection.get(ids=[doc_id], include=["metadatas"])
             if existing and existing.get("ids") and existing["ids"][0] == doc_id:
                 old_meta = (existing.get("metadatas") or [{}])[0]
-                if old_meta.get("content_hash") == content_hash:
+                owner_matches = user_id is None or old_meta.get("user_id") == user_id
+                if old_meta.get("content_hash") == content_hash and owner_matches:
                     logger.debug(
                         "Meeting %d summary unchanged (hash=%s); skipping upsert",
                         meeting_id,
@@ -169,18 +177,11 @@ def upsert_meeting_summary(
 
 
 def delete_meeting_summary(meeting_id: int) -> None:
-    """Remove a meeting summary vector. No-op if it doesn't exist."""
-    try:
-        store = get_meeting_summary_vectorstore()
-        doc_id = _doc_id(meeting_id)
-        with _db_write_lock:
-            store._collection.delete(ids=[doc_id])
-    except Exception:
-        logger.warning(
-            "Meeting summary vector delete failed for meeting %d",
-            meeting_id,
-            exc_info=True,
-        )
+    """Remove a meeting summary vector, propagating failures for retry."""
+    store = get_meeting_summary_vectorstore()
+    doc_id = _doc_id(meeting_id)
+    with _db_write_lock:
+        store._collection.delete(ids=[doc_id])
 
 
 def _vector_score_lower_is_better() -> bool:
@@ -202,6 +203,7 @@ def route_meetings_by_summary(
     *,
     top_k: int | None = None,
     min_score: float | None = None,
+    user_id: str | None = None,
 ) -> list[tuple[int, float]] | None:
     """Return ``(meeting_id, score)`` pairs ranked by summary similarity.
 
@@ -243,7 +245,10 @@ def route_meetings_by_summary(
     except Exception:
         logger.debug("Meeting summary collection count check failed", exc_info=True)
 
-    fetch_k = requested_top_k * 2
+    # A principal named ``default`` is still a real tenant.  Fetch extra
+    # candidates for every scoped request because the authoritative ownership
+    # check below happens in SQLite (older vectors may not have user metadata).
+    fetch_k = requested_top_k * (5 if user_id is not None else 2)
 
     results: list[tuple[Any, float]] = []
     try:
@@ -274,12 +279,20 @@ def route_meetings_by_summary(
         orphans: list[int] = []
         with get_connection() as conn:
             for mid, sc in ranked:
-                row = conn.execute(
-                    "SELECT summary_status FROM meetings WHERE id=?", (mid,)
-                ).fetchone()
+                if user_id is not None:
+                    row = conn.execute(
+                        "SELECT summary_status FROM meetings WHERE id=? AND user_id=?",
+                        (mid, user_id),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT summary_status FROM meetings WHERE id=?", (mid,)
+                    ).fetchone()
                 if row and row["summary_status"] == "ready":
                     valid.append((mid, sc))
-                else:
+                # In a tenant-scoped lookup, a missing row may simply belong
+                # to another tenant and must never be deleted as an orphan.
+                elif user_id is None:
                     orphans.append(mid)
         if orphans:
             logger.info(

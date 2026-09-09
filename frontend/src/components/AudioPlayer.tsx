@@ -15,6 +15,7 @@ interface Props {
   mediaType?: "audio" | "video";
   videoMaxHeight?: number;
   seekTo?: number;
+  seekEnd?: number;
   segments?: Segment[];
   onActiveSegmentChange?: (index: number | null) => void;
 }
@@ -48,6 +49,7 @@ export default function AudioPlayer({
   mediaType = "audio",
   videoMaxHeight = 360,
   seekTo,
+  seekEnd,
   segments,
   onActiveSegmentChange,
 }: Props) {
@@ -141,6 +143,13 @@ export default function AudioPlayer({
     }
   }, [seekTo, currentSrc]);
 
+  const stopAtEvidenceEnd = useCallback(() => {
+    const media = mediaRef.current;
+    if (media && seekEnd != null && media.currentTime >= seekEnd) {
+      media.pause();
+    }
+  }, [seekEnd]);
+
   useEffect(() => {
     activeSegmentCallbackRef.current = onActiveSegmentChange;
   }, [onActiveSegmentChange]);
@@ -195,6 +204,7 @@ export default function AudioPlayer({
           controls
           aria-label="Video player"
           playsInline
+          onTimeUpdate={stopAtEvidenceEnd}
           style={{ width: "100%", maxHeight: videoMaxHeight, borderRadius: 8, background: "#000" }}
         >
           <track kind="captions" />
@@ -211,6 +221,7 @@ export default function AudioPlayer({
       src={currentSrc}
       controls
       aria-label="Audio player"
+      onTimeUpdate={stopAtEvidenceEnd}
       style={{ width: "100%" }}
     >
       <track kind="captions" />

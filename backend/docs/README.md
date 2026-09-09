@@ -1,78 +1,97 @@
-# Meeting Agent 后端文档
+# Meeting Agent Backend Documentation
 
-> `backend/docs/` 目录是 Meeting Agent 后端的**子系统级文档集**。每份文件聚焦一个子系统，所有文档都会在 [`architecture.md`](./architecture.md) 里被交叉引用。
->
-> **英文示意图**（Mermaid 流程图等）位于仓库根目录 [`docs/diagrams/`](../../docs/diagrams/)，与本文档互为补充；总索引见 [`docs/README.md`](../../docs/README.md)。
+`backend/docs/` is the subsystem-level documentation set for the Meeting Agent backend. Each document focuses on one subsystem and is cross-referenced from [`architecture.md`](./architecture.md).
 
-## 阅读顺序建议
+English diagrams, including Mermaid flowcharts, are in [`docs/diagrams/`](../../docs/diagrams/). The repository-wide index is [`docs/README.md`](../../docs/README.md).
 
-1. **新加入项目？** 先读 [`architecture.md`](./architecture.md) 了解分层与数据流总览
-2. **准备部署？** 读 [`configuration.md`](./configuration.md) + [`lifespan-and-operations.md`](./lifespan-and-operations.md) + [`database.md`](./database.md)（含 Alembic）+ [`operations/alembic.md`](./operations/alembic.md)
-3. **对接 API？** 读 [`api-reference.md`](./api-reference.md) 和 [`mcp-server.md`](./mcp-server.md)
-4. **用终端操作系统？** 读 [`cli.md`](./cli.md)
-5. **深入业务逻辑？** 读 [`chain-pipeline.md`](./chain-pipeline.md) → [`rag.md`](./rag.md) → [`memory-and-kg.md`](./memory-and-kg.md)；Skill 扩展见 [`SKILLS.md`](./SKILLS.md)
-6. **研究存储 / 性能？** 读 [`database.md`](./database.md) + [`llm-and-traffic.md`](./llm-and-traffic.md) + [`benchmarking.md`](./benchmarking.md)
-7. **排查上传问题？** 读 [`ingest-pipeline.md`](./ingest-pipeline.md)
+**Last implementation reconciliation:** 2026-09-09. Current behavior is
+defined by source and generated OpenAPI. The current reconciliation also
+covers every `Settings` field plus the file-kind, parser-route, MCP-tool, and
+Alembic registries; dated repository audit records are historical evidence
+rather than backend reference material.
 
-## 文档索引
+If you are running the project for the first time, start with [`docs/getting-started.md`](../../docs/getting-started.md). For REST, SSE, WebSocket, and MCP examples, read [`docs/api-quickstart.md`](../../docs/api-quickstart.md). The operator entry point is [`docs/operations-guide.md`](../../docs/operations-guide.md); deletion, backup, and recovery boundaries are described in [`docs/data-lifecycle.md`](../../docs/data-lifecycle.md).
 
-### 总览
+## Recommended reading order
 
-| 文档 | 主题 |
+1. **New contributor:** read [`architecture.md`](./architecture.md) for backend layers and data flow, then [`../../frontend/docs/architecture.md`](../../frontend/docs/architecture.md) for the UI and API client.
+2. **Deployment:** read [`configuration.md`](./configuration.md), [`lifespan-and-operations.md`](./lifespan-and-operations.md), [`security-and-tenancy.md`](./security-and-tenancy.md), [`database.md`](./database.md), and [`operations/alembic.md`](./operations/alembic.md).
+3. **API integration:** read [`api-reference.md`](./api-reference.md) and [`mcp-server.md`](./mcp-server.md).
+4. **CLI usage:** read [`cli.md`](./cli.md).
+5. **Core business logic:** read [`chain-pipeline.md`](./chain-pipeline.md) → [`rag.md`](./rag.md) → [`memory-and-kg.md`](./memory-and-kg.md); see [`SKILLS.md`](./SKILLS.md) for Skill extensions.
+6. **Storage and performance:** read [`database.md`](./database.md), [`llm-and-traffic.md`](./llm-and-traffic.md), [`observability.md`](./observability.md), and [`benchmarking.md`](./benchmarking.md).
+7. **Upload troubleshooting:** read [`ingest-pipeline.md`](./ingest-pipeline.md).
+
+## Documentation index
+
+### Overview
+
+| Document | Scope |
 |---|---|
-| [`architecture.md`](./architecture.md) | 系统架构总览、分层、数据流、跨切面关注点 |
-| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | FastAPI lifespan、关键/尽力路径、运维命令、故障恢复 |
-| [`configuration.md`](./configuration.md) | 三级配置覆盖、全部配置项参考、典型场景模板 |
+| [`architecture.md`](./architecture.md) | System architecture, layers, data flow, and cross-cutting concerns |
+| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | FastAPI lifespan, critical/best-effort paths, operations, and recovery |
+| [`configuration.md`](./configuration.md) | Configuration precedence, complete settings reference, and deployment templates |
+| [`security-and-tenancy.md`](./security-and-tenancy.md) | API keys, principals, ownership, short-lived tokens, idempotency payloads, and HTTP security |
+| [`observability.md`](./observability.md) | Logs, request IDs, pipeline traces, Prometheus metrics, probes, and troubleshooting |
 
-### 业务管线
+### Business pipelines
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`ingest-pipeline.md`](./ingest-pipeline.md) | 上传 → 解析/转写 → 索引 全链路 |
-| [`rag.md`](./rag.md) | RAG 架构、chunking、检索、rerank、后处理、优化方向 |
-| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` / `ask_stream()` 编排、并行上下文、流式事件 |
-| [`memory-and-kg.md`](./memory-and-kg.md) | 记忆系统、衰减、合并、画像、知识图谱 |
-| [`SKILLS.md`](./SKILLS.md) | Skill 加载、意图匹配、与 chain 集成 |
+| [`ingest-pipeline.md`](./ingest-pipeline.md) | Upload → parse/transcribe → index end-to-end flow |
+| [`rag.md`](./rag.md) | RAG architecture, chunking, retrieval, reranking, post-processing, and tuning |
+| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` / `ask_stream()` orchestration, parallel context loading, and stream events |
+| [`memory-and-kg.md`](./memory-and-kg.md) | Memory, decay, merging, profiles, and knowledge graph |
+| [`SKILLS.md`](./SKILLS.md) | Skill loading, intent matching, and chain integration |
 
-### 基础设施
+### Infrastructure
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`database.md`](./database.md) | SQLite 读写分离、**Alembic + 遗留迁移**、44 步 `_MIGRATIONS` 摘要、主要表、Repository |
-| [`llm-and-traffic.md`](./llm-and-traffic.md) | Provider 注册表、缓存、并发/限速/熔断 |
+| [`database.md`](./database.md) | SQLite read/write separation, **Alembic + legacy migrations**, `_MIGRATIONS` summary, tables, and repositories |
+| [`llm-and-traffic.md`](./llm-and-traffic.md) | Provider registry, caching, concurrency, rate limiting, and circuit breaking |
+| [`observability.md`](./observability.md) | Logs, traces, metrics, health probes, and incident diagnosis |
 
-### 运维与实践
+### Operations and practice
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`operations/alembic.md`](./operations/alembic.md) | Alembic 与 `init_db` 关系、stamp、`upgrade head`、团队约定 |
-| [`operations/backup.md`](./operations/backup.md) | 备份策略与脚本入口 |
-| [`operations/restore.md`](./operations/restore.md) | 恢复流程 |
-| [`operations/retention.md`](./operations/retention.md) | 数据保留与清理 |
-| [`operations/sla.md`](./operations/sla.md) / [`operations/slo.md`](./operations/slo.md) | SLA / SLO 说明 |
-| [`operations/runbooks/`](./operations/runbooks/) | AssemblyAI 超时、429 风暴、Chroma 维度不一致、熔断等 |
+| [`operations/alembic.md`](./operations/alembic.md) | Alembic and `init_db`, stamping, `upgrade head`, and team conventions |
+| [`operations/backup.md`](./operations/backup.md) | Backup strategy and script entry points |
+| [`operations/restore.md`](./operations/restore.md) | Recovery procedure |
+| [`operations/retention.md`](./operations/retention.md) | Data retention and cleanup |
+| [`operations/sla.md`](./operations/sla.md) / [`operations/slo.md`](./operations/slo.md) | SLA and SLO definitions |
+| [`operations/runbooks/`](./operations/runbooks/) | AssemblyAI timeouts, 429 storms, Chroma dimension mismatches, breaker incidents, and more |
 
-### 接入
+### Integrations
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`api-reference.md`](./api-reference.md) | REST API 路由、请求/响应 schema、错误语义 |
-| [`mcp-server.md`](./mcp-server.md) | MCP Server 工具、传输、调试、扩展 |
-| [`cli.md`](./cli.md) | CLI 命令、交互引导、导出与排障 |
+| [`api-reference.md`](./api-reference.md) | REST routes, request/response schemas, and error semantics |
+| [`mcp-server.md`](./mcp-server.md) | MCP tools, transports, debugging, and extension |
+| [`cli.md`](./cli.md) | CLI commands, interactive setup, export, and troubleshooting |
 
-### 性能
+### Backend quality
 
-| 文档 | 主题 |
+| Document | Scope |
 |---|---|
-| [`benchmarking.md`](./benchmarking.md) | 基准测试工具、命令、典型指标 |
+| [`testing.md`](./testing.md) | Backend tests, CI, coverage, security gates, and regression strategy |
 
-## 维护约定
+### Performance
 
-- 所有文档用**中文**撰写（保持风格一致；`operations/runbooks` 等历史英文材料若保留，新写 runbook 请优先中文）
-- 源码位置以**绝对路径**标注：`backend/src/...`
-- 切勿在文档中硬编码 secret 或生产 URL
-- 文档和代码**同步更新**：修改子系统的重大行为时，同时 PR 更新对应文档
-- 新增子系统时：
-  1. 在 `backend/docs/` 下加新 `md`
-  2. 在本 `README.md` 索引表中追加条目
-  3. 在 [`architecture.md`](./architecture.md) 的"子系统索引"表中追加条目
+| Document | Scope |
+|---|---|
+| [`benchmarking.md`](./benchmarking.md) | Benchmark tools, commands, metric interpretation, and public model-claim boundaries |
+
+## Maintenance rules
+
+- Write all new documentation in **English** and keep terminology consistent.
+- Use repository-relative source paths such as `backend/src/...` in documentation.
+- Never hard-code secrets or production URLs.
+- Keep documentation synchronized with implementation: update the nearest subsystem document whenever behavior changes.
+- Use `backend/alembic/versions/` as the schema source of truth after the frozen
+  v52 legacy baseline; never infer the current schema from `_MIGRATIONS` alone.
+- When adding a subsystem:
+  1. Add a Markdown file under `backend/docs/`.
+  2. Add it to this README index.
+  3. Add it to the subsystem index in [`architecture.md`](./architecture.md).

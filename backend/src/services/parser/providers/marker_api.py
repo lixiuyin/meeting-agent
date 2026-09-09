@@ -11,7 +11,10 @@ API docs: https://documentation.datalab.to/api-reference/marker
 import asyncio
 import logging
 import re
+import uuid
 from pathlib import Path
+
+import anyio
 
 from src.core.config import settings
 
@@ -115,20 +118,36 @@ class MarkerAPIParser:
             mime_type = _get_mime_type(file_path)
             # Use "accurate" mode for scanned/image-heavy docs to ensure OCR
             mode = "accurate" if profile.is_likely_scanned or profile.image_ratio > 0.5 else "fast"
-            with open(file_path, "rb") as f:
-                files = {"file": (file_path.name, f, mime_type)}
-                data = {
-                    "output_format": "markdown",
-                    "paginate": "true",
-                    "mode": mode,
-                }
+            data = {
+                "output_format": "markdown",
+                "paginate": "true",
+                "mode": mode,
+            }
+            boundary = f"meeting-agent-{uuid.uuid4().hex}"
+            safe_filename = file_path.name.replace('"', "_").replace("\\", "_")
 
-                resp = await client.post(
-                    base_url,
-                    files=files,
-                    data=data,
-                    headers=headers,
-                )
+            async def _multipart_body():
+                for field_name, value in data.items():
+                    yield (
+                        f"--{boundary}\r\n"
+                        f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'
+                        f"{value}\r\n"
+                    ).encode()
+                yield (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="file"; filename="{safe_filename}"\r\n'
+                    f"Content-Type: {mime_type}\r\n\r\n"
+                ).encode()
+                async with await anyio.open_file(file_path, "rb") as handle:
+                    while chunk := await handle.read(1024 * 1024):
+                        yield chunk
+                yield f"\r\n--{boundary}--\r\n".encode()
+
+            resp = await client.post(
+                base_url,
+                content=_multipart_body(),
+                headers={**headers, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
 
             if resp.status_code in (401, 403):
                 logger.error(

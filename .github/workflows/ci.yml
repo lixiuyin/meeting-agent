@@ -43,9 +43,8 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
-    # Intentionally non-blocking: CodeQL requires GitHub Advanced Security
-    # which may not be available on all forks; findings are advisory only.
-    continue-on-error: true
+    # CodeQL findings are blocking when code scanning is available. Forks
+    # without GitHub Advanced Security take the explicit skip path below.
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +105,29 @@ jobs:
         run: docker build -t meeting-agent-backend ./backend
       - name: Build frontend image
         run: docker build -t meeting-agent-frontend ./frontend
+      - name: Smoke-test frontend container startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth_hash="$(openssl passwd -apr1 ci-password)"
+          docker run -d --name meeting-agent-frontend-smoke \
+            --add-host backend:127.0.0.1 \
+            -e ENVIRONMENT=production \
+            -e API_KEY=ci-backend-key \
+            -e FRONTEND_AUTH_USER=ci \
+            -e FRONTEND_AUTH_PASSWORD_HASH="$auth_hash" \
+            -p 127.0.0.1:18307:8080 \
+            meeting-agent-frontend
+          trap 'docker logs meeting-agent-frontend-smoke || true; docker rm -f meeting-agent-frontend-smoke || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18307/healthz >/dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              exit 1
+            fi
+            sleep 1
+          done
 
   backend:
     runs-on: ubuntu-latest
@@ -143,19 +165,34 @@ jobs:
       - name: Validate Alembic revision graph
         run: uv run alembic heads
 
+      - name: Protect published Alembic revisions
+        run: uv run python -m scripts.check_alembic_immutability
+
       - name: Check .env.example in sync
         run: uv run python -m scripts.check_env_example
 
       - name: Lint
-        run: uv run ruff check src/
+        run: uv run ruff check src/ tests/ scripts/
 
       - name: Format check
-        run: uv run ruff format --check src/
+        run: uv run ruff format --check src/ tests/ scripts/
 
       - name: Type check
         run: |
           uv run pyright src/ 2>&1 | tee pyright.log
           exit "${PIPESTATUS[0]}"
+
+      - name: Install pinned Prometheus rule validator
+        run: |
+          curl --fail --location --retry 3 https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-amd64.tar.gz -o /tmp/prometheus-tests.tar.gz
+          echo 'f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d  /tmp/prometheus-tests.tar.gz' | sha256sum --check
+          tar -xzf /tmp/prometheus-tests.tar.gz -C /tmp prometheus-3.14.0.linux-amd64/promtool
+          echo "PROMTOOL=/tmp/prometheus-3.14.0.linux-amd64/promtool" >> "$GITHUB_ENV"
+
+      - name: Validate streaming SLO rules
+        run: |
+          "$PROMTOOL" check rules ../monitoring/prometheus/alerts.yaml
+          "$PROMTOOL" test rules ../monitoring/prometheus/slo-tests.yaml
 
       - name: Tests
         run: uv run python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=60
@@ -176,7 +213,19 @@ jobs:
           fail_ci_if_error: false
 
       - name: Security audit
-        run: uvx pip-audit --desc --strict
+        # Exact temporary mitigations are documented in SECURITY.md.
+        run: |
+          review_before="2026-10-01"
+          if [ "$(date -u +%F)" \> "$review_before" ] || [ "$(date -u +%F)" = "$review_before" ]; then
+            echo "Dependency advisory exceptions expired on $review_before; re-audit and update SECURITY.md."
+            exit 1
+          fi
+          uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-txt |
+            uvx pip-audit -r /dev/stdin --no-deps --disable-pip --desc --strict \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln CVE-2026-45830 \
+            --ignore-vuln CVE-2026-45831 \
+            --ignore-vuln CVE-2026-45833
 
       - name: Bandit security scan
         run: uv run bandit -c pyproject.toml -r src/ -ll -ii -f json -o bandit-report.json
@@ -255,7 +304,7 @@ jobs:
         run: npm run build
 
       - name: Tests
-        run: npm run test -- --run
+        run: npm run test -- --run --coverage
 
       - name: Security audit
         run: npm audit --audit-level=high
@@ -272,10 +321,6 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    # Non-blocking: e2e tests are inherently flaky and several full-stack
-    # specs require a live backend with LLM/ASR keys that aren't provisioned
-    # in CI. Failures here surface as red checks but don't block PR merge.
-    continue-on-error: true
     defaults:
       run:
         working-directory: frontend
@@ -293,14 +338,13 @@ jobs:
         run: npm ci
 
       - name: Install Playwright
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Build frontend
         run: npm run build
 
       - name: Run E2E tests
         run: npm run e2e:ci
-        continue-on-error: true
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -322,12 +366,10 @@ jobs:
         with:
           node-version: "20"
       - run: cd backend && uv sync --dev
-      - run: chmod +x scripts/generate-types.sh && ./scripts/generate-types.sh
-      - run: git --no-pager diff --exit-code -- frontend/src/api/generated.d.ts
+      - run: chmod +x scripts/generate-types.sh && ./scripts/generate-types.sh --check
 
   contract-schemathesis:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
@@ -340,10 +382,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: cd backend && uv sync --dev
-      - run: cd backend && uv run python -m uvicorn src.main:app --host 127.0.0.1 --port 8000 &
+      - run: cd backend && uv run python -m uvicorn src.main:app --host 127.0.0.1 --port 7008 &
       - run: |
           for i in {1..30}; do
-            curl -fsS http://127.0.0.1:8000/api/v1/health && break
+            curl -fsS http://127.0.0.1:7008/api/v1/health && break
             sleep 2
           done
       - run: |
@@ -353,7 +395,7 @@ jobs:
           # tests with mocks. Including them here would only surface
           # provider-init or network-timeout 5xx that aren't real contract
           # bugs.
-          cd backend && uvx schemathesis run http://127.0.0.1:8000/openapi.json \
+          cd backend && uvx schemathesis run http://127.0.0.1:7008/openapi.json \
             --phases examples,coverage \
             --workers 2 \
             --max-examples 8 \
@@ -362,7 +404,6 @@ jobs:
             --exclude-path-regex '^/api/v1/(chat(/.*)?|memory/(decay|search|entities/merge)|sessions/(search|.+/(summarize|search))|meetings/.+/summary(/.*)?|meetings/.+/files/.+/(reprocess|speakers)|settings/(rebuild-vectors|rebuild-multimodal|account)|skills/(match|invoke))$' \
             --checks not_a_server_error,status_code_conformance,response_schema_conformance
         # These three checks catch real bugs (5xx, wrong status, schema mismatch).
-        # Fuzz-only checks remain non-blocking via continue-on-error above.
 
   helm-validate:
     runs-on: ubuntu-latest
@@ -372,6 +413,24 @@ jobs:
       - run: helm lint deploy/helm/meeting-agent
       # CI just validates template syntax; bypass production TLS guard.
       - run: helm template meeting-agent deploy/helm/meeting-agent --set ingress.tlsDisabled=true > /tmp/manifest.yaml
+      - name: Verify Secret validation fails closed
+        run: |
+          if helm template missing-secrets deploy/helm/meeting-agent \
+            --set ingress.tlsDisabled=true \
+            --set backend.createSecret=true > /tmp/missing-secrets.yaml 2>/tmp/missing-secrets.err; then
+            echo "Chart accepted backend.createSecret=true without required secrets"
+            exit 1
+          fi
+          grep -q "backend.secrets.API_KEY is required" /tmp/missing-secrets.err
+      - name: Verify immutable image digest rendering
+        run: |
+          helm template digest deploy/helm/meeting-agent \
+            --set ingress.tlsDisabled=true \
+            --set-string backend.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --set-string frontend.image.digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+            > /tmp/digest-manifest.yaml
+          grep -q 'backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' /tmp/digest-manifest.yaml
+          grep -q 'frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' /tmp/digest-manifest.yaml
       - name: Install kubeconform
         run: |
           curl -sSL -o /tmp/kubeconform.tar.gz \
@@ -379,6 +438,15 @@ jobs:
           tar -xzf /tmp/kubeconform.tar.gz -C /tmp
       - name: Validate rendered manifests
         run: /tmp/kubeconform -strict -summary /tmp/manifest.yaml
+
+  docs-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_docs.py
 
   # ── Backup & restore verification ──
   backup-restore:
@@ -404,31 +472,40 @@ jobs:
           from pathlib import Path
           from src.core import constants as cm
           cm.DATA_DIR = Path(os.environ['DATA_DIR'])
-          cm.DATABASE_PATH = Path(os.environ['DB_PATH'])
+          cm.DB_PATH = Path(os.environ['DB_PATH'])
           from src.core.database import init_db
           init_db()
+          (cm.DATA_DIR / 'uploads').mkdir(exist_ok=True)
+          (cm.DATA_DIR / 'uploads' / 'restore-marker.txt').write_text('upload-marker')
+          (cm.DATA_DIR / 'vectordb').mkdir(exist_ok=True)
+          (cm.DATA_DIR / 'vectordb' / 'restore-marker.txt').write_text('vector-marker')
           "
           # Run backup script (positional args: DB_PATH, BACKUP_DIR)
           chmod +x ../scripts/backup.sh
           ../scripts/backup.sh "$DB_PATH" "$DATA_DIR/backups"
       - name: Verify backup integrity
         run: |
-          BACKUP_FILE=$(ls -t $DATA_DIR/backups/*.db 2>/dev/null | head -1)
+          BACKUP_FILE=$(ls -t "$DATA_DIR"/backups/meeting-agent-*.tar.gz 2>/dev/null | head -1)
           if [ -z "$BACKUP_FILE" ]; then
             echo "ERROR: No backup file found"
             exit 1
           fi
+          test "$(stat -c '%a' "$BACKUP_FILE")" = "600"
           echo "Verifying backup: $BACKUP_FILE"
-          sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;" | grep -q "ok"
-          echo "Tables in backup:"
-          sqlite3 "$BACKUP_FILE" ".tables"
+          RESTORE_DIR="${DATA_DIR}.restored"
+          ./scripts/restore.sh "$BACKUP_FILE" "$RESTORE_DIR" --force
+          sqlite3 "$RESTORE_DIR/meetings.db" "PRAGMA integrity_check;" | grep -q "ok"
+          test -z "$(sqlite3 "$RESTORE_DIR/meetings.db" "PRAGMA foreign_key_check;")"
+          test "$(cat "$RESTORE_DIR/uploads/restore-marker.txt")" = "upload-marker"
+          test "$(cat "$RESTORE_DIR/vectordb/restore-marker.txt")" = "vector-marker"
+          test "$(stat -c '%a' "$RESTORE_DIR/meetings.db")" = "600"
+          echo "RESTORE_DIR=$RESTORE_DIR" >> "$GITHUB_ENV"
       - name: Verify backup data
         run: |
-          BACKUP_FILE=$(ls -t $DATA_DIR/backups/*.db 2>/dev/null | head -1)
           cd backend
           uv run python -c "
           import sqlite3
-          conn = sqlite3.connect('$BACKUP_FILE')
+          conn = sqlite3.connect('$RESTORE_DIR/meetings.db')
           conn.row_factory = sqlite3.Row
           for table in ['schema_version', 'meetings', 'chat_messages', 'user_memories']:
               conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()

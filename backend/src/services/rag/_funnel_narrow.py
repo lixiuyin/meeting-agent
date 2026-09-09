@@ -52,6 +52,7 @@ def narrow_scope_via_funnel(
     min_chunk_evidence: float,
     prefetched_wide_docs: list[dict] | None = None,
     summary_intent: bool = False,
+    user_id: str | None = None,
 ) -> ScopeSelection:
     """Select broad recall scope files via chunk-evidence aggregation.
 
@@ -74,6 +75,7 @@ def narrow_scope_via_funnel(
             trace,
             rag_mode,
             known_speakers,
+            user_id=user_id,
         )
     else:
         docs = prefetched_wide_docs
@@ -146,6 +148,8 @@ def wide_fetch_for_funnel(
     trace: TraceContext | None,
     rag_mode: str | None,
     known_speakers: list[str] | None,
+    *,
+    user_id: str | None = None,
 ) -> list[dict]:
     """Public wrapper for the wide-fetch step (M4: parallel router/funnel).
 
@@ -160,6 +164,7 @@ def wide_fetch_for_funnel(
         trace,
         rag_mode,
         known_speakers,
+        user_id=user_id,
     )
 
 
@@ -170,6 +175,8 @@ def _wide_fetch(
     trace: TraceContext | None,
     rag_mode: str | None,
     known_speakers: list[str] | None,
+    *,
+    user_id: str | None = None,
 ) -> list[dict]:
     """Single Chroma call covering both meeting scope and anchor meetings."""
     wide_fetch_meeting_ids = list(set((meeting_ids or []) + (anchor_meeting_ids or []))) or None
@@ -193,6 +200,7 @@ def _wide_fetch(
         rag_mode=rag_mode,
         known_speakers=known_speakers,
         _apply_diversity=False,
+        user_id=user_id,
     )
     if span:
         span.finish("success")
@@ -203,6 +211,7 @@ def _wide_fetch(
             primary_query,
             wide_fetch_meeting_ids,
             wide_k,
+            user_id=user_id,
         )
         if mm_docs:
             docs = _merge_multimodal_docs(docs, mm_docs)
@@ -218,6 +227,8 @@ def _wide_fetch_multimodal(
     primary_query: str,
     scope_meeting_ids: list[int] | None,
     wide_k: int,
+    *,
+    user_id: str | None = None,
 ) -> list[dict]:
     """Optionally pull multimodal store results for funnel-side fairness.
 
@@ -227,9 +238,11 @@ def _wide_fetch_multimodal(
     try:
         from ._raganything import retrieve_with_raganything
 
-        filters: dict[str, list[int]] = {}
+        filters: dict[str, list[int] | str] = {}
         if scope_meeting_ids:
             filters["meeting_id"] = scope_meeting_ids
+        if user_id is not None:
+            filters["user_id"] = user_id
         return retrieve_with_raganything(primary_query, top_k=wide_k, filters=filters) or []
     except Exception:
         logger.debug("Multimodal wide-fetch skipped due to error", exc_info=True)

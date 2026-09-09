@@ -3,9 +3,11 @@
 import json
 import logging
 import threading
+from functools import wraps
+from typing import Any
 
 from ...core.config import settings
-from ._vectorstore import get_vectorstore
+from ._vectorstore import get_vectorstore, vectorstore_write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,33 @@ def load_bm25_from_database() -> bool:
         return False
 
 
-def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) -> None:
+def _serialized_maintenance(function):
+    @wraps(function)
+    def wrapped(force=False, timeout=None, *, strict=False, source=None):
+        if not force and load_bm25_from_database():
+            return True
+        try:
+            # Resolve provider/dimension outside the local publication lock.
+            source = source if source is not None else get_vectorstore()
+            with vectorstore_write_lock():
+                return function(force, timeout, strict=strict, source=source)
+        except Exception:
+            if strict:
+                raise
+            logger.warning("BM25 maintenance failed", exc_info=True)
+            return False
+
+    return wrapped
+
+
+@_serialized_maintenance
+def rebuild_bm25_from_chroma(
+    force: bool = False,
+    timeout: float | None = None,
+    *,
+    strict: bool = False,
+    source: Any = None,
+) -> bool:
     """Rebuild FTS5 index from existing Chroma data.
 
     By default, only rebuilds when FTS5 is empty.  Pass ``force=True``
@@ -50,6 +78,8 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
         timeout: Maximum wall-clock seconds for the rebuild.  ``None``
             means no limit.  If exceeded, the rebuild is aborted but
             the live index is left intact (staging table is cleaned up).
+        strict: Re-raise failures so an orchestrated vector swap can roll
+            back instead of reporting a false-successful cross-store rebuild.
 
     H-12: Uses a staging table so the live index remains fully intact
     during the rebuild.  The swap (delete old + insert new) happens in a
@@ -60,7 +90,7 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
     long-running rebuilds.
     """
     if not force and load_bm25_from_database():
-        return
+        return True
 
     global _bm25_rebuilding
     with _bm25_rebuilding_lock:
@@ -80,45 +110,11 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
             _timed_out = True
             raise TimeoutError(f"BM25 rebuild exceeded {timeout:.0f}s at {label}")
 
-    vectorstore = get_vectorstore()
     try:
-        all_data = vectorstore.get(include=["documents", "metadatas"])
-    except Exception:
-        logger.warning("Failed to load Chroma data for FTS5 rebuild", exc_info=True)
-        with _bm25_rebuilding_lock:
-            _bm25_rebuilding = False
-        return
-    if not all_data.get("documents"):
-        with _bm25_rebuilding_lock:
-            _bm25_rebuilding = False
-        return
-
-    documents = all_data["documents"]
-    metadatas = all_data["metadatas"]
-    ids = all_data["ids"]
-    total = len(documents)
-    progress_step = max(total // 10, 1)
-    indexed = 0
-
-    # Pre-scan: validate all chunk IDs before starting so a partial
-    # failure doesn't waste time.
-    if force:
-        for i, meta in enumerate(metadatas):
-            if meta.get("chunk_type") == "parent":
-                continue
-            if not ids[i]:
-                logger.error(
-                    "BM25 rebuild aborted: chunk_id is empty at index %d "
-                    "(meeting_id=%s). Fix the Chroma data before retrying.",
-                    i,
-                    meta.get("meeting_id", 0),
-                )
-                with _bm25_rebuilding_lock:
-                    _bm25_rebuilding = False
-                return
-
-    try:
+        vectorstore = source if source is not None else get_vectorstore()
         from ...core.database import get_write_connection
+
+        indexed = 0
 
         # H-12 Phase 1: Build new data in staging table (no interference with live index).
         with get_write_connection() as conn:
@@ -132,31 +128,29 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
                 "metadata TEXT)"
             )
 
-        staging_rows: list[tuple[str, int, str, str, str]] = []
-        for i, (content, meta) in enumerate(zip(documents, metadatas, strict=False)):
-            _check_timeout("staging collect loop")
-            if meta.get("chunk_type") == "parent":
-                continue
-            meeting_id = meta.get("meeting_id", 0)
-            chunk_id = ids[i]
-            if not chunk_id:
-                logger.error(
-                    "BM25 rebuild: skipping entry with empty chunk_id at index %d",
-                    i,
+        offset = 0
+        batch_size = 1000
+        while True:
+            _check_timeout("batch read")
+            batch = vectorstore.get(
+                include=["documents", "metadatas"], limit=batch_size, offset=offset
+            )
+            ids = batch.get("ids") or []
+            if not ids:
+                break
+            staging_rows = []
+            for chunk_id, content, meta in zip(
+                ids, batch.get("documents") or [], batch.get("metadatas") or [], strict=True
+            ):
+                _check_timeout("staging collect loop")
+                if not chunk_id or not isinstance(meta, dict):
+                    raise RuntimeError("BM25 rebuild encountered incomplete chunk metadata/ID")
+                if meta.get("chunk_type") == "parent":
+                    continue
+                staging_rows.append(
+                    (chunk_id, meta.get("meeting_id", 0), content, "[]", json.dumps(meta))
                 )
-                continue
-            staging_rows.append((chunk_id, meeting_id, content, "[]", json.dumps(meta)))
-            indexed += 1
-            if indexed % progress_step == 0:
-                logger.info(
-                    "BM25 rebuild staging: %d/%d chunks (%.0f%%)",
-                    indexed,
-                    total,
-                    indexed / total * 100 if total else 0,
-                )
-
-        # Batch-insert all staging rows in a single transaction.
-        if staging_rows:
+                indexed += 1
             with get_write_connection() as conn:
                 conn.executemany(
                     "INSERT OR REPLACE INTO bm25_index_staging "
@@ -164,6 +158,10 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
                     "VALUES (?, ?, ?, ?, ?)",
                     staging_rows,
                 )
+            offset += len(ids)
+            logger.info("BM25 rebuild staged %d child chunks", indexed)
+            if len(ids) < batch_size:
+                break
 
         # H-12 Phase 2: Atomic swap — delete old + insert new in one transaction.
         # The FTS5 triggers on bm25_index handle the FTS side automatically.
@@ -181,15 +179,10 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
             conn.execute("DELETE FROM bm25_stats WHERE key='last_indexed_id'")
             conn.execute("DROP TABLE IF EXISTS bm25_index_staging")
 
-        if _timed_out:
-            elapsed = time.monotonic() - start_time
-            logger.warning("BM25 rebuild timed out after %.0f seconds", elapsed)
-        else:
-            logger.info("FTS5 index rebuilt from Chroma: %d chunks", indexed)
-    except TimeoutError as e:
-        logger.warning("BM25 rebuild aborted: %s", e)
+        logger.info("FTS5 index rebuilt from Chroma: %d chunks", indexed)
+        return True
     except Exception as e:
-        logger.warning("Failed to rebuild FTS5 from Chroma: %s", e)
+        logger.warning("Failed to rebuild FTS5 from Chroma: %s", e, exc_info=True)
         # Clean up staging table on failure
         try:
             from ...core.database import get_write_connection
@@ -198,6 +191,9 @@ def rebuild_bm25_from_chroma(force: bool = False, timeout: float | None = None) 
                 conn.execute("DROP TABLE IF EXISTS bm25_index_staging")
         except Exception:
             logger.debug("Failed to drop bm25_index_staging during cleanup", exc_info=True)
+        if strict:
+            raise
+        return False
     finally:
         with _bm25_rebuilding_lock:
             _bm25_rebuilding = False

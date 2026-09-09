@@ -46,6 +46,7 @@ async def test_ask_trace_contains_all_expected_spans(monkeypatch):
 
     expected_labels = {
         "classify_intent",
+        "prewarm_query_embedding",
         "skill_match",
         "pipeline",
         "ensure_session",
@@ -65,7 +66,7 @@ async def test_ask_trace_contains_all_expected_spans(monkeypatch):
 
     for span in spans:
         assert span["duration_ms"] is not None, f"Span {span['label']} missing duration_ms"
-        assert span["status"] in ("success", "error"), (
+        assert span["status"] in ("success", "degraded", "timeout", "error"), (
             f"Span {span['label']} has non-terminal status"
         )
 

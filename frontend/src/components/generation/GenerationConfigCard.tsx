@@ -16,7 +16,7 @@ interface GenerationConfigCardProps {
   onOpenCreateModal: () => void;
   skillIcons: Record<string, ReactNode>;
   meetingGroups: MeetingGroup[];
-  selectedTitle?: string;
+  selectedMeetingKey?: string;
   onSelectMeeting: (value: string | undefined) => void;
   loadingMeetings: boolean;
   selectedGroup?: MeetingGroup;
@@ -36,7 +36,7 @@ export function GenerationConfigCard({
   onOpenCreateModal,
   skillIcons,
   meetingGroups,
-  selectedTitle,
+  selectedMeetingKey,
   onSelectMeeting,
   loadingMeetings,
   selectedGroup,
@@ -49,7 +49,7 @@ export function GenerationConfigCard({
   const { formatMessage } = useIntl();
 
   const groupOptions = meetingGroups.map((g) => ({
-    value: g.title,
+    value: g.key,
     label: (
       <span>
         <span
@@ -151,8 +151,9 @@ export function GenerationConfigCard({
             {formatMessage({ id: "generation.config.selectMeeting" })}
           </div>
           <Select
+            aria-label={formatMessage({ id: "generation.config.selectMeeting" })}
             placeholder={formatMessage({ id: "generation.config.chooseMeeting" })}
-            value={selectedTitle}
+            value={selectedMeetingKey}
             onChange={onSelectMeeting}
             options={groupOptions}
             style={{ width: "100%" }}

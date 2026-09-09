@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
+from typing import Any
 
 from ...core.config import settings
 from ...core.database import get_connection
@@ -26,7 +28,6 @@ from ._context import PipelineContext
 from ._retrieve_utils import (
     _dedup_docs,
     _sorted_by_score,
-    _vector_score_lower_is_better,
 )
 
 _DEFAULT_RETRIEVE = retrieve
@@ -77,6 +78,11 @@ async def _retrieve_broad_recall(
 
     primary_query = queries[0]
     summary_intent = is_summary_intent(ctx.question)
+    selection_target = target_files
+    if ctx.meeting_priors and not ctx.meeting_ids:
+        ratio = settings.RAG_MEETING_SUMMARY_ROUTER_EXPLORATION_RATIO
+        if ratio > 0:
+            selection_target = math.ceil(target_files / (1.0 - ratio))
 
     if len(queries) == 1:
         selection = await strategy.select_scope(
@@ -84,11 +90,12 @@ async def _retrieve_broad_recall(
             scoped_meeting_ids or None,
             anchor_meeting_ids,
             anchor_file_ids,
-            target_files,
+            selection_target,
             ctx.trace,
             ctx.rag_mode,
             known_speakers,
             summary_intent=summary_intent,
+            user_id=ctx.user_id,
         )
     else:
         selection = await _multi_query_select_scope(
@@ -97,7 +104,7 @@ async def _retrieve_broad_recall(
             ctx,
             anchor_meeting_ids,
             anchor_file_ids,
-            target_files,
+            selection_target,
             known_speakers,
             scoped_meeting_ids=scoped_meeting_ids or None,
             summary_intent=summary_intent,
@@ -105,6 +112,17 @@ async def _retrieve_broad_recall(
     scope_file_ids = selection.scope_file_ids
     file_scores = selection.file_scores
     docs_by_file = selection.docs_by_file
+
+    if ctx.meeting_priors and not ctx.meeting_ids:
+        selection = _apply_meeting_priors(
+            selection,
+            priors=ctx.meeting_priors,
+            target_files=target_files,
+            exploration_ratio=settings.RAG_MEETING_SUMMARY_ROUTER_EXPLORATION_RATIO,
+        )
+        scope_file_ids = selection.scope_file_ids
+        file_scores = selection.file_scores
+        docs_by_file = selection.docs_by_file
 
     if not scope_file_ids:
         return [], None
@@ -177,6 +195,9 @@ async def _retrieve_broad_recall(
             rag_mode=ctx.rag_mode,
             known_speakers=known_speakers,
             cached_docs=docs_by_file,
+            user_id=ctx.user_id,
+            analysis_query=ctx.question,
+            lexical_query=(ctx.query_plan.lexical_queries[0] if ctx.query_plan else ctx.question),
         )
     else:
 
@@ -196,19 +217,79 @@ async def _retrieve_broad_recall(
                     rag_mode=ctx.rag_mode,
                     known_speakers=known_speakers,
                     cached_docs=docs_by_file,
+                    user_id=ctx.user_id,
+                    analysis_query=ctx.question,
+                    lexical_query=(
+                        ctx.query_plan.lexical_queries[0] if ctx.query_plan else ctx.question
+                    ),
                 )
             finally:
                 ctx.trace.finish_span(f"fair_retrieve.variant_{idx}")
 
         per_q = await asyncio.gather(*[_run_variant(i, q) for i, q in enumerate(queries)])
-        lower_is_better = _vector_score_lower_is_better()
-        merged = _dedup_docs(list(per_q), lower_is_better=lower_is_better)
-        merged = _sorted_by_score(merged, lower_is_better=lower_is_better)
+        # retrieve() guarantees relevance scores at its public boundary.
+        merged = _dedup_docs(list(per_q), lower_is_better=False)
+        merged = _sorted_by_score(merged, lower_is_better=False)
         docs = merged[: max(effective_k * 2, target_total)]
 
     ctx.scope_file_ids = scope_file_ids
     ctx.trace.finish_span("fair_retrieve")
     return docs, None
+
+
+def _apply_meeting_priors(
+    selection: ScopeSelection,
+    *,
+    priors: dict[int, float],
+    target_files: int,
+    exploration_ratio: float,
+) -> ScopeSelection:
+    """Blend meeting summary scores without turning them into hard scope."""
+    if not selection.scope_file_ids or target_files <= 0:
+        return selection
+    try:
+        from ...core.database import get_file_metadata_bulk
+
+        with get_connection() as conn:
+            metadata = get_file_metadata_bulk(conn, selection.scope_file_ids)
+    except Exception:
+        logger.debug("Meeting-prior metadata fetch failed", exc_info=True)
+        return selection
+
+    routed: list[tuple[int, float]] = []
+    exploratory: list[tuple[int, float]] = []
+    for fid in selection.scope_file_ids:
+        base = float(selection.file_scores.get(fid, 0.0))
+        meeting_id = (metadata.get(fid) or {}).get("meeting_id")
+        if not isinstance(meeting_id, int):
+            exploratory.append((fid, base))
+            continue
+        prior = priors.get(meeting_id)
+        if prior is None:
+            exploratory.append((fid, base))
+        else:
+            routed.append((fid, 0.8 * base + 0.2 * float(prior)))
+
+    reserve = min(len(exploratory), math.ceil(target_files * exploration_ratio))
+    chosen = sorted(exploratory, key=lambda item: (-item[1], item[0]))[:reserve]
+    chosen_ids = {fid for fid, _ in chosen}
+    remaining = sorted(
+        [item for item in routed + exploratory if item[0] not in chosen_ids],
+        key=lambda item: (-item[1], item[0]),
+    )
+    for item in remaining:
+        if len(chosen) >= target_files:
+            break
+        if item[0] not in chosen_ids:
+            chosen.append(item)
+            chosen_ids.add(item[0])
+    chosen.sort(key=lambda item: (-item[1], item[0]))
+    ids = [fid for fid, _ in chosen[:target_files]]
+    return ScopeSelection(
+        scope_file_ids=ids,
+        file_scores={fid: score for fid, score in chosen if fid in ids},
+        docs_by_file={fid: selection.docs_by_file.get(fid, []) for fid in ids},
+    )
 
 
 async def _retrieve_scoped(
@@ -218,7 +299,7 @@ async def _retrieve_scoped(
     fetch_multiplier: int,
     known_speakers: list[str],
     *,
-    retrieve_fn=None,
+    retrieve_fn: Any = None,
 ) -> tuple[list[dict], QueryAnalysis | None]:
     """Standard scoped retrieval with file or meeting scope.
 
@@ -238,6 +319,16 @@ async def _retrieve_scoped(
                 retrieve_fn = steps_retrieve
 
     if len(queries) == 1:
+        plan_kwargs = (
+            {
+                "analysis_query": ctx.question,
+                "lexical_query": (
+                    ctx.query_plan.lexical_queries[0] if ctx.query_plan else ctx.question
+                ),
+            }
+            if retrieve_fn is _DEFAULT_RETRIEVE
+            else {}
+        )
         docs, qa = await asyncio.to_thread(
             retrieve_fn,
             queries[0],
@@ -251,10 +342,22 @@ async def _retrieve_scoped(
             ctx.trace,
             ctx.rag_mode,
             known_speakers,
+            user_id=ctx.user_id,
+            **plan_kwargs,
         )
         return docs, qa
 
     per_query_k = max(effective_k // len(queries), 3) * fetch_multiplier
+    plan_kwargs = (
+        {
+            "analysis_query": ctx.question,
+            "lexical_query": (
+                ctx.query_plan.lexical_queries[0] if ctx.query_plan else ctx.question
+            ),
+        }
+        if retrieve_fn is _DEFAULT_RETRIEVE
+        else {}
+    )
     raw = await asyncio.gather(
         *[
             asyncio.to_thread(
@@ -270,15 +373,17 @@ async def _retrieve_scoped(
                 ctx.trace,
                 ctx.rag_mode,
                 known_speakers,
+                user_id=ctx.user_id,
+                **plan_kwargs,
             )
             for q in queries
         ]
     )
     all_docs = [r[0] for r in raw]
     qa = raw[0][1] if raw else None
-    lower_is_better = _vector_score_lower_is_better()
-    merged = _dedup_docs(all_docs, lower_is_better=lower_is_better)
-    merged = _sorted_by_score(merged, lower_is_better=lower_is_better)
+    # retrieve() guarantees relevance scores at its public boundary.
+    merged = _dedup_docs(all_docs, lower_is_better=False)
+    merged = _sorted_by_score(merged, lower_is_better=False)
     return merged[: effective_k * fetch_multiplier], qa
 
 
@@ -326,6 +431,7 @@ async def _multi_query_select_scope(
                 known_speakers,
                 summary_intent=summary_intent,
                 broad_recall_ctx=broad_ctx,
+                user_id=ctx.user_id,
             )
             for q in queries
         ]

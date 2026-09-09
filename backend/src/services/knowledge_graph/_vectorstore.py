@@ -12,6 +12,7 @@ from ...core.config import settings
 logger = logging.getLogger(__name__)
 
 _entity_vectorstore: "EntityVectorStore | None" = None
+_entity_vectorstore_embeddings_id: int | None = None
 _entity_vectorstore_lock = threading.Lock()
 
 
@@ -91,11 +92,8 @@ class EntityVectorStore:
         raise last_exc  # type: ignore[misc]
 
     def delete(self, embedding_id: str) -> None:
-        """Remove entity embedding."""
-        import contextlib
-
-        with contextlib.suppress(Exception):
-            self._chromadb.delete(ids=[embedding_id])
+        """Remove an entity embedding, propagating failures for retry."""
+        self._chromadb.delete(ids=[embedding_id])
 
     def similarity_search(
         self,
@@ -144,11 +142,47 @@ class EntityVectorStore:
 
 def get_entity_vectorstore() -> EntityVectorStore:
     """Get or create the singleton entity vector store (thread-safe)."""
-    global _entity_vectorstore
-    if _entity_vectorstore is None:
-        with _entity_vectorstore_lock:
-            if _entity_vectorstore is None:
-                from ..embedder import get_embeddings
+    global _entity_vectorstore, _entity_vectorstore_embeddings_id
+    from ..embedder import get_embeddings
 
-                _entity_vectorstore = EntityVectorStore(get_embeddings())
+    embeddings = get_embeddings()
+    embeddings_id = id(embeddings)
+    if _entity_vectorstore is None or _entity_vectorstore_embeddings_id != embeddings_id:
+        with _entity_vectorstore_lock:
+            if _entity_vectorstore is None or _entity_vectorstore_embeddings_id != embeddings_id:
+                _entity_vectorstore = EntityVectorStore(embeddings)
+                _entity_vectorstore_embeddings_id = embeddings_id
     return _entity_vectorstore
+
+
+def reset_entity_vectorstore() -> None:
+    """Drop the cached wrapper after embedding configuration changes."""
+    global _entity_vectorstore, _entity_vectorstore_embeddings_id
+    with _entity_vectorstore_lock:
+        _entity_vectorstore = None
+        _entity_vectorstore_embeddings_id = None
+
+
+def reconcile_orphan_entity_vectors() -> int:
+    """Remove entity vectors with no live SQLite entity row."""
+    from ...core import database as db
+
+    vs = get_entity_vectorstore()
+    try:
+        vector_ids = set(vs._chromadb.get(include=[]).get("ids") or [])
+        with db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT embedding_id FROM memory_entities WHERE embedding_id IS NOT NULL"
+            ).fetchall()
+        database_ids = {row["embedding_id"] for row in rows}
+    except Exception:
+        logger.warning("Cannot reconcile entity vectors", exc_info=True)
+        return 0
+    removed = 0
+    for embedding_id in vector_ids - database_ids:
+        try:
+            vs.delete(embedding_id)
+            removed += 1
+        except Exception:
+            logger.warning("Failed to delete orphan entity vector %s", embedding_id, exc_info=True)
+    return removed

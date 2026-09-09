@@ -41,6 +41,18 @@ class TestCorsFailClosed:
         app = FastAPI()
         setup_middleware(app)  # Should not raise
 
+        from fastapi.testclient import TestClient
+
+        response = TestClient(app).options(
+            "/",
+            headers={
+                "Origin": "https://example.com",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": ("x-api-key,content-type,idempotency-key"),
+            },
+        )
+        assert response.status_code == 200
+
     def test_cors_wildcard_allowed_in_dev(self, monkeypatch):
         """CORS wildcard is allowed in dev mode (but stripped)."""
         from src.core.config import settings

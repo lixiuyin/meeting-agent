@@ -71,7 +71,26 @@ class TestVectorRetrieve:
             assert len(results) == 1
             assert results[0]["content"] == "test content"
             assert results[0]["score"] == 0.75
+            assert results[0]["score_kind"] == "distance"
             assert results[0]["metadata"]["meeting_id"] == 1
+
+    def test_public_retrieve_normalizes_vector_distance(self, monkeypatch):
+        """Downstream consumers always receive higher-is-better relevance."""
+        monkeypatch.setattr("src.services.rag._retriever.settings.RAG_RETRIEVER_PROVIDER", "vector")
+        monkeypatch.setattr("src.services.rag._retriever.settings.DISTANCE_METRIC", "l2")
+        monkeypatch.setattr("src.services.rag._retriever.settings.TOP_K", 5)
+        with patch("src.services.rag._retriever.get_vectorstore") as mock_get_vs:
+            mock_vs = MagicMock()
+            mock_doc = MagicMock()
+            mock_doc.metadata = {"meeting_id": 1}
+            mock_doc.page_content = "best"
+            mock_vs.similarity_search_with_score.return_value = [(mock_doc, 0.25)]
+            mock_get_vs.return_value = mock_vs
+
+            results, _ = retrieve("test")
+
+        assert results[0]["score"] == pytest.approx(0.8)
+        assert results[0]["score_kind"] == "relevance"
 
     def test_vector_retrieve_cosine_uses_max_distance_threshold(self, monkeypatch):
         """Cosine distance should keep lower scores and drop higher scores."""
@@ -217,16 +236,16 @@ class TestScopedQueryShortCircuit:
 
         with (
             patch(
-                "src.services.rag._retriever._hybrid_retrieve",
-                return_value=[{"content": "h1", "metadata": {}, "score": 0.1}],
-            ) as mock_hybrid,
+                "src.services.rag._retriever._vector_retrieve",
+                return_value=[{"content": "v1", "metadata": {}, "score": 0.1}],
+            ) as mock_vector,
             patch(
                 "src.services.rag._retriever.retrieve_with_raganything",
             ) as mock_ra,
         ):
             out, _qa = retrieve("test", meeting_ids=[1])
             assert len(out) == 1
-            mock_hybrid.assert_called_once()
+            mock_vector.assert_called_once()
             mock_ra.assert_not_called()
 
     def test_no_scope_uses_raganything_normally(self, monkeypatch):

@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 # ThreadPoolExecutor threads each run their own asyncio.run loop concurrently.
 _loop_clients: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _lock = threading.Lock()
+_cleanup_tasks: set[asyncio.Task[None]] = set()
+
+
+def _track_cleanup_task(task: asyncio.Task[None]) -> None:
+    with _lock:
+        _cleanup_tasks.add(task)
+
+    def _discard(completed: asyncio.Task[None]) -> None:
+        with _lock:
+            _cleanup_tasks.discard(completed)
+
+    task.add_done_callback(_discard)
 
 
 def _build_limits() -> httpx.Limits:
@@ -62,16 +74,15 @@ def get_parser_http_client() -> httpx.AsyncClient:
             "get_parser_http_client must be called from within a running event loop"
         ) from exc
 
-    client = _loop_clients.get(loop)
-    if client is not None:
-        return client
+    timeout = getattr(settings, "PARSER_HTTP_TIMEOUT_SECONDS", 180.0)
+    cached = _loop_clients.get(loop)
+    if cached is not None and cached[0] == timeout:
+        return cached[1]
 
     with _lock:
-        client = _loop_clients.get(loop)
-        if client is not None:
-            return client
-
-        timeout = getattr(settings, "PARSER_HTTP_TIMEOUT_SECONDS", 180.0)
+        cached = _loop_clients.get(loop)
+        if cached is not None and cached[0] == timeout:
+            return cached[1]
         try:
             # H-14: Per-host connection caps prevent one slow provider (e.g.
             # MinerU long-poll) from starving others that share the pool.
@@ -82,8 +93,10 @@ def get_parser_http_client() -> httpx.AsyncClient:
         except Exception:
             _loop_clients.pop(loop, None)
             raise
-        _loop_clients[loop] = client
+        _loop_clients[loop] = (timeout, client)
         logger.debug("Parser httpx client created for loop %s (timeout=%.0fs)", loop, timeout)
+    if cached is not None and cached[1] is not client:
+        _track_cleanup_task(loop.create_task(cached[1].aclose()))
     return client
 
 
@@ -93,7 +106,7 @@ async def close_parser_http_client() -> None:
         items = list(_loop_clients.items())
         _loop_clients.clear()
 
-    for loop, client in items:
+    for loop, (_timeout, client) in items:
         if loop.is_closed():
             continue
         try:
@@ -109,8 +122,9 @@ async def close_parser_http_client_for_current_loop() -> None:
     except RuntimeError:
         return
     with _lock:
-        client = _loop_clients.pop(loop, None)
-    if client is not None:
+        cached = _loop_clients.pop(loop, None)
+    if cached is not None:
+        _timeout, client = cached
         try:
             await client.aclose()
         except Exception:

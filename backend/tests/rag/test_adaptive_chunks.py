@@ -168,6 +168,19 @@ class TestComputeAdaptiveChunksAdaptive:
         assert isinstance(result, dict)
         assert all(v >= 2 for v in result.values())
 
+    def test_largest_remainder_has_exact_feasible_total(self):
+        result = _compute_adaptive_chunks(
+            scope_file_ids=[1, 2, 3],
+            file_scores={1: 0.91, 2: 0.52, 3: 0.17},
+            file_metadata=None,
+            total_budget=17,
+            min_per_file=2,
+            max_per_file=8,
+        )
+        assert isinstance(result, dict)
+        assert sum(result.values()) == 17
+        assert all(2 <= value <= 8 for value in result.values())
+
 
 class TestFairRetrieverAdaptive:
     """Verify fair_retrieve_per_file accepts dict chunks_per_file."""
@@ -177,10 +190,6 @@ class TestFairRetrieverAdaptive:
         from src.services.rag._fair_retriever import fair_retrieve_per_file
 
         monkeypatch.setattr(
-            "src.services.rag._fair_retriever.settings.RAG_HIERARCHICAL_ENABLED",
-            False,
-        )
-        monkeypatch.setattr(
             "src.services.rag._fair_retriever.settings.RAG_MIN_CHUNKS_PER_FILE",
             2,
         )
@@ -189,11 +198,11 @@ class TestFairRetrieverAdaptive:
             4,
         )
 
-        call_log: list[int] = []
+        call_log: list[tuple[int, str | None]] = []
 
         def mock_retrieve(query, **kwargs):
             fid = kwargs["file_ids"][0]
-            call_log.append(fid)
+            call_log.append((fid, kwargs.get("user_id")))
             return [
                 {
                     "content": f"chunk for {fid}",
@@ -212,9 +221,10 @@ class TestFairRetrieverAdaptive:
             "test query",
             [10, 20],
             chunks_per_file=allocation,
+            user_id="principal-a",
         )
         assert len(result) == 2
-        assert set(call_log) == {10, 20}
+        assert set(call_log) == {(10, "principal-a"), (20, "principal-a")}
 
 
 class TestComputeChunkBudget:
@@ -255,8 +265,8 @@ class TestComputeChunkBudget:
             min_per_file=2,
             max_per_file=16,
         )
-        # Uniform 8 // 3 = 2 (floor honoured)
-        assert result == 2
+        # 24 total / 3 variants / 3 files = ceil(2.67) = 3 per file.
+        assert result == 3
 
     def test_multi_variant_scales_dict(self, monkeypatch):
         from src.services.chain._retrieve_routing import compute_chunk_budget

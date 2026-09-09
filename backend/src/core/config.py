@@ -1,12 +1,19 @@
 """Application configuration - loads defaults from YAML, overrides from env"""
 
+import os
 from pathlib import Path
 from typing import ClassVar, Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ._config_snapshot import SettingsSnapshot, build_settings_snapshot  # noqa: F401
+from ._config_snapshot import (  # noqa: F401
+    ContextAwareSettings,
+    SettingsSnapshot,
+    activate_settings_snapshot,
+    build_retrieval_profile_snapshot,
+    build_settings_snapshot,
+)
 from ._config_validation import (
     _MAX_WIDE_FETCH_SIZE,
     _VALID_ANCHOR_TTL_MODES,
@@ -17,7 +24,7 @@ from ._config_validation import (
     _VALID_FUNNEL_MERGE_STRATEGIES,
 )
 from ._config_yaml import _yaml_get, reload_yaml_config
-from .constants import DB_PATH, PROJECT_ROOT, UPLOAD_DIR, VECTOR_DB_DIR
+from .constants import DATA_DIR, DB_PATH, PROJECT_ROOT, UPLOAD_DIR, VECTOR_DB_DIR
 
 
 class Settings(BaseSettings):
@@ -34,6 +41,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = UPLOAD_DIR
     VECTOR_DB_DIR: Path = VECTOR_DB_DIR
     DB_PATH: Path = DB_PATH
+    CUSTOM_SKILLS_DIR: Path = DATA_DIR / "skills"
 
     # LLM (supports multiple providers: openai, anthropic, deepseek, openrouter, groq, together,
     # mistral, ollama, lm_studio, vllm, llama_cpp, azure_openai)
@@ -46,6 +54,11 @@ class Settings(BaseSettings):
         default=_yaml_get("llm", "temperature", default=0.3), ge=0.0, le=2.0
     )
     LLM_MAX_TOKENS: int = _yaml_get("llm", "max_tokens", default=2048)
+    # OpenRouter reasoning models count hidden reasoning against the completion
+    # budget. A bounded effort leaves guaranteed room for user-visible text.
+    LLM_REASONING_EFFORT: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] = (
+        _yaml_get("llm", "reasoning_effort", default="low")
+    )
     LLM_CONTEXT_WINDOW: int = _yaml_get("llm", "context_window", default=128_000)
     # LLM Response Cache
     LLM_CACHE_ENABLED: bool = _yaml_get("llm", "cache_enabled", default=True)
@@ -57,8 +70,21 @@ class Settings(BaseSettings):
     LLM_CIRCUIT_BREAKER_THRESHOLD: int = _yaml_get("llm", "circuit_breaker_threshold", default=5)
     LLM_CIRCUIT_BREAKER_RECOVERY: int = _yaml_get("llm", "circuit_breaker_recovery", default=60)
     LLM_RETRY_MAX_ATTEMPTS: int = _yaml_get("llm", "retry_max_attempts", default=3)
+    LLM_GENERATION_TIMEOUT_S: float = Field(
+        default=_yaml_get("llm", "generation_timeout_s", default=100.0), ge=5.0, le=600.0
+    )
+    CHAT_STREAM_LATENCY_GUARD_ENABLED: bool = _yaml_get(
+        "llm", "stream_latency_guard_enabled", default=False
+    )
     LLM_PROMPT_RESERVE_TOKENS: int = _yaml_get("llm", "prompt_reserve_tokens", default=500)
-    LLM_HISTORY_BUDGET_CHARS: int = _yaml_get("llm", "history_budget_chars", default=16_000)
+    LLM_HISTORY_BUDGET_TOKENS: int = _yaml_get(
+        "llm",
+        "history_budget_tokens",
+        default=_yaml_get("llm", "history_budget_chars", default=4_000),
+    )
+    # Deprecated compatibility alias.  The historical value was already
+    # consumed as tokens despite its misleading name.
+    LLM_HISTORY_BUDGET_CHARS: int = LLM_HISTORY_BUDGET_TOKENS
     PROMPT_TOTAL_BUDGET_TOKENS: int = _yaml_get("llm", "prompt_total_budget_tokens", default=6000)
     ANTHROPIC_PROMPT_CACHE_ENABLED: bool = _yaml_get(
         "llm", "anthropic_prompt_cache_enabled", default=True
@@ -72,8 +98,20 @@ class Settings(BaseSettings):
     EMBEDDING_QUERY_CACHE_SIZE: int = _yaml_get("embedding", "query_cache_size", default=64)
     # H-8: Stampede protection wait timeout (seconds). 0 = use provider-aware default.
     EMBEDDING_STAMPEDE_WAIT_S: float = _yaml_get("embedding", "stampede_wait_s", default=0)
+    # Chroma is embedded in the API process. Remote HTTP clients and
+    # trust_remote_code model loading are deliberately unsupported until the
+    # corresponding upstream advisories have a patched release.
+    CHROMA_REMOTE_ENABLED: bool = _yaml_get("vector", "chroma_remote_enabled", default=False)
+    CHROMA_TRUST_REMOTE_CODE: bool = _yaml_get("vector", "chroma_trust_remote_code", default=False)
     # HMAC pepper for user-id derivation (N-M-1). Falls back to hardcoded default in dev.
     PRINCIPAL_PEPPER: SecretStr = SecretStr("")
+    PRINCIPAL_ID: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,128}$")
+
+    @field_validator("PRINCIPAL_ID", mode="before")
+    @classmethod
+    def _blank_principal_id_is_unset(cls, value: object) -> object:
+        return None if value == "" else value
+
     VECTOR_SEARCH_TIMEOUT_S: float = _yaml_get("rag", "vector_search_timeout_s", default=8.0)
     MULTIMODAL_ATTACH_GATE_ENABLED: bool = _yaml_get(
         "rag", "multimodal_attach_gate_enabled", default=True
@@ -109,20 +147,44 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_rag_retriever_provider(self) -> "Settings":
-        """Validate RAG retriever provider requires available extras.
+        """Normalize legacy names and fail fast on invalid retrieval policy."""
+        provider = self.RAG_RETRIEVER_PROVIDER.strip().lower()
+        if provider == "raganything":
+            raise ValueError("RAG_RETRIEVER_PROVIDER='raganything' is deprecated; use 'multimodal'")
+        if provider == "native":
+            provider = "vector"
+        if provider not in {"vector", "hybrid", "multimodal", "hybrid_multimodal"}:
+            raise ValueError(
+                "RAG_RETRIEVER_PROVIDER must be one of: vector, hybrid, multimodal, "
+                "hybrid_multimodal"
+            )
+        if provider == "hybrid" and not self.HYBRID_SEARCH_ENABLED:
+            raise ValueError("RAG_RETRIEVER_PROVIDER='hybrid' requires HYBRID_SEARCH_ENABLED=true")
+        self.RAG_RETRIEVER_PROVIDER = provider
+        return self
 
-        When ``RAGANYTHING_ENABLED`` is True and the retriever provider is
-        ``raganything``, verify the ``multimodal`` optional extra is installed
-        so the error surfaces at startup instead of at first request time.
-        """
-        if self.RAGANYTHING_ENABLED and self.RAG_RETRIEVER_PROVIDER.lower() == "raganything":
-            try:
-                from raganything import RAGAnything  # noqa: F401
-            except ImportError:
-                raise RuntimeError(
-                    "RAG_RETRIEVER_PROVIDER='raganything' requires the "
-                    "'multimodal' optional extra.  Run: uv sync --extra multimodal"
-                ) from None
+    @model_validator(mode="after")
+    def _validate_memory_scoring_weights(self) -> "Settings":
+        """Require at least one positive signal; runtime normalizes weights."""
+        total = (
+            self.MEMORY_SCORING_SEMANTIC_WEIGHT
+            + self.MEMORY_SCORING_DECAY_WEIGHT
+            + self.MEMORY_SCORING_IMPORTANCE_WEIGHT
+            + self.MEMORY_SCORING_CONFIDENCE_WEIGHT
+            + self.MEMORY_SCORING_USEFULNESS_WEIGHT
+        )
+        if total <= 0:
+            raise ValueError("At least one MEMORY_SCORING_*_WEIGHT must be positive")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_chroma_security_policy(self) -> "Settings":
+        if self.CHROMA_REMOTE_ENABLED:
+            raise ValueError(
+                "CHROMA_REMOTE_ENABLED=true is unsupported; the deployment uses local Chroma"
+            )
+        if self.CHROMA_TRUST_REMOTE_CODE:
+            raise ValueError("CHROMA_TRUST_REMOTE_CODE=true is unsupported for this deployment")
         return self
 
     ASR_LANGUAGE: str = _yaml_get("asr", "language", default="en")
@@ -158,6 +220,11 @@ class Settings(BaseSettings):
     MINERU_BASE_URL: str = _yaml_get("ocr", "mineru_base_url", default="https://mineru.net/api/v4")
     MINERU_API_KEY: SecretStr = SecretStr(_yaml_get("ocr", "mineru_api_key", default=""))
     MINERU_MAX_WAIT_SECONDS: int = _yaml_get("ocr", "mineru_max_wait_seconds", default=600)
+    MINERU_RESULT_ALLOWED_HOSTS: str = _yaml_get(
+        "ocr",
+        "mineru_result_allowed_hosts",
+        default="mineru.net,.mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com",
+    )
 
     PADDLEOCR_BASE_URL: str = _yaml_get("ocr", "paddleocr_base_url", default="")
     PADDLEOCR_API_KEY: SecretStr = SecretStr(_yaml_get("ocr", "paddleocr_api_key", default=""))
@@ -181,6 +248,12 @@ class Settings(BaseSettings):
     VISION_MODEL: str = _yaml_get("vision", "model", default="")
     VISION_API_KEY: SecretStr = SecretStr(_yaml_get("vision", "api_key", default=""))
     VISION_BASE_URL: str = _yaml_get("vision", "base_url", default="")
+    VISION_REASONING_EFFORT: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] = (
+        _yaml_get("vision", "reasoning_effort", default="none")
+    )
+    VISION_COMBINED_MAX_TOKENS: int = Field(
+        default=_yaml_get("vision", "combined_max_tokens", default=2048), ge=256, le=32768
+    )
     VISION_RETRY_MAX_ATTEMPTS: int = _yaml_get("vision", "retry_max_attempts", default=3)
     VISION_RETRY_BASE_DELAY_SECONDS: float = _yaml_get(
         "vision", "retry_base_delay_seconds", default=0.5
@@ -204,12 +277,38 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = Field(
         default=_yaml_get("rag", "chunk_overlap", default=128), ge=0, le=2048
     )
+    CHUNK_SIZE_TOKENS: int = Field(
+        default=_yaml_get("rag", "chunk_size_tokens", default=384), ge=64, le=4096
+    )
+    CHUNK_OVERLAP_TOKENS: int = Field(
+        default=_yaml_get("rag", "chunk_overlap_tokens", default=64), ge=0, le=1024
+    )
     TOP_K: int = _yaml_get("rag", "top_k", default=8)
     QUERY_REWRITE_ENABLED: bool = _yaml_get("rag", "query_rewrite_enabled", default=True)
     # empty = same as LLM_MODEL
     QUERY_REWRITE_MODEL: str = _yaml_get("rag", "query_rewrite_model", default="")
     QUERY_REWRITE_TIMEOUT_SECONDS: int = _yaml_get(
         "rag", "query_rewrite_timeout_seconds", default=10
+    )
+    # Low-latency chat path for short, self-contained fact lookups.  It skips
+    # remote rewrite/resolver calls and can use the local BM25 index while the
+    # full hybrid/vector path remains available for follow-ups and analysis.
+    RAG_FAST_PATH_ENABLED: bool = _yaml_get("rag", "fast_path_enabled", default=True)
+    RAG_FAST_PATH_MAX_WORDS: int = Field(
+        default=_yaml_get("rag", "fast_path_max_words", default=12), ge=1, le=32
+    )
+    RAG_FAST_PATH_RETRIEVAL_MODE: Literal["bm25", "hybrid", "vector"] = _yaml_get(
+        "rag", "fast_path_retrieval_mode", default="bm25"
+    )
+    RAG_FAST_PATH_MAX_OUTPUT_TOKENS: int = Field(
+        default=_yaml_get("rag", "fast_path_max_output_tokens", default=256),
+        ge=64,
+        le=2048,
+    )
+    RAG_FAST_PATH_GENERATION_TIMEOUT_S: float = Field(
+        default=_yaml_get("rag", "fast_path_generation_timeout_s", default=2.5),
+        ge=0.5,
+        le=30.0,
     )
     SCORE_THRESHOLD: float = _yaml_get("rag", "score_threshold", default=1.5)
     RERANKER_BINDING: str = _yaml_get("rag", "reranker_binding", default="")
@@ -225,6 +324,12 @@ class Settings(BaseSettings):
         default=_yaml_get("rag", "child_chunk_size", default=256), ge=32, le=2048
     )
     CHILD_CHUNK_OVERLAP: int = _yaml_get("rag", "child_chunk_overlap", default=32)
+    CHILD_CHUNK_SIZE_TOKENS: int = Field(
+        default=_yaml_get("rag", "child_chunk_size_tokens", default=160), ge=32, le=2048
+    )
+    CHILD_CHUNK_OVERLAP_TOKENS: int = Field(
+        default=_yaml_get("rag", "child_chunk_overlap_tokens", default=24), ge=0, le=512
+    )
     HYBRID_SEARCH_ENABLED: bool = _yaml_get("rag", "hybrid_search_enabled", default=True)
     HYBRID_ALPHA: float = _yaml_get("rag", "hybrid_alpha", default=0.5)
     HYBRID_MULTIMODAL_ALPHA: float = _yaml_get("rag", "hybrid_multimodal_alpha", default=0.5)
@@ -236,8 +341,8 @@ class Settings(BaseSettings):
     )
     MULTI_QUERY_ENABLED: bool = _yaml_get("rag", "multi_query_enabled", default=False)
     MULTI_QUERY_COUNT: int = _yaml_get("rag", "multi_query_count", default=3)
-    # Retrieval provider switch: "native" | "hybrid" | "multimodal" | "hybrid_multimodal"
-    RAG_RETRIEVER_PROVIDER: str = _yaml_get("rag", "retriever_provider", default="native")
+    # Explicit retrieval strategy: vector | hybrid | multimodal | hybrid_multimodal
+    RAG_RETRIEVER_PROVIDER: str = _yaml_get("rag", "retriever_provider", default="hybrid")
     # Enable optional RAGAnything retriever branch (partial rollout)
     RAGANYTHING_ENABLED: bool = _yaml_get("rag", "raganything_enabled", default=False)
     # If true, fall back to native retriever when RAGAnything branch fails
@@ -289,6 +394,15 @@ class Settings(BaseSettings):
     MEMORY_AUTO_EXTRACT: bool = _yaml_get("memory", "auto_extract", default=True)
     MEMORY_MAX_FACTS_PER_TURN: int = _yaml_get("memory", "max_facts_per_turn", default=3)
     MEMORY_EXTRACTION_MODEL: str = _yaml_get("memory", "extraction_model", default="")
+    MEMORY_INGEST_CHUNK_CHARS: int = Field(
+        default=_yaml_get("memory", "ingest_chunk_chars", default=5000), ge=1000, le=20000
+    )
+    MEMORY_INGEST_CHUNK_OVERLAP: int = Field(
+        default=_yaml_get("memory", "ingest_chunk_overlap", default=300), ge=0, le=2000
+    )
+    MEMORY_INGEST_MAX_CHUNKS_PER_FILE: int = Field(
+        default=_yaml_get("memory", "ingest_max_chunks_per_file", default=20), ge=1, le=1000
+    )
     MEMORY_DECAY_ENABLED: bool = _yaml_get("memory", "decay_enabled", default=True)
     MEMORY_DECAY_INTERVAL_HOURS: int = Field(
         default=_yaml_get("memory", "decay_interval_hours", default=24), ge=1, le=8760
@@ -317,13 +431,23 @@ class Settings(BaseSettings):
         default=_yaml_get("memory", "cluster_threshold", default=0.75), ge=0.0, le=1.0
     )
     MEMORY_SCORING_SEMANTIC_WEIGHT: float = Field(
-        default=_yaml_get("memory", "scoring_semantic_weight", default=0.3), ge=0.0, le=1.0
+        default=_yaml_get("memory", "scoring_semantic_weight", default=0.35), ge=0.0, le=1.0
     )
     MEMORY_SCORING_DECAY_WEIGHT: float = Field(
-        default=_yaml_get("memory", "scoring_decay_weight", default=0.4), ge=0.0, le=1.0
+        default=_yaml_get("memory", "scoring_decay_weight", default=0.15), ge=0.0, le=1.0
     )
     MEMORY_SCORING_IMPORTANCE_WEIGHT: float = Field(
-        default=_yaml_get("memory", "scoring_importance_weight", default=0.3), ge=0.0, le=1.0
+        default=_yaml_get("memory", "scoring_importance_weight", default=0.25), ge=0.0, le=1.0
+    )
+    MEMORY_SCORING_CONFIDENCE_WEIGHT: float = Field(
+        default=_yaml_get("memory", "scoring_confidence_weight", default=0.15), ge=0.0, le=1.0
+    )
+    MEMORY_SCORING_USEFULNESS_WEIGHT: float = Field(
+        default=_yaml_get("memory", "scoring_usefulness_weight", default=0.10), ge=0.0, le=1.0
+    )
+    MEMORY_MULTI_HOP_ENABLED: bool = _yaml_get("memory", "multi_hop_enabled", default=True)
+    MEMORY_MULTI_HOP_SEED_COUNT: int = Field(
+        default=_yaml_get("memory", "multi_hop_seed_count", default=3), ge=1, le=8
     )
     SESSION_MAX_HISTORY: int = _yaml_get("memory", "session_max_history", default=50)
     SESSION_MAX_TOKENS: int = _yaml_get("memory", "session_max_tokens", default=4096)
@@ -336,9 +460,9 @@ class Settings(BaseSettings):
     SESSION_SUMMARY_IDLE_MINUTES: int = _yaml_get(
         "memory", "session_summary_idle_minutes", default=15
     )
-    MEMORY_CONSOLIDATION_ENABLED: bool = _yaml_get("memory", "consolidation_enabled", default=True)
+    MEMORY_CONSOLIDATION_ENABLED: bool = _yaml_get("memory", "consolidation_enabled", default=False)
     # LLM-driven memory profile refresh
-    MEMORY_PROFILE_ENABLED: bool = _yaml_get("memory", "profile_enabled", default=True)
+    MEMORY_PROFILE_ENABLED: bool = _yaml_get("memory", "profile_enabled", default=False)
     MEMORY_PROFILE_REFRESH_INTERVAL: int = _yaml_get(
         "memory", "profile_refresh_interval", default=50
     )
@@ -363,10 +487,10 @@ class Settings(BaseSettings):
     )
     # Use Chroma semantic similarity for memory clustering (falls back to text overlap)
     MEMORY_SEMANTIC_CLUSTER_ENABLED: bool = _yaml_get(
-        "memory", "semantic_cluster_enabled", default=True
+        "memory", "semantic_cluster_enabled", default=False
     )
     # Knowledge graph entity extraction
-    KNOWLEDGE_GRAPH_ENABLED: bool = _yaml_get("memory", "knowledge_graph_enabled", default=True)
+    KNOWLEDGE_GRAPH_ENABLED: bool = _yaml_get("memory", "knowledge_graph_enabled", default=False)
     # Cosine similarity threshold for merging entity aliases into canonical entities.
     # Tune this when changing embedding models — different models produce different
     # similarity distributions.
@@ -390,10 +514,31 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = _yaml_get("server", "environment", default="dev")
     # 0.0.0.0 is the standard bind for containerized deployments.
     HOST: str = _yaml_get("server", "host", default="0.0.0.0")  # nosec B104
-    PORT: int = _yaml_get("server", "port", default=8000)
+    PORT: int = _yaml_get("server", "port", default=7008)
+    DURABLE_JOB_EXECUTION_MODE: Literal["embedded", "off"] = _yaml_get(
+        "server", "durable_job_execution_mode", default="embedded"
+    )
+    DURABLE_JOB_WORKERS: int = Field(
+        default=_yaml_get("server", "durable_job_workers", default=2), ge=1, le=8
+    )
+    DURABLE_JOB_LEASE_SECONDS: int = Field(
+        default=_yaml_get("server", "durable_job_lease_seconds", default=300), ge=60, le=3600
+    )
+    DURABLE_JOB_POLL_SECONDS: float = Field(
+        default=_yaml_get("server", "durable_job_poll_seconds", default=1.0), ge=0.1, le=60.0
+    )
     CORS_ORIGINS: str = _yaml_get("server", "cors_origins", default="")
     TRUSTED_PROXIES: str = _yaml_get("server", "trusted_proxies", default="")
     API_KEY: SecretStr = SecretStr(_yaml_get("server", "api_key", default=""))
+    MCP_API_URL: str = _yaml_get("server", "mcp_api_url", default="http://127.0.0.1:7008/api/v1")
+    MCP_API_KEY: SecretStr = SecretStr("")
+    MCP_TRANSPORT: Literal["stdio", "sse", "streamable-http"] = _yaml_get(
+        "server", "mcp_transport", default="stdio"
+    )
+    MCP_HOST: str = _yaml_get("server", "mcp_host", default="127.0.0.1")
+    MCP_HTTP_PORT: int = Field(
+        default=_yaml_get("server", "mcp_http_port", default=9000), ge=1, le=65535
+    )
     # Comma-separated legacy API keys used only for idempotency payload decryption during rotation.
     IDEMPOTENCY_OLD_KEYS: str = ""
 
@@ -484,8 +629,8 @@ class Settings(BaseSettings):
     GLOBAL_MEMORY_LIMIT: int = _yaml_get("memory", "global_memory_limit", default=3)
     # When a scope (meeting_ids/file_ids) is active, exclude all untagged
     # memories/entities except explicit user-profile ones (category="user_profile").
-    # This prevents cross-meeting context pollution. Default False for back-compat.
-    SCOPED_MEMORY_STRICT: bool = _yaml_get("memory", "scoped_memory_strict", default=False)
+    # This prevents cross-meeting context pollution. Default True is fail-closed.
+    SCOPED_MEMORY_STRICT: bool = _yaml_get("memory", "scoped_memory_strict", default=True)
     # How much we over-fetch from the memory/entity vector store before
     # applying scope post-filter. With k*factor candidates we can reliably
     # find k scope-matching entries even if the top results are dominated by
@@ -516,7 +661,6 @@ class Settings(BaseSettings):
     )
 
     # Hierarchical (funnel) RAG: meetings → files → chunks
-    RAG_HIERARCHICAL_ENABLED: bool = _yaml_get("rag", "hierarchical_enabled", default=True)
     RAG_FUNNEL_FETCH_MULTIPLIER: int = _yaml_get("rag", "funnel_fetch_multiplier", default=10)
     RAG_FUNNEL_TOP_MEETINGS: int = _yaml_get("rag", "funnel_top_meetings", default=8)
     RAG_FUNNEL_TOP_FILES: int = _yaml_get("rag", "funnel_top_files", default=12)
@@ -703,6 +847,11 @@ class Settings(BaseSettings):
     RAG_MEETING_SUMMARY_ROUTER_MIN_HITS: int = _yaml_get(
         "rag", "meeting_summary_router_min_hits", default=1
     )
+    RAG_MEETING_SUMMARY_ROUTER_EXPLORATION_RATIO: float = Field(
+        default=_yaml_get("rag", "meeting_summary_router_exploration_ratio", default=0.2),
+        ge=0.0,
+        le=0.5,
+    )
     # Summary context truncation budgets (chars).  These cap how much of each
     # summary is injected into the LLM prompt.  Dial back for token-constrained
     # models; increase for large-context models.
@@ -757,11 +906,26 @@ class Settings(BaseSettings):
 
         _logger = logging.getLogger(__name__)
 
-        # Validate ENVIRONMENT
-        valid_envs = ("dev", "staging", "prod")
-        if self.ENVIRONMENT not in valid_envs:
+        # Validate and normalize ENVIRONMENT.  ``prod`` remains accepted as a
+        # backwards-compatible alias, but the rest of the application sees one
+        # canonical value so production-only checks cannot be bypassed by using
+        # the short spelling.
+        environment = self.ENVIRONMENT.strip().lower()
+        if environment == "prod":
+            environment = "production"
+        valid_envs = ("dev", "staging", "production")
+        if environment not in valid_envs:
             raise ValueError(
-                f"Invalid ENVIRONMENT={self.ENVIRONMENT!r}. Must be one of {valid_envs}"
+                f"Invalid ENVIRONMENT={self.ENVIRONMENT!r}. Must be one of "
+                "('dev', 'staging', 'production'); 'prod' is accepted as an alias"
+            )
+        self.ENVIRONMENT = environment
+
+        if self.CHUNK_OVERLAP_TOKENS >= self.CHUNK_SIZE_TOKENS:
+            raise ValueError("CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_SIZE_TOKENS")
+        if self.CHILD_CHUNK_OVERLAP_TOKENS >= self.CHILD_CHUNK_SIZE_TOKENS:
+            raise ValueError(
+                "CHILD_CHUNK_OVERLAP_TOKENS must be smaller than CHILD_CHUNK_SIZE_TOKENS"
             )
 
         # Create required directories
@@ -782,12 +946,12 @@ class Settings(BaseSettings):
         # In production this is fatal; in dev we log a warning so misconfigured
         # rerankers degrade silently to "no rerank" instead of crashing requests.
         reranker_binding = (self.RERANKER_BINDING or "").lower()
-        if reranker_binding == "cohere":
+        if reranker_binding in {"cohere", "http"}:
             has_reranker_key = bool(self.RERANKER_API_KEY.get_secret_value())
             has_llm_fallback_key = bool(self.LLM_API_KEY.get_secret_value())
             if not has_reranker_key and not has_llm_fallback_key:
                 msg = (
-                    "RERANKER_BINDING=cohere requires RERANKER_API_KEY (or "
+                    f"RERANKER_BINDING={reranker_binding} requires RERANKER_API_KEY (or "
                     "LLM_API_KEY as fallback). Set one or change "
                     "RERANKER_BINDING to '' / 'bge'."
                 )
@@ -803,8 +967,19 @@ class Settings(BaseSettings):
 
         # Production-specific validation
         if self.ENVIRONMENT != "dev":
+            if self.RAGANYTHING_ENABLED:
+                raise ValueError(
+                    "RAGANYTHING_ENABLED is temporarily blocked in non-dev environments: "
+                    "its current MinerU/LightRAG dependency chain has unresolved security "
+                    "advisories. Use native/hybrid retrieval until patched upstream "
+                    "releases are compatible."
+                )
             if not self.API_KEY.get_secret_value():
                 raise ValueError("API_KEY must be set in non-dev environments")
+            if self.PRINCIPAL_ID and (
+                self.PRINCIPAL_ID == "default" or self.PRINCIPAL_ID.startswith("dev_")
+            ):
+                raise ValueError("PRINCIPAL_ID cannot use a development identity")
 
             if not self.PRINCIPAL_PEPPER.get_secret_value():
                 raise ValueError(
@@ -820,6 +995,12 @@ class Settings(BaseSettings):
                     f"(current: {self.ENVIRONMENT})."
                 )
 
+            trusted_hosts = [h.strip() for h in self.TRUSTED_HOSTS.split(",") if h.strip()]
+            if not trusted_hosts or "*" in trusted_hosts:
+                raise ValueError(
+                    "TRUSTED_HOSTS must contain explicit hostnames in non-dev environments"
+                )
+
             effective_binding = self.LLM_BINDING
             if (
                 effective_binding not in self._LOCAL_LLM_PROVIDERS
@@ -832,25 +1013,32 @@ class Settings(BaseSettings):
                 )
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Tests and hermetic tooling set this flag before importing Settings so
+        # a developer's real .env cannot alter test behavior or leak provider
+        # credentials into subprocesses.
+        env_file=None if os.getenv("MEETING_AGENT_DISABLE_DOTENV") else ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
 
-settings = Settings()
+settings = ContextAwareSettings(Settings())
+
+
+def load_reloaded_settings() -> Settings:
+    """Build and validate a YAML/env candidate without publishing it."""
+    reload_yaml_config()
+    return Settings()
 
 
 def reload_settings() -> None:
-    """Reload YAML config from disk and refresh the global settings object.
+    """Reload YAML config from disk and atomically refresh live settings.
 
     Environment variables still take precedence over YAML values.
     All modules holding a reference to ``settings`` will see updated values.
     """
-    reload_yaml_config()
-    new_settings = Settings()
-    for field_name in Settings.model_fields:
-        setattr(settings, field_name, getattr(new_settings, field_name))
+    new_settings = load_reloaded_settings()
     # Re-run directory creation in case paths changed
-    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    settings.VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
+    new_settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    new_settings.VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
+    settings.replace_live(new_settings)

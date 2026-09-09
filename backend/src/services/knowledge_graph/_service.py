@@ -36,7 +36,15 @@ def _looks_like_pii(name: str) -> bool:
 
 
 def _batch_get_entities_with_relations(
-    conn, entity_ids: list[int], relations_limit: int
+    conn,
+    entity_ids: list[int],
+    relations_limit: int,
+    *,
+    user_id: str,
+    meeting_ids: list[int] | None = None,
+    file_ids: list[int] | None = None,
+    excluded_session_ids: set[str] | None = None,
+    strict_scope: bool = True,
 ) -> dict[int, dict]:
     """Fetch entities and their relations in two batch queries.
 
@@ -48,8 +56,8 @@ def _batch_get_entities_with_relations(
     placeholders = ",".join("?" * len(entity_ids))
 
     entities = conn.execute(
-        f"SELECT * FROM memory_entities WHERE id IN ({placeholders})",
-        list(entity_ids),
+        f"SELECT * FROM memory_entities WHERE id IN ({placeholders}) AND user_id=?",
+        [*entity_ids, user_id],
     ).fetchall()
 
     from ...core.database.knowledge_graph import _decode_aliases
@@ -63,10 +71,24 @@ def _batch_get_entities_with_relations(
     if not entity_map:
         return {}
 
+    relation_where = (
+        f"(subject_id IN ({placeholders}) OR object_id IN ({placeholders})) "
+        "AND user_id=? "
+        "AND (valid_from IS NULL OR julianday(valid_from)<=julianday('now')) "
+        "AND (valid_to IS NULL OR julianday(valid_to)>julianday('now'))"
+    )
+    relation_values: list[object] = [*entity_ids, *entity_ids, user_id]
+    if excluded_session_ids:
+        excluded = sorted(excluded_session_ids)
+        relation_where += (
+            " AND (source_session IS NULL OR source_session NOT IN ("
+            + ",".join("?" * len(excluded))
+            + "))"
+        )
+        relation_values.extend(excluded)
     relations = conn.execute(
-        f"SELECT * FROM memory_relations WHERE subject_id IN ({placeholders}) "
-        f"OR object_id IN ({placeholders})",
-        list(entity_ids) * 2,
+        "SELECT * FROM memory_relations WHERE " + relation_where,
+        relation_values,
     ).fetchall()
 
     # Resolve names for any entities referenced by relations that are not in entity_map
@@ -74,22 +96,60 @@ def _batch_get_entities_with_relations(
     for rel in relations:
         referenced_ids.add(rel["subject_id"])
         referenced_ids.add(rel["object_id"])
+    all_entity_ids = referenced_ids | set(entity_map.keys())
     missing_ids = referenced_ids - set(entity_map.keys())
     name_lookup: dict[int, str] = {eid: row["name"] for eid, row in entity_map.items()}
     if missing_ids:
         extra_placeholders = ",".join("?" * len(missing_ids))
         extra_rows = conn.execute(
-            f"SELECT id, name FROM memory_entities WHERE id IN ({extra_placeholders})",
-            list(missing_ids),
+            f"SELECT id, name FROM memory_entities WHERE id IN ({extra_placeholders}) "
+            "AND user_id=?",
+            [*missing_ids, user_id],
         ).fetchall()
         for row in extra_rows:
             name_lookup[row["id"]] = row["name"]
 
-    # Group relations by the "home" entity (either subject or object side).
+    scope_map: dict[int, dict[str, set[int]]] = {
+        entity_id: {"meeting": set(), "file": set()} for entity_id in all_entity_ids
+    }
+    if all_entity_ids:
+        scope_placeholders = ",".join("?" * len(all_entity_ids))
+        for row in conn.execute(
+            f"SELECT entity_id,scope_type,scope_id FROM entity_scopes "
+            f"WHERE entity_id IN ({scope_placeholders})",
+            list(all_entity_ids),
+        ).fetchall():
+            if row["scope_type"] in {"meeting", "file"}:
+                scope_map[int(row["entity_id"])][row["scope_type"]].add(int(row["scope_id"]))
+
+    meeting_scope = set(meeting_ids or [])
+    file_scope = set(file_ids or [])
+    scope_active = bool(meeting_scope or file_scope)
+
+    def _entity_matches_scope(entity_id: int) -> bool:
+        if not scope_active:
+            return True
+        scopes = scope_map.get(entity_id, {"meeting": set(), "file": set()})
+        entity_meetings = scopes["meeting"]
+        entity_files = scopes["file"]
+        if not entity_meetings and not entity_files:
+            return not strict_scope
+        return bool(
+            (meeting_scope and entity_meetings & meeting_scope)
+            or (file_scope and entity_files & file_scope)
+        )
+
+    # Group only relations whose two endpoints are visible in the requested
+    # scope. A globally accumulated entity must not pull an edge from another
+    # meeting into a scoped answer.
     rels_by_entity: dict[int, list[dict]] = {eid: [] for eid in entity_map}
     for rel in relations:
         sid = rel["subject_id"]
         oid = rel["object_id"]
+        if sid not in name_lookup or oid not in name_lookup:
+            continue
+        if not _entity_matches_scope(sid) or not _entity_matches_scope(oid):
+            continue
         for home_id, other_id in ((sid, oid), (oid, sid)):
             if home_id in rels_by_entity:
                 enriched = dict(rel)
@@ -112,22 +172,6 @@ def _get_extraction_semaphore() -> asyncio.Semaphore:
     return _extraction_semaphore
 
 
-def _queue_entity_vector_deletion(embedding_id: str) -> None:
-    """Record a failed entity vector deletion for later cleanup."""
-    try:
-        with get_write_connection() as conn:
-            conn.execute(
-                "INSERT INTO pending_vector_deletions (collection, embedding_id) VALUES (?, ?)",
-                ("entity", embedding_id),
-            )
-    except Exception:
-        logger.warning(
-            "Failed to queue pending entity vector deletion for %s",
-            embedding_id,
-            exc_info=True,
-        )
-
-
 class KnowledgeGraphService:
     """Extracts, stores, and retrieves entities and relations."""
 
@@ -139,6 +183,9 @@ class KnowledgeGraphService:
         session_id: str | None = None,
         meeting_ids: list[int] | None = None,
         file_ids: list[int] | None = None,
+        evidence_message_ids: list[int] | None = None,
+        evidence_text: str | None = None,
+        raise_on_error: bool = False,
     ) -> dict:
         """Extract entities and relations from a Q&A turn, persist to DB + Chroma.
 
@@ -152,13 +199,17 @@ class KnowledgeGraphService:
         try:
             from ..llm import (
                 cached_retry_invoke,
+                escape_prompt_data,
                 get_entity_extraction_prompt,
                 get_extraction_llm,
             )
 
             llm = get_extraction_llm()
             prompt_template = get_entity_extraction_prompt()
-            prompt = prompt_template.format(question=question, answer=answer)
+            prompt = prompt_template.format(
+                question=escape_prompt_data(question),
+                answer=escape_prompt_data(answer),
+            )
             async with _get_extraction_semaphore():
                 response = await asyncio.to_thread(cached_retry_invoke, llm, prompt)
             content = response.content
@@ -188,7 +239,16 @@ class KnowledgeGraphService:
                 meeting_ids=meeting_ids,
                 file_ids=file_ids,
             )
-            relations_added = await _store_relations(user_id, parsed["relations"], session_id)
+            # A generated answer is never authoritative relation evidence.
+            # Source-grounded callers provide retrieved text; otherwise only
+            # the user's message may support a persisted graph edge.
+            relations_added = await _store_relations(
+                user_id,
+                parsed["relations"],
+                session_id,
+                evidence_message_ids=evidence_message_ids,
+                evidence_text=evidence_text or question,
+            )
 
             if entities_added or relations_added:
                 logger.debug(
@@ -200,6 +260,8 @@ class KnowledgeGraphService:
             return {"entities_added": entities_added, "relations_added": relations_added}
         except Exception:
             logger.warning("Entity extraction failed for user %s", user_id, exc_info=True)
+            if raise_on_error:
+                raise
             return {"entities_added": 0, "relations_added": 0}
 
     async def get_entity_context(
@@ -209,6 +271,7 @@ class KnowledgeGraphService:
         top_k: int = 3,
         meeting_ids: list[int] | None = None,
         file_ids: list[int] | None = None,
+        excluded_session_ids: set[str] | None = None,
     ) -> str:
         """Semantic search over entities + relation expansion.
 
@@ -272,7 +335,14 @@ class KnowledgeGraphService:
 
             with db.get_connection() as conn:
                 batch = _batch_get_entities_with_relations(
-                    conn, entity_ids, settings.ENTITY_RELATIONS_LIMIT
+                    conn,
+                    entity_ids,
+                    settings.ENTITY_RELATIONS_LIMIT,
+                    user_id=user_id,
+                    meeting_ids=meeting_ids,
+                    file_ids=file_ids,
+                    excluded_session_ids=excluded_session_ids,
+                    strict_scope=getattr(core_settings, "SCOPED_MEMORY_STRICT", True),
                 )
 
             scope_active = bool(meeting_ids or file_ids)
@@ -309,10 +379,17 @@ class KnowledgeGraphService:
         user_id: str,
         entity_type: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         """List entities for a user, sorted by mention_count desc."""
         with db.get_connection() as conn:
-            return db.list_entities(conn, user_id=user_id, entity_type=entity_type, limit=limit)
+            return db.list_entities(
+                conn,
+                user_id=user_id,
+                entity_type=entity_type,
+                limit=limit,
+                offset=offset,
+            )
 
     def get_entity_with_relations(self, user_id: str, name: str) -> dict | None:
         """Get an entity and all its direct relations."""
@@ -330,29 +407,67 @@ class KnowledgeGraphService:
     def delete_entity(self, user_id: str, name: str) -> bool:
         """Delete an entity by name (cascades to its relations). Returns True if deleted.
 
-        Uses a single write connection for both read and delete to prevent
-        TOCTOU races.  Vector store cleanup is best-effort after SQL commit.
+        The SQL delete and vector-cleanup outbox entry share one transaction,
+        so a process crash cannot leave an untracked orphan vector.
         """
         with get_write_connection() as conn:
             entity = db.get_entity_by_name(conn, user_id=user_id, name=name.strip().lower())
             if not entity:
                 return False
-
+            if entity.get("embedding_id"):
+                conn.execute(
+                    "INSERT OR IGNORE INTO pending_vector_deletions "
+                    "(collection, embedding_id) VALUES ('entity', ?)",
+                    (entity["embedding_id"],),
+                )
             db.delete_entity(conn, entity_id=entity["id"])
 
-        # Best-effort vector cleanup — failure is queued for deferred cleanup
         if entity.get("embedding_id"):
+            from ..memory._service._crud import cleanup_pending_vector_deletions
+
             try:
-                vs = get_entity_vectorstore()
-                vs.delete(entity["embedding_id"])
+                cleanup_pending_vector_deletions(collections={"entity"})
             except Exception:
                 logger.warning(
-                    "Failed to delete entity vector %s — queued for deferred cleanup",
+                    "Immediate entity vector cleanup failed for %s; durable job remains queued",
                     entity["embedding_id"],
                     exc_info=True,
                 )
-                _queue_entity_vector_deletion(entity["embedding_id"])
         return True
+
+    def delete_entities(self, user_id: str, names: list[str]) -> tuple[list[str], list[str]]:
+        """Delete multiple entities atomically and durably queue vector cleanup."""
+        unique_names = list(dict.fromkeys(name.strip().lower() for name in names))
+        deleted: list[str] = []
+        embedding_ids: list[str] = []
+        with get_write_connection() as conn:
+            for name in unique_names:
+                entity = db.get_entity_by_name(conn, user_id=user_id, name=name)
+                if not entity:
+                    continue
+                embedding_id = entity.get("embedding_id")
+                if embedding_id:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO pending_vector_deletions "
+                        "(collection, embedding_id) VALUES ('entity', ?)",
+                        (embedding_id,),
+                    )
+                    embedding_ids.append(embedding_id)
+                db.delete_entity(conn, entity_id=entity["id"])
+                deleted.append(name)
+
+        if embedding_ids:
+            from ..memory._service._crud import cleanup_pending_vector_deletions
+
+            try:
+                cleanup_pending_vector_deletions(collections={"entity"})
+            except Exception:
+                logger.warning(
+                    "Immediate batch entity vector cleanup failed; durable jobs remain queued",
+                    exc_info=True,
+                )
+        missing = [name for name in unique_names if name not in deleted]
+        return deleted, missing
 
     def merge_entities(
         self,
@@ -384,7 +499,8 @@ class KnowledgeGraphService:
                 if not source_rows:
                     return False
 
-                # Collect embedding IDs for vector cleanup (after SQL commit)
+                # Queue vector deletion before deleting the authoritative row;
+                # both writes commit or roll back together.
                 source_embedding_ids: list[str] = []
                 for src in source_rows:
                     db.reassign_entity_relations(
@@ -393,23 +509,25 @@ class KnowledgeGraphService:
                         target_id=target["id"],
                         user_id=user_id,
                     )
-                    db.delete_entity(conn, entity_id=src["id"])
                     if src.get("embedding_id"):
+                        conn.execute(
+                            "INSERT OR IGNORE INTO pending_vector_deletions "
+                            "(collection, embedding_id) VALUES ('entity', ?)",
+                            (src["embedding_id"],),
+                        )
                         source_embedding_ids.append(src["embedding_id"])
+                    db.delete_entity(conn, entity_id=src["id"])
 
-            # M-7: Vector cleanup — on failure, queue for deferred deletion
-            # so orphan vectors don't accumulate permanently.
-            for eid in source_embedding_ids:
+            if source_embedding_ids:
+                from ..memory._service._crud import cleanup_pending_vector_deletions
+
                 try:
-                    vs = get_entity_vectorstore()
-                    vs.delete(eid)
+                    cleanup_pending_vector_deletions(collections={"entity"})
                 except Exception:
                     logger.warning(
-                        "Failed to delete merged source vector %s, queuing for cleanup",
-                        eid,
+                        "Immediate merged-entity vector cleanup failed; durable jobs remain queued",
                         exc_info=True,
                     )
-                    _queue_entity_vector_deletion(eid)
 
             return True
         except Exception:

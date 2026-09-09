@@ -1,0 +1,280 @@
+{
+  "date": "2026-09-07",
+  "release_ready": false,
+  "deployed": false,
+  "report": "docs/meeting-allfix-2026-09-07.md",
+  "verification_status": "completed_with_open_conditions",
+  "repairs": [
+    "sync_and_stream_worst_endpoint_p95",
+    "cancellable_async_resolver",
+    "avoid_duplicate_followup_rewrite",
+    "exact_owner_identity_and_schema_inversion",
+    "explicit_current_preference_update",
+    "clean_paragraph_pending_fact_review",
+    "separate_memory_projects_from_curated_file_bindings",
+    "direct_json_output_schema",
+    "snapshot_validity_and_flat_source_identity",
+    "container_fixable_packages",
+    "short_query_bm25_fast_path_with_scoped_semantic_miss_fallback",
+    "latency_bounded_generation_with_transparent_extractive_fallback",
+    "semantic_snapshot_gate_with_cjk_claim_aliases",
+    "chroma_local_only_fail_closed_policy_and_client_cleanup",
+    "runtime_image_apt_security_upgrade",
+    "stream_latency_slo_guard_for_slow_summary_queries"
+  ],
+  "external_conditions": [
+    "human_business_gold_review_and_coverage",
+    "participant_usability_sessions",
+    "thirty_day_production_slo",
+    "upstream_backend_os_and_chroma_advisories",
+    "pinned_base_image_rebuild_requires_registry_access"
+  ],
+  "scope_limits": [
+    "single_instance",
+    "not_multitenant_acl",
+    "no_general_ocr_geometry",
+    "historical_database_recovery_equivalence_unproven"
+  ],
+  "frontend": {
+    "unit_tests": {
+      "passed": 178,
+      "failed": 0,
+      "files": 34,
+      "log": "backend/benchmark-results/allfix-20260907/meeting-allfix-frontend-confirmed.log"
+    },
+    "browser_full_stack": {
+      "passed": 25,
+      "failed": 0,
+      "minutes": 2.9,
+      "log": "backend/benchmark-results/allfix-20260907/meeting-allfix-full-stack-confirmed.log"
+    },
+    "previous_failures": {
+      "unit_initial": "3 timeouts under concurrent load",
+      "unit_one_worker": "3 MemoryList timeouts",
+      "browser": "24 passed, 1 Chat navigation failed"
+    },
+    "repairs": [
+      "explicit tab click drives navigation",
+      "visible labelled button queries without computed-name scan; timeout unchanged"
+    ]
+  },
+  "memory": {
+    "protocol_revision": 2,
+    "production_holdout": false,
+    "attempts": [
+      {
+        "events_correct": 20,
+        "events_attempted": 22,
+        "valid": false,
+        "report": "memory-pipeline_2026-09-07T09-50-22.500644_00-00.json"
+      },
+      {
+        "events_correct": 20,
+        "events_attempted": 22,
+        "valid": false,
+        "report": "memory-pipeline_2026-09-07T10-03-33.286791_00-00.json"
+      },
+      {
+        "events_correct": 22,
+        "events_attempted": 22,
+        "latest_value_accuracy": 0.9,
+        "valid": false,
+        "reason": "superseded retention value still confirmed",
+        "report": "memory-pipeline_2026-09-07T10-14-04.695436_00-00.json"
+      }
+    ],
+    "latest_after_retention_fix": {
+      "valid": true,
+      "complete": true,
+      "stats": {
+        "pipeline_write_recall": 1.0,
+        "pipeline_reference_key_agreement": null,
+        "pipeline_latest_value_accuracy": 1.0,
+        "pipeline_confirmed_evidence_rate": 1.0,
+        "pipeline_events_attempted": 22,
+        "pipeline_events_correct": 22,
+        "pipeline_events_persisted": 21
+      },
+      "report": "backend/benchmark-results/allfix-20260907/memory-pipeline_2026-09-07T11-38-36.173030_00-00.json",
+      "inputs_unchanged": true,
+      "stable_across_independent_repeats_proven": false
+    }
+  },
+  "json_output": {
+    "final_report": "backend/benchmark-results/allfix-20260907/adversarial-prompts-final.json",
+    "passed": 16,
+    "evaluated": 16,
+    "canary_emissions": 0,
+    "previous_pass_counts": [
+      12,
+      8
+    ],
+    "grading": "exact raw JSON object without extra fields or Markdown fences"
+  },
+  "mcp": {
+    "attack": {
+      "passed": 22,
+      "total": 22,
+      "report": "backend/benchmark-results/allfix-20260907/live-security-attack-verified.json"
+    },
+    "clean": {
+      "passed": 20,
+      "total": 20,
+      "report": "backend/benchmark-results/allfix-20260907/live-security-clean-verified.json"
+    },
+    "autonomous_tool_selection_evaluated": true,
+    "model_selected": [
+      "search_meetings",
+      "ask_about_meetings"
+    ],
+    "bounded_model_steps": 4,
+    "cross_principal_authorization_checks": true,
+    "pending_legitimate_fact_from_attack": true,
+    "limits": [
+      "synthetic cases",
+      "shared key means one trusted principal",
+      "not arbitrary adaptive prompt-injection immunity"
+    ]
+  },
+  "snapshot": {
+    "agent_reviewed_references": 10,
+    "human_reviewed": false,
+    "independent_literal_differences": 9,
+    "source_identity_differences": 0,
+    "factual_agent_review_accepted": 10,
+    "literal_cli_passed": true,
+    "baseline_overwritten_after_diff": false,
+    "report": "backend/benchmark-results/allfix-20260907/rag-snapshot-semantic-final.json",
+    "semantic_differences": 0,
+    "comparison_profile": "explicit hybrid retrieval; semantic claims and stable source identity are release gates; literal wording is diagnostic",
+    "literal_regression_gate": "diagnostic_only",
+    "literal_baseline_updated": false
+  },
+  "data": {
+    "before_after_identical": true,
+    "snapshot_sha256": "3c854dd5671d7fab1a22f6d5d3e90d8e8062de6e56f65d69584b006029097eee",
+    "historical_incident_recovery_equivalence_proven": false
+  },
+  "checks": {
+    "ruff": "passed",
+    "pyright": "0 errors, 0 warnings",
+    "frontend_eslint": "passed",
+    "documentation_markdown_files": 73,
+    "diff_check": "passed",
+    "prometheus_rules": 19,
+    "prometheus_synthetic_rule_tests": "passed"
+  },
+  "backend": {
+    "passed": 2301,
+    "skipped": 2,
+    "failed": 0,
+    "seconds": 187.73,
+    "log": "backend/benchmark-results/allfix-20260907/backend-full-regression-final-summary.txt",
+    "promtool_path": "/tmp/meeting-prometheus-tools/promtool",
+    "earlier_run_failure": "one missing executable caused by incorrect local PROMTOOL path; corrected invocation rerun in full",
+    "latest_command": "./.venv/bin/pytest -q"
+  },
+  "security": {
+    "backend": {
+      "image_id": "sha256:72ec50d456c4750db74d5f5fabbbdbdcfe69f36c6ed2d7906b3bee44b6520072",
+      "report": "backend/benchmark-results/allfix-20260907/backend-image-audit-allfix-local3.json",
+      "results": [
+        {
+          "class": "os-pkgs",
+          "package_cve_matches": 826,
+          "unique_cves": 330,
+          "with_fixed_version": 0
+        },
+        {
+          "class": "lang-pkgs",
+          "package_cve_matches": 4,
+          "unique_cves": 4,
+          "with_fixed_version": 0
+        }
+      ],
+      "image_kind": "local source overlay on previously accepted base; canonical pinned-base rebuild was attempted but registry request timed out"
+    },
+    "frontend": {
+      "image_id": "sha256:06e005228f888bb4184a558610d2f0c678c0c412ab4d3be309f9b3336ec01d1b",
+      "report": "backend/benchmark-results/allfix-20260907/frontend-image-audit-confirmed.json",
+      "results": [
+        {
+          "class": "os-pkgs",
+          "package_cve_matches": 0,
+          "unique_cves": 0,
+          "with_fixed_version": 0
+        }
+      ]
+    },
+    "resolved_findings": {
+      "frontend_libuuid_package_cve_matches": 8,
+      "backend_unused_global_pip_package_cve_matches": 6
+    },
+    "closed": false,
+    "build_attempt": {
+      "canonical_command": "docker build -t meeting-agent-backend:allfix-20260907 ./backend",
+      "result": "blocked_by_registry_timeout",
+      "error": "Docker Hub manifest request timed out while resolving pinned python:3.12-slim digest",
+      "validation_command": "docker build -f /tmp/Dockerfile.meeting-agent-local -t meeting-agent-backend:allfix-20260907-local3 ./backend",
+      "validation_image_id": "sha256:72ec50d456c4750db74d5f5fabbbdbdcfe69f36c6ed2d7906b3bee44b6520072"
+    },
+    "mitigations": [
+      "backend Dockerfile runs apt-get upgrade after installing runtime packages",
+      "Chroma remote clients and trust_remote_code are rejected at settings validation and startup",
+      "PersistentClient paths are canonicalized and production paths must remain below DATA_DIR",
+      "CI Trivy blocking steps ignore unfixed findings only; unresolved findings remain report-only and release_ready=false"
+    ],
+    "actionable_scan": {
+      "report": "backend/benchmark-results/allfix-20260907/backend-image-audit-actionable-final.json",
+      "severity": "HIGH,CRITICAL",
+      "ignore_unfixed": true,
+      "matches": 0,
+      "artifact_id": "sha256:404cdea60b13b0c436afca0806447b24f3ba128dd863d62ec24171358630a5d1"
+    }
+  },
+  "container": {
+    "report": "backend/benchmark-results/allfix-20260907/container-acceptance-allfix-local3.json",
+    "passed": true,
+    "checks": {
+      "backend_ready": true,
+      "frontend_requires_login": true,
+      "authenticated_spa": true,
+      "security_headers": true,
+      "nginx_ready_proxy": true,
+      "direct_api_requires_key": true,
+      "nginx_injects_api_key": true,
+      "stream_proxy_completes": true,
+      "completion_metrics_exported": true,
+      "explicit_json_output_contract": true,
+      "runtime_starlette_patched": true
+    },
+    "backend_image_id": "sha256:72ec50d456c4750db74d5f5fabbbdbdcfe69f36c6ed2d7906b3bee44b6520072",
+    "frontend_image_id": "sha256:06e005228f888bb4184a558610d2f0c678c0c412ab4d3be309f9b3336ec01d1b",
+    "scan_image_ids_match": false,
+    "scan_image_id": "sha256:404cdea60b13b0c436afca0806447b24f3ba128dd863d62ec24171358630a5d1",
+    "image_note": "container image is the source-overlay image; Trivy report records the artifact ID from scan invocation"
+  },
+  "chat_performance": {
+    "report": "backend/benchmark-results/allfix-20260907/chat-20-fast-path-final.json",
+    "queries": 20,
+    "trace_count": 20,
+    "chat_total_ms": {
+      "p50": 2623.86,
+      "p95": 2730.99,
+      "p99": 2740.45
+    },
+    "target_p95_ms": 3000,
+    "target_met": true,
+    "measurement_kind": "single serial run with external model and embedding services; production fast path enabled",
+    "release_ready": false,
+    "chat_ttft_ms": {
+      "p50": 1756.4,
+      "p95": 2469.61,
+      "p99": 2669.29
+    },
+    "fast_path_timeout_s": 2.7,
+    "degraded_llm_ttft_runs": 1,
+    "retrieval_llm_runs": 15,
+    "latency_guard_for_all_sse_queries": true
+  }
+}

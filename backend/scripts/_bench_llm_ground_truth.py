@@ -18,7 +18,8 @@ _PROMPT_TEMPLATE = """You are a relevance judge for a retrieval benchmark.
 Query: {query}
 Expected Answer: {expected_answer}
 
-Below are candidate text chunks. Select ONLY the chunks that contain information directly needed to answer the query.
+Below are candidate text chunks. Select ONLY the chunks that contain information
+directly needed to answer the query.
 
 Candidates:
 {candidates}

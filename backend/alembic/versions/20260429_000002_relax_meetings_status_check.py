@@ -54,9 +54,7 @@ CREATE TABLE meetings_new (
 def upgrade() -> None:
     bind = op.get_bind()
     schema_row = bind.execute(
-        sa.text(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='meetings'"
-        )
+        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='meetings'")
     ).fetchone()
     if schema_row and "'summarizing'" in (schema_row[0] or ""):
         return  # already relaxed — idempotent
@@ -80,16 +78,9 @@ def upgrade() -> None:
     op.execute(sa.text("DROP TABLE meetings"))
     op.execute(sa.text("ALTER TABLE meetings_new RENAME TO meetings"))
 
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)"))
     op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)"
-        )
-    )
-    op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS idx_meetings_content_hash "
-            "ON meetings(content_hash)"
-        )
+        sa.text("CREATE INDEX IF NOT EXISTS idx_meetings_content_hash ON meetings(content_hash)")
     )
 
     op.execute(sa.text("PRAGMA foreign_keys=ON"))
@@ -126,9 +117,7 @@ CREATE TABLE meetings_new (
 def downgrade() -> None:
     bind = op.get_bind()
     schema_row = bind.execute(
-        sa.text(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='meetings'"
-        )
+        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='meetings'")
     ).fetchone()
     if not schema_row or "'summarizing'" not in (schema_row[0] or ""):
         return
@@ -154,16 +143,9 @@ def downgrade() -> None:
     op.execute(sa.text("DROP TABLE meetings"))
     op.execute(sa.text("ALTER TABLE meetings_new RENAME TO meetings"))
 
+    op.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)"))
     op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)"
-        )
-    )
-    op.execute(
-        sa.text(
-            "CREATE INDEX IF NOT EXISTS idx_meetings_content_hash "
-            "ON meetings(content_hash)"
-        )
+        sa.text("CREATE INDEX IF NOT EXISTS idx_meetings_content_hash ON meetings(content_hash)")
     )
 
     op.execute(sa.text("PRAGMA foreign_keys=ON"))

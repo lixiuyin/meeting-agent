@@ -47,5 +47,5 @@ class TestWriteLockTimeout:
         """Write lock pool should have correct size."""
         from src.core.database._connection import _WRITE_LOCK_POOL_SIZE, _write_lock_pool
 
-        assert _WRITE_LOCK_POOL_SIZE == 256
-        assert len(_write_lock_pool) == 256
+        assert _WRITE_LOCK_POOL_SIZE == 1
+        assert len(_write_lock_pool) == 1

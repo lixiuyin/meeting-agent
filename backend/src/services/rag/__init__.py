@@ -20,6 +20,7 @@ from ._indexer import (
 )
 from ._query import determine_adaptive_top_k, reset_rewrite_llm, rewrite_query
 from ._query_analysis import QueryAnalysis, analyze_query
+from ._query_plan import QueryPlan, build_query_plan, infer_query_intent
 from ._reconcile import reconcile_multimodal_index_state
 from ._reranker import rerank, reset_reranker_state
 from ._retriever import (
@@ -46,8 +47,10 @@ from ._vectorstore import (
 
 __all__ = [
     "QueryAnalysis",
+    "QueryPlan",
     "_ensure_collection_dimension",
     "analyze_query",
+    "build_query_plan",
     "check_and_rebuild_bm25_if_drifted",
     "delete_file_summary",
     "delete_meeting_chunks",
@@ -58,6 +61,7 @@ __all__ = [
     "index_meeting",
     "index_meeting_pages",
     "index_meeting_segments",
+    "infer_query_intent",
     "load_bm25_from_database",
     "persist_vectorstore",
     "rebuild_bm25_from_chroma",

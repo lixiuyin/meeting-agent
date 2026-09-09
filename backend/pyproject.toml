@@ -21,21 +21,22 @@ classifiers = [
 ]
 dependencies = [
     # Web framework
-    "fastapi>=0.115.0,<0.120.0",
+    "fastapi>=0.135.0,<1.0.0",
     "uvicorn[standard]>=0.30.0",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.31",
     "slowapi>=0.1.9",
+    "alembic>=1.14.0",
     # Validation & config
     "pydantic>=2.10.0,<3.0.0",
-    "pydantic-settings>=2.6.0,<3.0.0",
+    "pydantic-settings>=2.14.2,<3.0.0",
     "pyyaml>=6.0",
     "jinja2>=3.1.0",
     # LangChain core
-    "langchain-core>=1.3.0,<2.0.0",
+    "langchain-core>=1.3.3,<2.0.0",
     "langchain-text-splitters>=1.0.0,<2.0.0",
     # LangChain LLM integrations
     "langchain-openai>=1.0.0,<2.0.0",
-    "langchain-anthropic>=1.0.0,<2.0.0",
+    "langchain-anthropic>=1.4.6,<2.0.0",
     "langchain-ollama>=1.0.0,<2.0.0",
     "langchain-community>=0.4.0,<0.5.0",
     # LangChain embedding integrations
@@ -57,7 +58,7 @@ dependencies = [
     # Retry logic
     "tenacity>=8.0.0",
     # MCP server
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=1.28.1,<2.0.0",
     # Document parsing
     "PyMuPDF>=1.24.0",
     "python-pptx>=1.0.0",
@@ -67,7 +68,7 @@ dependencies = [
     # Local Whisper/VibeVoice were removed to keep the Docker image lean and
     # to avoid pulling PyTorch + CUDA as transitive deps.
     # Image processing
-    "pillow>=10.4.0",
+    "pillow>=12.3.0",
     # Token counting
     "tiktoken>=0.12.0",
     # Hybrid search uses SQLite FTS5 (no rank-bm25 dep).
@@ -76,7 +77,17 @@ dependencies = [
     # Prometheus metrics
     "prometheus-client>=0.20.0",
     # Encryption for idempotency response storage
-    "cryptography>=43.0",
+    "cryptography>=50.0.0",
+    # Security floors for transitive runtime dependencies. Keep these explicit
+    # so a permissive upstream constraint cannot reintroduce known-vulnerable
+    # versions during a future lock refresh.
+    "aiohttp>=3.14.3",
+    "click>=8.3.3",
+    "idna>=3.15",
+    "lxml>=6.1.0",
+    "mako>=1.3.12",
+    "PyJWT>=2.13.0",
+    "urllib3>=2.7.0",
     # raganything (multimodal RAG bridge) lives in the [multimodal] optional
     # extra — it pulls lightrag + several multimodal model stacks. Needed only
     # when RAGANYTHING_ENABLED=true.
@@ -99,7 +110,7 @@ google = [
 ]
 # Multimodal RAG via RAGAnything bridge. Pulls lightrag + multimodal model
 # deps. Only needed when RAGANYTHING_ENABLED=true. Install with:
-#     uv sync --extra multimodal
+#     uv sync --no-group production --extra multimodal
 multimodal = [
     "raganything>=1.2.0",
 ]
@@ -120,6 +131,9 @@ observability = [
 # Dependency groups (uv / pip 7.3+) — dev tools installed by `uv sync`
 # ---------------------------------------------------------------------------
 [dependency-groups]
+# Keep the production web stack patched even while the development-only
+# multimodal dependency graph requires an older Starlette.
+production = ["starlette>=1.6.0,<2.0.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -129,10 +143,11 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.8",
     "bandit[toml]>=1.8",
-    "alembic>=1.14.0",
     "mutmut>=3.2.0",
     "pyright>=1.1.408",
     "pytest-randomly>=3.16",
+    # Synthetic benchmark fixture generation (tests/fixtures/benchmark/generate.py).
+    "reportlab>=4.0",
 ]
 
 [project.urls]
@@ -150,6 +165,8 @@ packages = ["src"]
 # Applies when installing the [local] extra: uv sync --extra local
 # ---------------------------------------------------------------------------
 [tool.uv]
+default-groups = ["dev", "production"]
+conflicts = [[{group = "production"}, {extra = "multimodal"}]]
 extra-index-url = ["https://abetlen.github.io/llama-cpp-python/whl/cpu"]
 
 # ---------------------------------------------------------------------------
@@ -180,6 +197,7 @@ filterwarnings = [
     "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
 ]
 markers = [
     "unit: fast unit tests",
@@ -223,9 +241,16 @@ exclude_dirs = ["tests", ".venv", "data"]
 # Mutation testing (mutmut)
 # ---------------------------------------------------------------------------
 [tool.mutmut]
-paths_to_mutate = ["src/"]
-tests_dir = ["tests"]
-runner = "python -m pytest -q"
+source_paths = ["src/"]
+only_mutate = [
+    "src/services/chain/_steps_session.py",
+    "src/services/chain/_extraction.py",
+    "src/services/rag/_retriever.py",
+    "src/services/rag/_bm25.py",
+    "src/services/memory/_service/_crud.py",
+]
+also_copy = ["scripts/", "evaluation/", "config/"]
+pytest_add_cli_args = ["-q", "--benchmark-disable"]
+pytest_add_cli_args_test_selection = ["tests"]
 max_stack_depth = 8
-# Progressive mutation score target: start at 5%, ratchet to 20%.
-# Enforce in CI via: mutmut run --mutation-score=5
+# Mutation results are diagnostic until a reviewed score gate is established.

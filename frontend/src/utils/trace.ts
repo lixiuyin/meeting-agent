@@ -15,6 +15,11 @@ export interface TraceSpan {
   duration_ms: number | null;
   status: string;
   metadata?: Record<string, unknown>;
+  span_id?: string;
+  parent_span_id?: string;
+  sequence?: number;
+  start_offset_ms?: number;
+  end_offset_ms?: number;
   parent_label?: string;
   skipped?: boolean;
   tokens_in?: number;
@@ -49,6 +54,7 @@ export interface SpanGroup {
 const PHASE_COLORS: Record<string, string> = {
   routing: "#94a3b8",
   skill: "#06b6d4",
+  embedding: "#14b8a6",
   session: "#a855f7",
   retrieve: "#3b82f6",
   memory: "#f97316",

@@ -19,9 +19,25 @@ class MemoryService(
 ):
     """Long-term user memory with importance, TTL, semantic search, and auto-decay."""
 
-    SEMANTIC_WEIGHT = settings.MEMORY_SCORING_SEMANTIC_WEIGHT
-    DECAY_WEIGHT = settings.MEMORY_SCORING_DECAY_WEIGHT
-    IMPORTANCE_WEIGHT = settings.MEMORY_SCORING_IMPORTANCE_WEIGHT
+    @property
+    def SEMANTIC_WEIGHT(self) -> float:
+        return float(settings.MEMORY_SCORING_SEMANTIC_WEIGHT)
+
+    @property
+    def DECAY_WEIGHT(self) -> float:
+        return float(settings.MEMORY_SCORING_DECAY_WEIGHT)
+
+    @property
+    def IMPORTANCE_WEIGHT(self) -> float:
+        return float(settings.MEMORY_SCORING_IMPORTANCE_WEIGHT)
+
+    @property
+    def CONFIDENCE_WEIGHT(self) -> float:
+        return float(settings.MEMORY_SCORING_CONFIDENCE_WEIGHT)
+
+    @property
+    def USEFULNESS_WEIGHT(self) -> float:
+        return float(settings.MEMORY_SCORING_USEFULNESS_WEIGHT)
 
 
 __all__ = ["MemoryService"]

@@ -69,7 +69,7 @@ def _patch_chain(monkeypatch, fake_llm):
     monkeypatch.setattr(chain_api, "load_history", _noop_async)
     monkeypatch.setattr(chain_api, "build_context", _noop_sync)
     monkeypatch.setattr(chain_api, "save_messages", _noop_sync)
-    monkeypatch.setattr(chain_api, "schedule_fact_extraction", _noop_sync)
+    monkeypatch.setattr(chain_api, "schedule_fact_extraction", _noop_async)
 
     class _Prompt:
         def __or__(self, _other):

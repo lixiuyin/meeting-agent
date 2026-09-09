@@ -38,7 +38,7 @@ def _make_profile(**kwargs) -> DocumentProfile:
 
 @pytest.fixture
 def pdf_file(tmp_path):
-    import fitz
+    import pymupdf as fitz
 
     path = tmp_path / "test.pdf"
     doc = fitz.open()

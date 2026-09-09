@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { type InternalAxiosRequestConfig } from "axios";
 
 export function getApiBaseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
@@ -93,11 +93,11 @@ export function buildAuthHeaders(extra: Record<string, string> = {}): Record<str
 
 // L-4: Per-endpoint timeout tiers instead of a single 120s default.
 // Read endpoints are fast (DB lookups) — 30s is generous.  Chat requests
-// may stream responses and deserve 120s.  Upload limits are enforced by
+// may stream responses and deserve 180s.  Upload limits are enforced by
 // the server's body-size cap; 600s covers slow connections.
 // Each tier can be overridden via VITE_TIMEOUT_*_MS env var.
 export const TIMEOUT_READ = Number(import.meta.env.VITE_TIMEOUT_READ_MS) || 30_000;
-export const TIMEOUT_CHAT = Number(import.meta.env.VITE_TIMEOUT_CHAT_MS) || 120_000;
+export const TIMEOUT_CHAT = Number(import.meta.env.VITE_TIMEOUT_CHAT_MS) || 180_000;
 export const TIMEOUT_UPLOAD = Number(import.meta.env.VITE_TIMEOUT_UPLOAD_MS) || 600_000;
 const DEFAULT_TIMEOUT = TIMEOUT_READ;
 
@@ -109,46 +109,49 @@ export const api = axios.create({
 // Track in-flight requests so they can be mass-cancelled on route changes.
 const _activeSignals = new Set<AbortController>();
 
+type TrackedRequestConfig = InternalAxiosRequestConfig & {
+  __meetingAgentController?: AbortController;
+  __meetingAgentDetachCaller?: () => void;
+};
+
+function cleanupTrackedRequest(config?: InternalAxiosRequestConfig): void {
+  const tracked = config as TrackedRequestConfig | undefined;
+  const ctrl = tracked?.__meetingAgentController;
+  if (ctrl) _activeSignals.delete(ctrl);
+  tracked?.__meetingAgentDetachCaller?.();
+}
+
+export function isRequestCanceled(error: unknown): boolean {
+  if (axios.isCancel(error)) return true;
+  const name = (error as { name?: string } | null)?.name;
+  return name === "CanceledError" || name === "AbortError";
+}
+
 export function cancelAllInFlightRequests(reason?: string): void {
   const err = new DOMException(reason ?? "Route change", "AbortError");
   for (const ctrl of _activeSignals) {
     ctrl.abort(err);
-    _activeSignals.delete(ctrl);
   }
+  _activeSignals.clear();
 }
 
 api.interceptors.request.use((config) => {
-  // Auto-inject an AbortController when the caller doesn't provide a signal,
-  // so the request is always cancellable (e.g. on component unmount).
-  // Cleanup is bound to the signal's abort event instead of per-request
-  // response interceptors to avoid array bloat under concurrent loads.
-  if (!config.signal) {
-    const ctrl = new AbortController();
-    config.signal = ctrl.signal;
-    _activeSignals.add(ctrl);
-    ctrl.signal.addEventListener(
-      "abort",
-      () => {
-        _activeSignals.delete(ctrl);
-      },
-      { once: true },
-    );
-    // Also clean up on settlement (resolve or reject) via a one-shot
-    // response interceptor — this handles the normal case where the request
-    // completes without being aborted.
-    const interceptorId = api.interceptors.response.use(
-      (response) => {
-        _activeSignals.delete(ctrl);
-        api.interceptors.response.eject(interceptorId);
-        return response;
-      },
-      (error) => {
-        _activeSignals.delete(ctrl);
-        api.interceptors.response.eject(interceptorId);
-        return Promise.reject(error);
-      },
-    );
+  const tracked = config as TrackedRequestConfig;
+  const callerSignal = config.signal as AbortSignal | undefined;
+  const ctrl = new AbortController();
+  if (callerSignal) {
+    const forwardAbort = () => ctrl.abort(callerSignal.reason);
+    if (callerSignal.aborted) {
+      forwardAbort();
+    } else {
+      callerSignal.addEventListener("abort", forwardAbort, { once: true });
+      tracked.__meetingAgentDetachCaller = () =>
+        callerSignal.removeEventListener("abort", forwardAbort);
+    }
   }
+  config.signal = ctrl.signal;
+  tracked.__meetingAgentController = ctrl;
+  _activeSignals.add(ctrl);
   return config;
 });
 
@@ -160,8 +163,13 @@ if (API_KEY) {
 }
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    cleanupTrackedRequest(response.config);
+    return response;
+  },
   (error) => {
+    cleanupTrackedRequest(error.config);
+    if (isRequestCanceled(error)) return Promise.reject(error);
     const status = error.response?.status ?? 0;
     const parsed = parseApiErrorPayload(error.response?.data, error.message ?? "Request failed");
     return Promise.reject(

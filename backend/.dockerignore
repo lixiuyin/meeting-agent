@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 tests/
 benchmark-results/
+.private-benchmarks/
+artifacts/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
@@ -11,3 +13,6 @@ data/
 exports/
 rag_storage/
 .coverage
+.env
+.env.*
+!.env.example

@@ -14,21 +14,24 @@ from ...core.config import settings
 logger = logging.getLogger(__name__)
 
 _llm_cache: TTLCache | None = None
+_llm_cache_key: tuple[int, int] | None = None
 _llm_cache_lock = threading.Lock()
 
 
 def _get_llm_cache() -> TTLCache | None:
     """Get or create the LLM response cache (singleton, respects settings)."""
-    global _llm_cache
+    global _llm_cache, _llm_cache_key
     if not settings.LLM_CACHE_ENABLED:
         return None
-    if _llm_cache is None:
+    cache_key = (settings.LLM_CACHE_MAX_SIZE, settings.LLM_CACHE_TTL_SECONDS)
+    if _llm_cache is None or _llm_cache_key != cache_key:
         with _llm_cache_lock:
-            if _llm_cache is None:
+            if _llm_cache is None or _llm_cache_key != cache_key:
                 _llm_cache = TTLCache(
                     maxsize=settings.LLM_CACHE_MAX_SIZE,
                     ttl=settings.LLM_CACHE_TTL_SECONDS,
                 )
+                _llm_cache_key = cache_key
                 logger.info(
                     "LLM cache initialized (ttl=%ds, max=%d)",
                     settings.LLM_CACHE_TTL_SECONDS,

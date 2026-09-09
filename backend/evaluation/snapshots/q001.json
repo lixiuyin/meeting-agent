@@ -1,0 +1,19 @@
+{
+  "query_id": "q001",
+  "answer": "Three blockers were raised in the Q1 planning meeting:\n\n- **Mobile app** — waiting on final UI designs from the design team, with an ETA of January 22 [1].\n- **Database migration** — blocked by the need for additional cloud storage budget approval [1].\n- **Analytics pipeline** — depends on a third-party API that has not yet provided production access [1].\n\nThese blockers correspond to the action items assigned to Alice (follow up with the design team), Bob (submit the budget request by January 18), and Carol (request production credentials from the API provider) [1][2].",
+  "source_ids": [
+    "sample.pdf:chunk_0",
+    "sample.pptx:chunk_0",
+    "sample.pptx:chunk_1",
+    "sample.pptx:chunk_2"
+  ],
+  "review": {
+    "reviewer_kind": "coding_agent",
+    "reviewer": "Codex",
+    "date": "2026-09-07",
+    "scope": "factual answer and stable source identity against existing handwritten fixture gold",
+    "production_human_review": false,
+    "source_report": "rag-snapshot_2026-09-07T09-57-59.286089_00-00.json",
+    "gold_sha256": "094ebd1a7d2c87f3a683333acce0923ee9b0602ff48ee017eaba5512bf7c0236"
+  }
+}

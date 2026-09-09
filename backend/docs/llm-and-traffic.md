@@ -1,25 +1,25 @@
-# LLM / Embedding Provider 与流量治理
+# LLM / Embedding Provider and traffic management
 
-> 模型调用层的设计：provider 注册表、单例生命周期、缓存、Prompt 模板、LLM 输出解析、遥测、并发限速与熔断。
+> Design of the model calling layer: provider registry, singleton life cycle, cache, prompt template, LLM output parsing, telemetry, concurrency rate limit and circuit breaker.
 >
-> 代码位置：
-> - `backend/src/services/llm/` — LLM provider 注册表（`_providers.py`）、缓存（`_cache.py`）、Prompt 模板（`_prompts.py`）、LLM 输出解析（`_parsing.py`）、Embedding 适配（`_embeddings_adapter.py`）、遥测（`_telemetry.py`）
-> - `backend/src/services/embedder.py` — Embedding 单例
+> Code location:
+> - `backend/src/services/llm/` — LLM provider registry (`_providers.py`), cache (`_cache.py`), Prompt template (`_prompts.py`), LLM output parsing (`_parsing.py`), Embedding adaptation (`_embeddings_adapter.py`), telemetry (`_telemetry.py`)
+> - `backend/src/services/embedder.py` — Embedding singleton
 > - `backend/src/services/traffic_control.py` — `TrafficController` + `CircuitBreaker` + `ErrorRateTracker`
 
-## 1. 设计目标
+## 1. Design goals
 
-- **provider-agnostic**：一套配置即可切换 12+ 模型供应商
-- **低初始化代价**：重对象（客户端、tokenizer、模型）全局单例
-- **运行时可切换**：`PUT /settings` 后通过 `reset_*()` 热切换
-- **稳定性**：并发上限 + 限速 + 熔断 + 重试，防止下游故障拖垮整个服务
-- **可观测性**：每次调用都会被 `traffic_controller` 记账，失败率触发熔断
+- **provider-agnostic**: One set of configurations can switch 12+ model providers
+- **Low initialization cost**: heavy object (client, tokenizer, model) global singleton
+- **Switchable during runtime**: hot switch through `reset_*()` after `PUT /settings`
+- **Stability**: Concurrency upper limit + speed limit + circuit breaker + retry to prevent downstream failures from bringing down the entire service
+- **Observability**: Each call will be accounted for by `traffic_controller`, and the failure rate triggers a circuit breaker.
 
-## 2. LLM Provider 注册表
+## 2. LLM Provider Registry
 
-代码：`services/llm/_providers.py`。
+Code: `services/llm/_providers.py`.
 
-### 2.1 注册机制
+### 2.1 Registration mechanism
 
 ```python
 _LLM_CREATORS: dict[str, Callable[..., BaseChatModel]] = {}
@@ -31,7 +31,7 @@ def register_llm_provider(name: str) -> Callable:
         return fn
     return decorator
 
-# 实际注册方式（函数调用，非装饰器语法）：
+# Actual registration method (function call, non-decorator syntax):
 register_llm_provider("openai")(_create_openai_llm)
 register_llm_provider("azure_openai")(_create_azure_openai_llm)
 register_llm_provider("anthropic")(_create_anthropic_llm)
@@ -39,163 +39,175 @@ register_llm_provider("ollama")(_create_ollama_llm)
 register_llm_provider("llama_cpp")(_create_llama_cpp_llm)
 ```
 
-注册函数同时支持装饰器语法和直接调用；代码库使用直接调用风格。
+Registered functions support both decorator syntax and direct calling; the code base uses the direct calling style.
 
-### 2.2 OpenAI 兼容 provider 表
+For OpenRouter, `LLM_REASONING_EFFORT` defaults to `low` and reasoning blocks
+are excluded from the returned payload. Reasoning still counts against the
+completion budget, so bounding it prevents reasoning-capable models from using
+all `LLM_MAX_TOKENS` before emitting user-visible text.
+
+Model identities in dated validation artifacts describe the effective
+verification environment, not compiled repository defaults. In particular,
+[`docs/validation/latest-benchmark.json`](../../docs/validation/latest-benchmark.json)
+records one OpenRouter-routed run. Because its underlying provider endpoint was
+not pinned, its latency and route-error observations are scoped diagnostics,
+not universal claims about the named models. Publication and comparison rules
+are defined in [`benchmarking.md`](./benchmarking.md#publishing-benchmark-and-model-results).
+
+### 2.2 OpenAI compatible provider table
 
 ```python
 _OPENAI_COMPATIBLE_PROVIDERS = {
-    # name:        (default_base_url,                 requires_api_key)
-    "deepseek":    ("https://api.deepseek.com/v1",    True),
-    "openrouter":  ("https://openrouter.ai/api/v1",   True),
-    "groq":        ("https://api.groq.com/openai/v1", True),
-    "together":    ("https://api.together.xyz/v1",    True),
-    "mistral":     ("https://api.mistral.ai/v1",      True),
-    "lm_studio":   ("http://localhost:1234/v1",       False),
-    "vllm":        ("http://localhost:8000/v1",       False),
+    # name: (default_base_url, requires_api_key)
+    "deepseek": ("https://api.deepseek.com/v1", True),
+    "openrouter": ("https://openrouter.ai/api/v1", True),
+    "groq": ("https://api.groq.com/openai/v1", True),
+    "together": ("https://api.together.xyz/v1", True),
+    "mistral": ("https://api.mistral.ai/v1", True),
+    "lm_studio": ("http://localhost:1234/v1", False),
+    "vllm": ("http://localhost:8000/v1", False),
 }
 ```
 
-这些 provider 共用 `_create_openai_compatible_llm()` 工厂，只是填不同的 base_url + key 策略，注册循环自动批量生成：
+These providers share the `_create_openai_compatible_llm()` factory, but fill in different base_url + key strategies, and the registration cycle is automatically generated in batches:
 
 ```python
 for name, (default_url, requires_key) in _OPENAI_COMPATIBLE_PROVIDERS.items():
     _LLM_CREATORS[name] = partial(_create_openai_compatible_llm, name, default_url, requires_key)
 ```
 
-### 2.3 全部支持的 `LLM_BINDING`
+### 2.3 All supported `LLM_BINDING`
 
 `openai` · `azure_openai` · `anthropic` · `deepseek` · `openrouter` · `groq` · `together` · `mistral` · `ollama` · `lm_studio` · `vllm` · `llama_cpp`
 
-每种都有独立的工厂，对应 LangChain 的 `ChatOpenAI` / `AzureChatOpenAI` / `ChatAnthropic` / `ChatOllama` / `LlamaCpp` 等。
+Each has an independent factory, corresponding to LangChain's `ChatOpenAI` / `AzureChatOpenAI` / `ChatAnthropic` / `ChatOllama` / `LlamaCpp`, etc.
 
-### 2.4 单例双检锁
+### 2.4 Thread-safe configuration-keyed singleton
 
 ```python
-_llm: BaseLanguageModel | None = None
-_llm_lock = threading.Lock()
+_llm: BaseChatModel | None = None
+_llm_key: tuple[Any, ...] | None = None
+_lock = threading.Lock()
 
-def get_llm() -> BaseLanguageModel:
-    global _llm
-    if _llm is None:
-        with _llm_lock:
-            if _llm is None:
-                binding = _get_effective_binding()
-                creator = _LLM_CREATORS[binding]
-                _llm = creator()
+def get_llm() -> BaseChatModel:
+    global _llm, _llm_key
+    config_key = _llm_config_key()
+    if _llm is None or _llm_key != config_key:
+        with _lock:
+            if _llm is None or _llm_key != config_key:
+                _llm = create_llm()
+                _llm_key = config_key
     return _llm
 
 def reset_llm() -> None:
-    global _llm
-    with _llm_lock:
+    global _llm, _llm_key
+    with _lock:
         _llm = None
+        _llm_key = None
 ```
 
-`_get_effective_binding()` 兼容旧字段：若 `LLM_BINDING` 为空则回退 `LLM_PROVIDER`，再回退 `"openai"`。
+`_get_effective_binding()` lowercases `LLM_BINDING` and falls back to `openai`
+only when that current field is empty. The cache key includes the binding,
+model, generation parameters, endpoint, reasoning effort, and a one-way API-key
+fingerprint, so a changed configuration reconstructs the client even before an
+explicit reset.
 
-### 2.4.1 Extraction LLM 单例
+### 2.4.1 Extraction LLM singleton
 
-`_providers.py` 额外维护一个 `get_extraction_llm()` 单例，用于后台事实 / 实体提取：
+`_providers.py` maintains an additional `get_extraction_llm()` singleton used by durable fact/entity extraction jobs:
 
-- 使用 `MEMORY_EXTRACTION_MODEL` 配置独立模型名（未配置时回退到主 LLM）
-- 与主 LLM 共享同一 binding，但 `model_name` 参数独立
-- `reset_extraction_llm()` 在 settings 变更时调用
+- Use `MEMORY_EXTRACTION_MODEL` to configure the independent model name (fallback to the main LLM if not configured)
+- Shares the same binding as the main LLM, but the `model_name` parameter is independent
+- `reset_extraction_llm()` is called when settings change
 
-### 2.4.2 Vision 能力检测
+### 2.4.2 Vision capability detection
 
-`_providers.py` 导出 `supports_vision()` 函数，用于判断当前 LLM 是否支持图片输入：
+`_providers.py` exports the `supports_vision()` function, which is used to determine whether the current LLM supports image input:
 
-- 显式设置 `LLM_SUPPORTS_VISION`（`true` / `false`）优先
-- `"auto"` + `MULTIMODAL_CAPTIONING_ENABLED=True` 视为支持
-- 自动检测基于模型名前缀（`gpt-4o`、`claude-3`、`gemini`、`qwen-vl` 等）和 binding（`anthropic` 默认支持）
+- Explicitly setting `LLM_SUPPORTS_VISION` (`true` / `false`) takes precedence
+- `"auto"` + `MULTIMODAL_CAPTIONING_ENABLED=True` is considered supported
+- Automatic detection based on model name prefix (`gpt-4o`, `claude-3`, `gemini`, `qwen-vl`, etc.) and binding (`anthropic` is supported by default)
 
-### 2.5 响应缓存
+### 2.5 Response caching
 
-`services/llm/_cache.py`（TTL + LRU）：
+`services/llm/_cache.py` (TTL + LRU):
 
-- 只缓存 **纯生成**（无流式 / 无工具调用）
+- Cache only **Pure generation** (no streaming / no tool calls)
 - key = `(model, messages_hash, temperature, max_tokens, stop)`
-- 通过 `LLM_CACHE_ENABLED` / `LLM_CACHE_TTL_SECONDS` / `LLM_CACHE_MAX_SIZE` 控制
-- 在本地开发或 query-rewrite 这种可重复的短调用上收益明显
-- ⚠️ 强一致性 / 时间相关的 prompt 请关闭
+- Controlled by `LLM_CACHE_ENABLED` / `LLM_CACHE_TTL_SECONDS` / `LLM_CACHE_MAX_SIZE`
+- Significant gains in local development or repeatable short calls like query-rewrite
+- ⚠️ Strong consistency / time-related prompts please close
 
-### 2.6 其他 LLM 子模块
+### 2.6 Other LLM submodules
 
-| 模块 | 职责 |
+| Modules | Responsibilities |
 |---|---|
-| `_embeddings_adapter.py` | 批量 Embedding 适配：将 LLM 的 embedding 接口封装为 LangChain `Embeddings` |
-| `_parsing.py` | LLM 输出解析：`StreamingThinkingFilter`（流式场景剥离 thinking 块）、JSON 解析 |
-| `_prompts.py` | Prompt 模板：`get_rag_prompt()`、`get_skill_prompt(skill_def)`、`get_fact_extraction_prompt()` 等 |
-| `_telemetry.py` | LLM 调用遥测：记录每次调用的模型、token 数、延迟等指标 |
+| `_embeddings_adapter.py` | Batch Embedding adaptation: encapsulate the embedding interface of LLM into LangChain `Embeddings` |
+| `_parsing.py` | LLM output parsing: `StreamingThinkingFilter` (streaming scenario strips thinking blocks), JSON parsing |
+| `_prompts.py` | Prompt templates: `get_rag_prompt()`, `get_skill_prompt(skill_def)`, `get_fact_extraction_prompt()`, etc. |
+| `_telemetry.py` | LLM call telemetry: records the model, number of tokens, latency and other indicators of each call |## 3. Embedding Provider
 
-## 3. Embedding Provider
+Code: `services/embedder.py`.
 
-代码：`services/embedder.py`。
+Structure symmetrical to LLM: `EMBEDDING_BINDING` → `_EMBED_CREATORS[binding]()` → singleton.
 
-结构与 LLM 对称：`EMBEDDING_BINDING` → `_EMBED_CREATORS[binding]()` → 单例。
+Supported: `openai` · `azure_openai` · `ollama` · `lm_studio` · `huggingface` · `jina` · `cohere` · `google` · `openrouter` · `deepseek` · `together` · `groq` · `mistral` · `vllm`.
 
-支持：`openai` · `azure_openai` · `ollama` · `lm_studio` · `huggingface` · `jina` · `cohere` · `google` · `openrouter` · `deepseek` · `together` · `groq` · `mistral` · `vllm`。
+During startup, `lifespan` will call `get_embeddings().embed_query("ping")` once to do **connectivity verification**. If it fails, the startup will fail.
 
-启动时 `lifespan` 会调用一次 `get_embeddings().embed_query("ping")` 做**连通性校验**，失败即启动失败。
+### 3.1 Dimension consistency
 
-### 3.1 维度一致性
-
-`EMBEDDING_DIMENSION` 必须匹配 Chroma collection 的实际维度。切换 model 后务必：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/settings/rebuild-vectors \
-  -H "X-API-Key: $API_KEY"
-```
+`EMBEDDING_DIMENSION` must match the actual embedding output. The live settings API rejects model, dimension, and chunk-shape changes before publication. Apply those values through deployment configuration, restart under operator control, and wait until `/health/ready` reports no manifest mismatch or pending index repair. Startup reconciliation queues durable per-file reprocessing against the authoritative source artefacts.
 
 ## 4. Reranker
 
-代码：`services/rag/_reranker.py`。两类：
+Code: `services/rag/_reranker.py`. Two categories:
 
-- **Cohere Rerank API**（`RERANKER_BINDING=cohere`）— 托管
-- **BGE Cross-Encoder**（`RERANKER_BINDING=bge`）— 本地 HuggingFace 模型,需要可选 extra：`uv sync --extra huggingface`
+- **Cohere Rerank API** (`RERANKER_BINDING=cohere`) - Hosting
+- **BGE Cross-Encoder** (`RERANKER_BINDING=bge`) - local HuggingFace model, requires optional extra: `uv sync --extra huggingface`
 
-都通过 `get_reranker()` 单例暴露，`reset_reranker()` 在 settings 变化时调用。
+All are exposed through the `get_reranker()` singleton, and `reset_reranker()` is called when settings change.
 
-## 5. 流量治理：`TrafficController`
+## 5. Traffic management: `TrafficController`
 
-代码：`services/traffic_control.py`。
+Code: `services/traffic_control.py`.
 
-### 5.1 组成
+### 5.1 Composition
 
 ```python
 class TrafficController:
     def __init__(self, *, max_concurrency: int, rpm: int, ...):
         self._semaphore = asyncio.Semaphore(max_concurrency)
-        self._tokens = float(rpm)       # token bucket
+        self._tokens = float(rpm) # token bucket
         self._rpm = rpm
         self._breaker = CircuitBreaker(threshold=..., recovery_seconds=...)
         self._error_tracker = ErrorRateTracker(window_seconds=...)
 ```
 
-三个组件叠加：
+Three components superimposed:
 
-| 组件 | 作用 | 失败后果 |
+| Component | Function | Consequences of failure |
 |---|---|---|
-| `asyncio.Semaphore` | 并发上限（`LLM_MAX_CONCURRENCY`） | 超过即排队 |
-| Token bucket | 每分钟请求数（`LLM_RPM`） | 超过即 `await` 补发 token |
-| `CircuitBreaker` | 连续错误 ≥ 阈值 → open | open 时直接抛 `BreakerOpenError` |
-| `ErrorRateTracker` | 滑动窗口错误率 | 可配置告警 / 自动打开 breaker |
+| `asyncio.Semaphore` | Concurrency upper limit (`LLM_MAX_CONCURRENCY`) | Queue if exceeded |
+| Token bucket | Number of requests per minute (`LLM_RPM`) | If it exceeds, `await` will reissue the token |
+| `CircuitBreaker` | Continuous error ≥ threshold → open | Throw `BreakerOpenError` directly when open |
+| `ErrorRateTracker` | Sliding window error rate | Configurable alarm / automatically open breaker |
 
-### 5.2 使用方式
+### 5.2 How to use
 
 ```python
 async with traffic_controller:
     response = await llm.ainvoke(messages)
 ```
 
-`__aenter__` 流程：
-1. 检查 breaker 状态（open 且未到 recovery → 抛错；半开则放 1 个请求探测）
+`__aenter__` process:
+1. Check the breaker status (open and not yet in recovery → throw error; if half open, put 1 request detection)
 2. `await semaphore.acquire()`
-3. `await _acquire_token()` — token bucket 补发 / 阻塞等待
+3. `await _acquire_token()` — token bucket reissue/blocking wait
 
-`__aexit__` 根据 exception 情况上报 breaker / error tracker。
+`__aexit__` reports to the breaker / error tracker based on exception conditions.
 
-### 5.3 Token bucket 实现
+### 5.3 Token bucket implementation
 
 ```python
 async def _acquire_token(self):
@@ -207,21 +219,21 @@ async def _acquire_token(self):
         if self._tokens >= 1:
             self._tokens -= 1
             return
-    # 计算等待时长后 sleep 再重试
+    # Calculate the waiting time and then sleep again and try again
     wait = (1 - self._tokens) * (60 / self._rpm)
     await asyncio.sleep(wait)
     return await self._acquire_token()
 ```
 
-特点：
-- **平滑节流**：不是在整分钟边界集中放行
-- **公平性有限**：严格 FIFO 需要队列化，当前实现对大多数场景够用
+Features:
+- **Smooth Throttling**: Not focused on full-minute boundaries
+- **Limited fairness**: Strict FIFO requires queuing, and the current implementation is sufficient for most scenarios
 
-### 5.4 Circuit Breaker 状态机
+### 5.4 Circuit Breaker state machine
 
 ```
          ┌──── success ────┐
-         ▼                 │
+         ▼ │
 closed ─── err ≥ threshold ─► open
                               │
                recovery timer │
@@ -231,35 +243,35 @@ closed ─── err ≥ threshold ─► open
                               └── fail ──► open
 ```
 
-- **closed**：正常放行，统计错误
-- **open**：直接拒绝（`BreakerOpenError`），保护下游
-- **half-open**：放 1 个探测请求，成功则恢复，失败继续 open
+- **closed**: Normal release, statistical error
+- **open**: Directly reject (`BreakerOpenError`) to protect downstream
+- **half-open**: Put 1 detection request, restore if successful, continue to open if failed
 
-全部状态变化带 `threading.Lock`，可在多线程环境下使用。
+All state changes have `threading.Lock` and can be used in multi-threaded environments.
 
 ### 5.5 ErrorRateTracker
 
 ```python
-class ErrorRateTracker:
+classErrorRateTracker:
     """Sliding window of (timestamp, is_error)."""
     def record(self, is_error: bool): ...
     def error_rate(self) -> float: ...
 ```
 
-用于报表 / metrics，也可作为 breaker 的辅助决策。
+Used for reports/metrics, and can also be used as auxiliary decision-making for breaker.
 
-## 6. 重试策略
+## 6. Retry strategy
 
-`LLM_RETRY_MAX_ATTEMPTS` 控制单次调用的重试次数。重试在 `TrafficController` **外层**：每次重试都独立占用 semaphore + token，以便与限速协同。
+`LLM_RETRY_MAX_ATTEMPTS` controls the number of retries for a single call. Retry in `TrafficController` **Outer layer**: Each retry occupies semaphore + token independently to coordinate with speed limiting.
 
-推荐：
-- 短重试间隔 + 指数退避
-- 只对**瞬态错误**（429 / 5xx / network）重试，**不要**重试 4xx client error
-- 与 breaker 配合：breaker open 时直接放弃，不要跑完所有重试
+Recommended:
+- Short retry interval + exponential backoff
+- Only retry for **transient errors** (429/5xx/network), **Do not** retry 4xx client errors
+- Cooperate with breaker: give up directly when breaker opens, don't run through all retries
 
-## 7. 热切换流程（Settings API）
+## 7. Hot switching process (Settings API)
 
-`PUT /api/v1/settings` 修改模型相关字段后：
+`PUT /api/v1/settings` After modifying model related fields:
 
 ```python
 if binding_changed:
@@ -269,38 +281,38 @@ if binding_changed:
     reset_query_rewriter()
 
 if traffic_changed:
-    init_traffic_controller()  # 重建 semaphore / breaker
+    init_traffic_controller() # Rebuild semaphore / breaker
 ```
 
-**注意**：切换不会重启进程，也不会迁移已有向量。变更 embedding 维度必须紧跟 `rebuild-vectors`。
+**Note**: LLM-only provider changes can be applied live. Embedding model/dimension changes are rejected by live settings endpoints and require a controlled restart followed by manifest-driven durable reprocessing.
 
-## 8. 调优指南
+## 8. Tuning Guide
 
-| 场景 | 建议 |
+| Scenario | Suggestions |
 |---|---|
-| 本地小模型（Ollama） | `LLM_MAX_CONCURRENCY=2`，`LLM_RPM` 拉高（本地无 quota） |
-| OpenAI tier 1 | `LLM_RPM=500`，`LLM_MAX_CONCURRENCY=20` |
-| 高并发批处理 | 开 cache；把 `LLM_CACHE_MAX_SIZE` 放大到 2048+ |
-| 下游抖动严重 | 降 `LLM_CIRCUIT_BREAKER_THRESHOLD` 到 3，缩短 recovery |
-| 冷启动慢 | 在部署前预热：启动后立即发一条 warmup query |
-| 记忆提取场景 | 独立 `QUERY_REWRITE_MODEL`（轻量模型）减轻主 LLM 压力 |
+| Local small model (Ollama) | `LLM_MAX_CONCURRENCY=2`, `LLM_RPM` is raised (no quota locally) |
+| OpenAI tier 1 | `LLM_RPM=500`, `LLM_MAX_CONCURRENCY=20` |
+| High concurrent batch processing | Turn on cache; enlarge `LLM_CACHE_MAX_SIZE` to 2048+ |
+| Severe downstream jitter | Reduce `LLM_CIRCUIT_BREAKER_THRESHOLD` to 3, shorten recovery; runtime controller initialization applies both settings |
+| Cold start is slow | Warm up before deployment: send a warmup query immediately after startup |
+| Memory retrieval scenario | Independent `QUERY_REWRITE_MODEL` (lightweight model) reduces the pressure on the main LLM |
 
-## 9. 典型错误与处理
+## 9. Typical errors and handling
 
-| 错误 | 含义 | 处理 |
+| Error | Meaning | Processing |
 |---|---|---|
-| `BreakerOpenError` | 熔断器打开 | 等待 recovery 或检查下游健康 |
-| 429 | 被 provider 限速 | 降 `LLM_RPM` 或升级 tier |
-| `asyncio.TimeoutError` 在 embed | 网络 / 模型加载慢 | 调 http timeout / 预热 |
-| `dimension mismatch` in Chroma | embedding 维度变化 | rebuild-vectors |
-| `Unknown LLM binding: xxx` | `LLM_BINDING` 写错 | 检查拼写 / 是否在 `_LLM_CREATORS` |
-| 看似"卡住" | semaphore 被占满 | 升 `LLM_MAX_CONCURRENCY` / 查慢调用 |
+| `BreakerOpenError` | Circuit breaker open | Wait for recovery or check downstream health |
+| `429` | Provider rate limited the request | Lower `LLM_RPM` or upgrade the provider tier |
+| `asyncio.TimeoutError` in embed | Network / slow model loading | Adjust http timeout / warm-up |
+| `dimension mismatch` in Chroma | embedding dimension changed outside the live API | controlled restart; monitor `repair_pending` until durable reprocessing completes |
+| `Unknown LLM binding: xxx` | `LLM_BINDING` is written incorrectly | Check spelling / to see if / is in `_LLM_CREATORS` |
+| Looks like "stuck" | semaphore is full | l `LLM_MAX_CONCURRENCY` / check for slow calls |
 
-## 10. 扩展：添加新 provider
+## 10. Extension: Add new provider
 
-1. 在 `services/llm/_providers.py` 写一个工厂函数
-2. 用 `@register_llm_provider("myprovider")` 装饰
-3. 若是 OpenAI 兼容直接加进 `_OPENAI_COMPATIBLE_PROVIDERS` 字典即可
-4. 在 `backend/config/main.yaml` 添加示例配置
-5. 补单元测试：`tests/test_llm_providers.py`（mock 网络，断言 client kwargs）
-6. 更新 [`configuration.md`](./configuration.md) 的 provider 列表
+1. Write a factory function in `services/llm/_providers.py`
+2. Decorate with `@register_llm_provider("myprovider")`
+3. If OpenAI is compatible, just add it to the `_OPENAI_COMPATIBLE_PROVIDERS` dictionary.
+4. Add sample configuration in `backend/config/main.yaml`
+5. Supplement unit test: `tests/config/test_llm_parsing.py` (currently there is already a provider output parsing test; if a new provider is added, the corresponding mock test should be added in this directory)
+6. Update the provider list of [`configuration.md`](./configuration.md)

@@ -1,7 +1,7 @@
 """Tests for KnowledgeGraphService."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -101,8 +101,11 @@ class TestKnowledgeGraphService:
         assert result == {"entities_added": 0, "relations_added": 0}
 
     @pytest.mark.asyncio
-    async def test_extract_entities_calls_llm_and_stores(self):
+    async def test_extract_entities_calls_llm_and_stores(self, monkeypatch):
         user_id = "extract_kg_user"
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_GRAPH_ENABLED", True)
         mock_response = MagicMock()
         mock_response.content = json.dumps(
             {
@@ -132,6 +135,47 @@ class TestKnowledgeGraphService:
         assert result["entities_added"] >= 2
 
     @pytest.mark.asyncio
+    async def test_extract_entities_uses_authoritative_evidence_and_can_retry(self, monkeypatch):
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_GRAPH_ENABLED", True)
+        monkeypatch.setattr(settings, "MEMORY_EXTRACTION_MODE", "balanced")
+        response = MagicMock(
+            content=json.dumps(
+                {
+                    "entities": [
+                        {"name": "Alice", "type": "person"},
+                        {"name": "Orbit", "type": "project"},
+                    ],
+                    "relations": [{"subject": "Alice", "predicate": "leads", "object": "Orbit"}],
+                }
+            )
+        )
+        relation_store = AsyncMock(side_effect=RuntimeError("write failed"))
+        with (
+            patch("src.services.llm.cached_retry_invoke", return_value=response),
+            patch(
+                "src.services.knowledge_graph._service._store_entities",
+                new=AsyncMock(return_value=2),
+            ),
+            patch(
+                "src.services.knowledge_graph._service._store_relations",
+                new=relation_store,
+            ),
+            pytest.raises(RuntimeError, match="write failed"),
+        ):
+            await kg_service.extract_entities(
+                "u",
+                "Alice leads Orbit.",
+                "Bob leads Orbit.",
+                evidence_message_ids=[17],
+                raise_on_error=True,
+            )
+
+        assert relation_store.await_args.kwargs["evidence_text"] == "Alice leads Orbit."
+        assert relation_store.await_args.kwargs["evidence_message_ids"] == [17]
+
+    @pytest.mark.asyncio
     async def test_get_entity_context_returns_empty_when_disabled(self):
         with patch("src.services.knowledge_graph._service.settings") as mock_s:
             mock_s.KNOWLEDGE_GRAPH_ENABLED = False
@@ -139,8 +183,14 @@ class TestKnowledgeGraphService:
         assert ctx == ""
 
     @pytest.mark.asyncio
-    async def test_get_entity_context_filters_by_meeting(self):
+    async def test_get_entity_context_filters_by_meeting(self, monkeypatch):
         user_id = "scope_entity_user"
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_GRAPH_ENABLED", True)
+        # This case exercises the configurable global-entry cap. The product
+        # default is strict/fail-closed and is covered by scope-isolation tests.
+        monkeypatch.setattr(settings, "SCOPED_MEMORY_STRICT", False)
         with get_write_connection() as conn:
             eid_scoped = db.upsert_entity(
                 conn, user_id=user_id, name="alpha", entity_type="project"
@@ -169,3 +219,104 @@ class TestKnowledgeGraphService:
         assert "**alpha**" in context
         assert "**beta**" not in context
         assert "**gamma**" in context
+
+    @pytest.mark.asyncio
+    async def test_entity_context_filters_relation_scope_time_and_branch(self, monkeypatch):
+        user_id = "kg_relation_scope_user"
+        from src.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_GRAPH_ENABLED", True)
+        monkeypatch.setattr(settings, "SCOPED_MEMORY_STRICT", True)
+        with get_write_connection() as conn:
+            alice = db.upsert_entity(
+                conn,
+                user_id=user_id,
+                name="alice",
+                entity_type="person",
+                meeting_ids=[1, 2],
+                file_ids=[10, 20],
+            )
+            allowed = db.upsert_entity(
+                conn,
+                user_id=user_id,
+                name="allowed_a",
+                entity_type="project",
+                meeting_ids=[1],
+                file_ids=[10],
+            )
+            private = db.upsert_entity(
+                conn,
+                user_id=user_id,
+                name="private_b",
+                entity_type="project",
+                meeting_ids=[2],
+                file_ids=[20],
+            )
+            withdrawn = db.upsert_entity(
+                conn,
+                user_id=user_id,
+                name="withdrawn_a",
+                entity_type="project",
+                meeting_ids=[1],
+                file_ids=[10],
+            )
+            expired = db.upsert_entity(
+                conn,
+                user_id=user_id,
+                name="expired_a",
+                entity_type="project",
+                meeting_ids=[1],
+                file_ids=[10],
+            )
+            db.upsert_relation(
+                conn,
+                user_id=user_id,
+                subject_id=alice,
+                predicate="leads",
+                object_id=allowed,
+                source_session="child",
+            )
+            db.upsert_relation(
+                conn,
+                user_id=user_id,
+                subject_id=alice,
+                predicate="leads",
+                object_id=private,
+                source_session="other",
+            )
+            db.upsert_relation(
+                conn,
+                user_id=user_id,
+                subject_id=alice,
+                predicate="leads",
+                object_id=withdrawn,
+                source_session="parent",
+            )
+            db.upsert_relation(
+                conn,
+                user_id=user_id,
+                subject_id=alice,
+                predicate="leads",
+                object_id=expired,
+                valid_to="2000-01-01T00:00:00Z",
+            )
+
+        mock_vs = MagicMock()
+        mock_vs.similarity_search.return_value = [
+            {"entity_id": alice, "meeting_ids": [1, 2], "file_ids": [10, 20], "score": 0.1}
+        ]
+        with patch(
+            "src.services.knowledge_graph._service.get_entity_vectorstore", return_value=mock_vs
+        ):
+            context = await kg_service.get_entity_context(
+                user_id,
+                "alice",
+                meeting_ids=[1],
+                file_ids=[10],
+                excluded_session_ids={"parent"},
+            )
+
+        assert "allowed_a" in context
+        assert "private_b" not in context
+        assert "withdrawn_a" not in context
+        assert "expired_a" not in context

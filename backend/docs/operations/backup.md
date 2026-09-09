@@ -1,61 +1,36 @@
-# SQLite Backup Guide
+# Complete Backup Guide
 
-## Option 1: SQLite `.backup` command (recommended for manual backups)
+The supported backup unit is the complete application data generation:
 
-```bash
-# Create a consistent backup while the app is running
-sqlite3 data/meetings.db ".backup data/meetings.db.bak"
+- `meetings.db` — metadata, chats, memories, and knowledge graph;
+- `uploads/` — original user files;
+- `vectordb/` — derived Chroma indexes;
+- `SHA256SUMS` and `BACKUP_INFO` — integrity and format metadata.
 
-# Verify backup integrity
-sqlite3 data/meetings.db.bak "PRAGMA integrity_check;"
-```
-
-The `.backup` command creates a transactionally-consistent copy without locking the database. It works concurrently with WAL-mode reads and writes.
-
-## Option 2: Litestream (recommended for continuous backup)
-
-[Litestream](https://litestream.io/) replicates SQLite WAL changes to S3/GCS/Azure in near-real-time.
+Stop or quiesce the backend before taking a full backup. SQLite `.backup` is
+safe during writes, but SQLite, uploads, and Chroma cannot otherwise be
+guaranteed to represent the same point in time.
 
 ```bash
-# Install
-go install github.com/benbjohnson/litestream@latest
-
-# Configure (litestream.yml)
-dbs:
-  - path: data/meetings.db
-    replicas:
-      - url: s3://my-bucket/meeting-agent/db
-        retention: 72h
-        snapshot-interval: 1h
-
-# Run alongside the app
-litestream replicate
+docker compose stop backend
+./scripts/backup.sh data/meetings.db backups 30 data
+docker compose start backend
 ```
 
-## Option 3: File copy (stop the app first)
+The result is `backups/meeting-agent-YYYYmmdd-HHMMSS.tar.gz`. The script checks
+SQLite integrity before packaging and retains archives for 30 days by default.
+Archives are created with mode `600`, and the default root `backups/` directory
+is ignored by Git because it contains user data and may be very large. Supplying
+a custom backup directory makes the operator responsible for equivalent access
+control and source-control exclusion.
+The archive contains uploads, vector stores, and persistent custom Skills from
+`data/skills/`; built-in Skills remain part of the application image.
+It refuses a detected local Uvicorn process. `MEETING_AGENT_ALLOW_LIVE_BACKUP=1`
+is an explicit escape hatch that guarantees only database consistency, not a
+full application point-in-time snapshot.
 
-```bash
-# Only safe when the app is stopped
-systemctl stop meeting-agent
-cp data/meetings.db data/meetings.db.bak
-cp data/meetings.db-wal data/meetings.db-wal.bak 2>/dev/null || true
-cp data/meetings.db-shm data/meetings.db-shm.bak 2>/dev/null || true
-systemctl start meeting-agent
-```
+Keep `config/main.yaml` separately. Keep `.env` and other secrets in an
+encrypted secret manager rather than inside the application-data archive.
 
-## Scheduling
-
-```bash
-# Cron: backup every 6 hours
-0 */6 * * * sqlite3 /app/data/meetings.db ".backup /backups/meetings-$(date +\%Y\%m\%d-\%H\%M).db"
-```
-
-## What to back up
-
-| Path | Contents |
-|------|----------|
-| `data/meetings.db` | All metadata, chat history, memories, knowledge graph |
-| `data/chroma/` | Vector embeddings (can be rebuilt from DB via `/api/v1/settings/rebuild-vectors`) |
-| `data/uploads/` | Original uploaded files |
-| `config/main.yaml` | Non-secret configuration |
-| `.env` | Secrets (ensure this is encrypted at rest) |
+For continuous off-host SQLite replication, Litestream can complement these
+full snapshots, but it does not replace backups of uploads.

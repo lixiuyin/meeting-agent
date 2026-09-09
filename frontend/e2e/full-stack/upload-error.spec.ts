@@ -4,9 +4,9 @@
  * Prerequisites: Docker stack running at localhost:8307.
  * Run: npx playwright test upload-error.spec.ts
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
-const BASE = "http://localhost:8307";
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:8307";
 
 test.describe("Upload Error Handling", () => {
   const headers = {

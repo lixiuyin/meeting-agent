@@ -187,33 +187,17 @@ class TestUpdateSpeakers:
     @pytest.mark.asyncio
     async def test_update_speaker_names(self, client, auth_headers, tmp_path):
         mid, fid = _create_audio_meeting(tmp_path, segments=SAMPLE_SEGMENTS)
-        # Patch at the source module since _update_db_and_index does local imports.
-        # Also mock the background summary regeneration to avoid flaky LLM API calls.
-        # Force shadow-swap reindex to fail so the test deterministically exercises
-        # the fallback path (delete_meeting_chunks + index_meeting_segments).
-        with (
-            patch("src.services.rag.delete_meeting_chunks") as mock_del,
-            patch("src.services.rag.index_meeting_segments") as mock_idx,
-            patch(
-                "src.api.routers.meetings._speakers._regenerate_summaries_after_rename",
-                new_callable=lambda: lambda *a, **kw: AsyncMock(),
-            ),
-            patch(
-                "chromadb.PersistentClient",
-                side_effect=RuntimeError("force fallback path in test"),
-            ),
-        ):
-            async with client as c:
-                resp = await c.put(
-                    f"/api/v1/meetings/{mid}/files/{fid}/speakers",
-                    headers=auth_headers,
-                    json={
-                        "mappings": [
-                            {"speaker_code": "A", "speaker_name": "Alice"},
-                            {"speaker_code": "B", "speaker_name": "Bob"},
-                        ],
-                    },
-                )
+        async with client as c:
+            resp = await c.put(
+                f"/api/v1/meetings/{mid}/files/{fid}/speakers",
+                headers=auth_headers,
+                json={
+                    "mappings": [
+                        {"speaker_code": "A", "speaker_name": "Alice"},
+                        {"speaker_code": "B", "speaker_name": "Bob"},
+                    ],
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["file_id"] == fid
@@ -224,25 +208,22 @@ class TestUpdateSpeakers:
         mapping_dict = {m["speaker_code"]: m["speaker_name"] for m in mappings}
         assert mapping_dict["A"] == "Alice"
         assert mapping_dict["B"] == "Bob"
-        # Verify re-index was called
-        mock_del.assert_called_once_with(mid, file_id=fid)
-        mock_idx.assert_called_once()
+        with get_write_connection() as conn:
+            job = conn.execute(
+                "SELECT status FROM durable_jobs WHERE kind='speaker_rename' AND dedupe_key=?",
+                (f"speaker_rename:{mid}:{fid}",),
+            ).fetchone()
+        assert job["status"] == "pending"
 
     @pytest.mark.asyncio
     async def test_update_speakers_empty_mappings(self, client, auth_headers, tmp_path):
         mid, fid = _create_audio_meeting(tmp_path, segments=SAMPLE_SEGMENTS)
-        # Even with empty mappings, the endpoint calls delete_meeting_chunks
-        # which needs a Chroma vectorstore — mock it
-        with (
-            patch("src.services.rag.delete_meeting_chunks"),
-            patch("src.services.rag.index_meeting_segments"),
-        ):
-            async with client as c:
-                resp = await c.put(
-                    f"/api/v1/meetings/{mid}/files/{fid}/speakers",
-                    headers=auth_headers,
-                    json={"mappings": []},
-                )
+        async with client as c:
+            resp = await c.put(
+                f"/api/v1/meetings/{mid}/files/{fid}/speakers",
+                headers=auth_headers,
+                json={"mappings": []},
+            )
         # Empty mappings list is valid — returns success with 0 updates
         assert resp.status_code == 200
         assert "Updated 0 speaker name(s)" in resp.json()["message"]
@@ -252,20 +233,16 @@ class TestUpdateSpeakers:
         mid, fid = _create_audio_meeting(
             tmp_path, segments=SAMPLE_SEGMENTS, transcript="old transcript"
         )
-        with (
-            patch("src.services.rag.delete_meeting_chunks"),
-            patch("src.services.rag.index_meeting_segments"),
-        ):
-            async with client as c:
-                resp = await c.put(
-                    f"/api/v1/meetings/{mid}/files/{fid}/speakers",
-                    headers=auth_headers,
-                    json={
-                        "mappings": [
-                            {"speaker_code": "A", "speaker_name": "Alice"},
-                        ],
-                    },
-                )
+        async with client as c:
+            resp = await c.put(
+                f"/api/v1/meetings/{mid}/files/{fid}/speakers",
+                headers=auth_headers,
+                json={
+                    "mappings": [
+                        {"speaker_code": "A", "speaker_name": "Alice"},
+                    ],
+                },
+            )
         assert resp.status_code == 200
         # Verify transcript was updated (should contain "Alice" not "A")
         from src.core.database import get_meeting_file

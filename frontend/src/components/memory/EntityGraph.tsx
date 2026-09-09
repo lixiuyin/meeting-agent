@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useIntl } from "react-intl";
 import {
   Badge,
@@ -6,7 +6,6 @@ import {
   Collapse,
   Empty,
   Input,
-  List,
   Modal,
   Popconfirm,
   Row,
@@ -25,9 +24,11 @@ import {
 } from "@ant-design/icons";
 import {
   deleteEntity,
-  listEntities,
+  batchDeleteEntities,
+  listAllEntities,
   mergeEntities,
   formatApiErrorMessage,
+  isRequestCanceled,
   type EntityItem,
 } from "../../api/client";
 import { useUndoStack } from "../../hooks/useUndoStack";
@@ -64,6 +65,7 @@ export default function EntityGraph({ userId }: EntityGraphProps) {
   const [mergeTarget, setMergeTarget] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [merging, setMerging] = useState(false);
+  const loadAbortRef = useRef<AbortController | null>(null);
   const { enqueueUndo } = useUndoStack();
   const mergeDesc = formatMessage({ id: "memory.entity.mergeDesc" }, { count: selectedNames.size });
   const selectedCountLabel = formatMessage(
@@ -72,16 +74,28 @@ export default function EntityGraph({ userId }: EntityGraphProps) {
   );
 
   const load = useCallback(async () => {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     setLoading(true);
     try {
-      const res = await listEntities(userId, typeFilter);
-      setEntities(res.data.entities);
+      const all = await listAllEntities(userId, {
+        entityType: typeFilter,
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) setEntities(all);
     } catch (err) {
-      message.error(formatApiErrorMessage(err, formatMessage({ id: "memory.entity.loadFailed" })));
+      if (!isRequestCanceled(err)) {
+        message.error(
+          formatApiErrorMessage(err, formatMessage({ id: "memory.entity.loadFailed" })),
+        );
+      }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [userId, typeFilter, formatMessage]);
+
+  useEffect(() => () => loadAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -116,28 +130,31 @@ export default function EntityGraph({ userId }: EntityGraphProps) {
 
   const handleBatchDelete = async (names: string[]) => {
     if (names.length === 0) return;
-    const results = await Promise.allSettled(names.map((n) => deleteEntity(n, userId)));
-    const succeeded: string[] = [];
-    const failed: string[] = [];
-    names.forEach((n, i) => {
-      if (results[i].status === "fulfilled") succeeded.push(n);
-      else failed.push(n);
-    });
-    if (succeeded.length > 0) {
-      message.success(
-        formatMessage({ id: "memory.entity.batchDeleted" }, { count: succeeded.length }),
-      );
+    try {
+      const response = await batchDeleteEntities(names, userId);
+      if (response.data.deleted > 0) {
+        message.success(
+          formatMessage({ id: "memory.entity.batchDeleted" }, { count: response.data.deleted }),
+        );
+      }
       await load();
-    }
-    if (failed.length > 0) {
+      if (response.data.missing.length > 0) {
+        message.warning(
+          formatMessage(
+            { id: "memory.entity.batchDeletePartial" },
+            { failed: response.data.missing.length, total: names.length },
+          ),
+        );
+      }
+      setSelectedNames(new Set(response.data.missing));
+    } catch {
       message.error(
         formatMessage(
           { id: "memory.entity.batchDeletePartial" },
-          { failed: failed.length, total: names.length },
+          { failed: names.length, total: names.length },
         ),
       );
     }
-    setSelectedNames(new Set());
   };
 
   const toggleSelection = (name: string) => {
@@ -277,7 +294,6 @@ export default function EntityGraph({ userId }: EntityGraphProps) {
           <Empty description={noEntitiesMsg} />
         ) : (
           <Collapse
-            defaultActiveKey={Object.keys(grouped)}
             items={Object.entries(grouped).map(([type, items]) => ({
               key: type,
               label: (
@@ -287,19 +303,18 @@ export default function EntityGraph({ userId }: EntityGraphProps) {
                 </Space>
               ),
               children: (
-                <List
-                  size="small"
-                  dataSource={items}
-                  renderItem={(ent) => (
+                <div className="entity-list" role="list">
+                  {items.map((ent) => (
                     <EntityRow
+                      key={`${ent.entity_type}:${ent.name}`}
                       entity={ent}
                       userId={userId}
                       onDelete={handleDelete}
                       isSelected={selectedNames.has(ent.name)}
                       onToggleSelect={() => toggleSelection(ent.name)}
                     />
-                  )}
-                />
+                  ))}
+                </div>
               ),
             }))}
           />

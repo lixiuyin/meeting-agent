@@ -49,7 +49,7 @@ def test_vector_retrieve_falls_back_to_bm25_on_timeout(monkeypatch):
     slow_vs = _slow_vectorstore(delay=2.0)
     bm25_hits = []
 
-    def _fake_bm25(query, meeting_ids, file_ids, k, speaker_names=None):
+    def _fake_bm25(query, meeting_ids, file_ids, k, speaker_names=None, user_id=None):
         bm25_hits.append(query)
         return [{"content": "from bm25", "metadata": {"meeting_id": 1}, "score": 0.5}]
 

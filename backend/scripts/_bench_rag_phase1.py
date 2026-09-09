@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import statistics
 from pathlib import Path
 from typing import Any
-
-import statistics
 
 from ._bench_amicorpus import ingest_all_amicorpus
 from ._bench_chunk_configs import (
@@ -85,7 +84,6 @@ async def _run_single_config_impl(
     }
 
     with bench_environment():
-        from src.core.config import settings
         from src.core.database import close_all_connections, init_db
         from src.services.rag import retrieve
 
@@ -98,8 +96,6 @@ async def _run_single_config_impl(
         # Ingest all 4 AMI meetings
         fixture_map = await ingest_all_amicorpus()
         meeting_ids = [mid for mid, _ in fixture_map.values()]
-        file_ids = [fid for _, fid in fixture_map.values()]
-        mid_to_name = {mid: name for name, (mid, _) in fixture_map.items()}
 
         # Load chunks and compute dynamic expected chunks
         all_chunks = load_chunks_from_vectorstore(meeting_ids=meeting_ids)
@@ -111,7 +107,9 @@ async def _run_single_config_impl(
             from src.services.embedder import get_embeddings
 
             embeddings = get_embeddings()
-            logger.info("Pre-warming embedding cache for %d unique queries ...", len(unique_queries))
+            logger.info(
+                "Pre-warming embedding cache for %d unique queries ...", len(unique_queries)
+            )
             for q in unique_queries:
                 try:
                     embeddings.embed_query(q)
@@ -130,18 +128,12 @@ async def _run_single_config_impl(
             # that scoped retrieve() will never see.
             scoped_chunks = all_chunks
             if expected_mids:
-                scoped_chunks = [
-                    c for c in scoped_chunks if c.get("meeting_id") in expected_mids
-                ]
+                scoped_chunks = [c for c in scoped_chunks if c.get("meeting_id") in expected_mids]
             if expected_fids:
-                scoped_chunks = [
-                    c for c in scoped_chunks if c.get("file_id") in expected_fids
-                ]
+                scoped_chunks = [c for c in scoped_chunks if c.get("file_id") in expected_fids]
 
             # Compute expected chunks for this query under current chunk strategy
-            expected_chunk_ids = set(
-                compute_expected_chunks(item, scoped_chunks, method="hybrid")
-            )
+            expected_chunk_ids = set(compute_expected_chunks(item, scoped_chunks, method="hybrid"))
 
             # If golden specifies meeting/file scope, use it; otherwise use all
             target_mids = expected_mids if expected_mids else meeting_ids
@@ -156,19 +148,19 @@ async def _run_single_config_impl(
             )
             retrieved_ids = _retrieve_ids(retrieved)
 
-            results["scoped"].append({
-                "query_id": item["id"],
-                "expected_chunks": list(expected_chunk_ids),
-                "retrieved_ids": retrieved_ids,
-                **_evaluate_retrieval(retrieved_ids, expected_chunk_ids, top_k),
-            })
+            results["scoped"].append(
+                {
+                    "query_id": item["id"],
+                    "expected_chunks": list(expected_chunk_ids),
+                    "retrieved_ids": retrieved_ids,
+                    **_evaluate_retrieval(retrieved_ids, expected_chunk_ids, top_k),
+                }
+            )
 
         # --- Unscoped queries ---
         for item in unscoped_items:
             query = item["query"]
-            expected_chunk_ids = set(
-                compute_expected_chunks(item, all_chunks, method="hybrid")
-            )
+            expected_chunk_ids = set(compute_expected_chunks(item, all_chunks, method="hybrid"))
             expected_fids = set(item.get("expected_file_ids", []))
 
             retrieved, _qa = retrieve(
@@ -180,20 +172,24 @@ async def _run_single_config_impl(
             retrieved_ids = _retrieve_ids(retrieved)
 
             # File coverage
-            retrieved_file_ids = list(dict.fromkeys(
-                r.get("metadata", {}).get("file_id")
-                for r in retrieved
-                if r.get("metadata", {}).get("file_id") is not None
-            ))
+            retrieved_file_ids = list(
+                dict.fromkeys(
+                    r.get("metadata", {}).get("file_id")
+                    for r in retrieved
+                    if r.get("metadata", {}).get("file_id") is not None
+                )
+            )
             file_cov = file_recall_at_k(retrieved_file_ids, expected_fids, top_k)
 
-            results["unscoped"].append({
-                "query_id": item["id"],
-                "expected_chunks": list(expected_chunk_ids),
-                "retrieved_ids": retrieved_ids,
-                "file_coverage": file_cov,
-                **_evaluate_retrieval(retrieved_ids, expected_chunk_ids, top_k),
-            })
+            results["unscoped"].append(
+                {
+                    "query_id": item["id"],
+                    "expected_chunks": list(expected_chunk_ids),
+                    "retrieved_ids": retrieved_ids,
+                    "file_coverage": file_cov,
+                    **_evaluate_retrieval(retrieved_ids, expected_chunk_ids, top_k),
+                }
+            )
 
     return results
 
@@ -201,11 +197,8 @@ async def _run_single_config_impl(
 def _aggregate_metrics(rows: list[dict]) -> dict[str, float]:
     if not rows:
         return {}
-    keys = [k for k in rows[0].keys() if k not in ("query_id", "expected_chunks", "retrieved_ids")]
-    return {
-        k: float(statistics.mean([r[k] for r in rows if k in r]))
-        for k in keys
-    }
+    keys = [k for k in rows[0] if k not in ("query_id", "expected_chunks", "retrieved_ids")]
+    return {k: float(statistics.mean([r[k] for r in rows if k in r])) for k in keys}
 
 
 def run_single_config(
@@ -224,9 +217,8 @@ def run_single_config(
 
     scoped_metrics = _aggregate_metrics(run_result["scoped"])
     unscoped_metrics = _aggregate_metrics(run_result["unscoped"])
-    combined_recall = (
-        0.5 * scoped_metrics.get(f"recall@{top_k}", 0.0)
-        + 0.5 * unscoped_metrics.get(f"recall@{top_k}", 0.0)
+    combined_recall = 0.5 * scoped_metrics.get(f"recall@{top_k}", 0.0) + 0.5 * unscoped_metrics.get(
+        f"recall@{top_k}", 0.0
     )
 
     return {
@@ -259,16 +251,20 @@ def run_phase1(
         scoped_metrics = _aggregate_metrics(run_result["scoped"])
         unscoped_metrics = _aggregate_metrics(run_result["unscoped"])
 
-        combined_recall = 0.5 * scoped_metrics.get(f"recall@{top_k}", 0.0) + 0.5 * unscoped_metrics.get(f"recall@{top_k}", 0.0)
+        combined_recall = 0.5 * scoped_metrics.get(
+            f"recall@{top_k}", 0.0
+        ) + 0.5 * unscoped_metrics.get(f"recall@{top_k}", 0.0)
 
-        config_results.append({
-            "label": label,
-            "config": run_result["config"],
-            "scoped_metrics": scoped_metrics,
-            "unscoped_metrics": unscoped_metrics,
-            "combined_recall": combined_recall,
-            "rows": run_result,
-        })
+        config_results.append(
+            {
+                "label": label,
+                "config": run_result["config"],
+                "scoped_metrics": scoped_metrics,
+                "unscoped_metrics": unscoped_metrics,
+                "combined_recall": combined_recall,
+                "rows": run_result,
+            }
+        )
         logger.info("  combined_recall@%d = %.4f", top_k, combined_recall)
 
     # Select top-2, enforcing diversity (different methods)
@@ -295,6 +291,11 @@ def run_phase1(
     return {
         "phase": 1,
         "top_k": top_k,
+        "evidence_quality": {
+            "grade": "tuning_only",
+            "release_ready": False,
+            "limitations": ["configuration_selected_and_scored_on_same_dataset"],
+        },
         "all_results": config_results,
         "top_2": top_2,
     }

@@ -1,164 +1,171 @@
-# RAG Benchmark 测试计划：Chunk 策略 × 检索策略
+# RAG Benchmark test plan: Chunk strategy × retrieval strategy
 
-## 1. 概述
+> **Design specification, not current production defaults or release evidence.**
+> The two-phase audio runner is implemented; current commands and metric
+> semantics are documented in
+> [`benchmark_config_guide.md`](benchmark_config_guide.md) and
+> [`backend/docs/benchmarking.md`](../../backend/docs/benchmarking.md).
 
-本文档定义了一个两阶段 benchmark，用于系统性地为每种文件模态选择最优的 **Chunk 策略** 与 **检索策略** 组合。
+## 1. Overview
 
-- **Phase 1 — Chunk 策略对比**：固定检索配置为 `Hybrid + Rerank`，对比每种模态下的 chunk 方法，选出 top-2。
-- **Phase 2 — 检索策略 Grid Search**：对每种模态的 top-2 chunk 策略，分别在 **Scoped（限定范围）** 和 **Unscoped（Broad Recall）** 场景下进行检索配置的网格搜索。
+This document defines a two-stage benchmark for systematically selecting the optimal **Chunk Strategy** and **Retrieval Strategy** combination for each file mode.
 
-**为什么分两阶段，而不是一次性做全量网格？**
+- **Phase 1 — Chunk strategy comparison**: The fixed retrieval configuration is `Hybrid + Rerank`, compare the chunk methods in each mode, and select top-2.
+- **Phase 2 — Retrieval strategy Grid Search**: For the top-2 chunk strategy of each mode, conduct a grid search of the retrieval configuration in the **Scoped (limited range)** and **Unscoped (Broad Recall)** scenarios respectively.
 
-Chunk 策略决定了索引单元的 *粒度与元数据丰富度*，检索策略决定了 *如何查找* 这些单元。两者之间存在显著的交互效应（例如：BM25 更受益于细粒度 chunk；reranker 的行为会随 chunk 大小变化），但如果在第一阶段就测试所有组合，矩阵规模将不可控。Phase 1 先缩小 chunk 的设计空间，Phase 2 再在该空间内评估交互效应。
+**Why do it in two stages instead of doing the entire grid at once?**
+
+The Chunk strategy determines the *granularity and metadata richness* of the index units, and the retrieval strategy determines *how to find* these units. There are significant interactive effects between the two (for example: BM25 benefits more from fine-grained chunks; the behavior of the reranker changes with chunk size), but if all combinations are tested in the first stage, the matrix size will be uncontrollable. Phase 1 first reduces the chunk design space, and Phase 2 then evaluates the interaction effects within this space.
 
 ---
 
-## 2. Phase 1：Chunk 策略对比
+## 2. Phase 1: Chunk strategy comparison
 
-### 2.1 设计原则
+### 2.1 Design principles
 
-- **固定检索配置**：使用 `HybridStrategy` + `Reranker ON`（生产默认配置），以隔离 chunk 本身的影响。
-- **固定 Scope 类型**：分别在 `Scoped` 和 `Unscoped` 数据集上测试，最终通过加权平均分数选出 top-2。
-- **纯文本变体**：对于结构化模态（视频/音频、文档），需额外生成一条纯文本索引管线，将提取出的 `text` 字段（不含 segment/page 结构）直接送入 `index_meeting()`，与原生 chunk 方法做对比。
+- **Fixed retrieval configuration**: Use `HybridStrategy` + `Reranker ON` as
+  this experiment's controlled comparison setting to isolate the impact of the
+  chunk itself. The repository runtime default currently leaves reranking
+  disabled.
+- **Fixed Scope type**: Tested on `Scoped` and `Unscoped` data sets respectively, and finally selected top-2 by weighted average score.
+- **Plain text variant**: For structured modalities (video/audio, document), an additional plain text index pipeline needs to be generated, and the extracted `text` field (without segment/page structure) is directly sent to `index_meeting()` for comparison with the native chunk method.
 
-### 2.2 模态 → 原生 Chunk 映射
+### 2.2 Modal → Native Chunk Mapping
 
-| 模态 | 文件类型 | Processor 输出 | 原生 Chunk 函数 | 原生 Chunk 名称 |
+| Modal | File Type | Processor Output | Native Chunk Function | Native Chunk Name |
 |------|---------|---------------|----------------|----------------|
-| **视频 / 音频** | `video`, `audio` | `FileArtefact.segments`（带 speaker/timestamp 的 ASR 转录文本） | `index_meeting_segments()` | **Segment-Aware** |
-| **文档** | `pdf`, `ppt`, `doc`, `xls`, `csv` | `FileArtefact.parsed_doc`（按页组织的文本 + 表格 + 图片资源） | `index_meeting_pages()` | **Page-Aware** |
-| **图片** | `png`, `jpg`, `jpeg`, `webp` | `FileArtefact.segments`（单条 segment，包含 caption 与 OCR 文本） | `index_meeting_segments()` | **Caption-OCR Flat** |
+| **Video/Audio** | `video`, `audio` | `FileArtefact.segments` (ASR transcript with speaker/timestamp) | `index_meeting_segments()` | **Segment-Aware** |
+| **Document** | `pdf`, `ppt`, `doc`, `xls`, `csv` | `FileArtefact.parsed_doc` (text + table + image resources organized by page) | `index_meeting_pages()` | **Page-Aware** |
+| **Picture** | `png`, `jpg`, `jpeg`, `webp` | `FileArtefact.segments` (single segment, including caption and OCR text) | `index_meeting_segments()` | **Caption-OCR Flat** |
 
-> **图片说明**：图片 Processor 会生成一个包含 caption 与 OCR 拼接文本的 `segment`。`index_meeting_segments()` 会将其视为一个语义组处理；若文本长度超过 `CHUNK_SIZE`，单 segment 场景下也不会进一步拆分（单 segment 的边界逻辑）。因此图片内容通常被索引为 **1–2 个 chunk**。
+> **Image description**: The image processor will generate a `segment` containing caption and OCR spliced text. `index_meeting_segments()` will treat it as a semantic group; if the text length exceeds `CHUNK_SIZE`, it will not be further split in a single segment scenario (single segment boundary logic). Therefore image content is usually indexed into **1–2 chunks**.
 
-### 2.3 每种模态需测试的 Chunk 方法
+### 2.3 Chunk methods to be tested for each mode
 
-对每个模态，均测试以下 **3 种 chunk 方法**：
+For each mode, the following **3 chunk methods** are tested:
 
-| 编号 | 方法 | 说明 | 实现方式 |
-|------|------|------|---------|
-| A | **Native（原生）** | 该模态的默认 chunk 路径（见上表） | 使用现有 pipeline 原样执行 |
-| B | **Pure-Text Flat（纯文本平铺）** | 提取的纯文本 + `RecursiveCharacterTextSplitter`（`PARENT_CHILD_ENABLED=False`） | 将 `FileArtefact.text`（或 `parsed_doc.to_text()`）送入 `index_meeting()` |
-| C | **Pure-Text Parent-Child（纯文本父子）** | 提取的纯文本 + 两层拆分（`PARENT_CHILD_ENABLED=True`） | 将 `FileArtefact.text`（或 `parsed_doc.to_text()`）送入 `index_meeting()` 并启用父子配置 |
+| Number | Method | Description | Implementation |
+|------|------|------|----------|
+| A | **Native** | The default chunk path for this mode (see table above) | Use the existing pipeline to execute as is |
+| B | **Pure-Text Flat** | Extracted plain text + `RecursiveCharacterTextSplitter` (`PARENT_CHILD_ENABLED=False`) | Feed `FileArtefact.text` (or `parsed_doc.to_text()`) into `index_meeting()` |
+| C | **Pure-Text Parent-Child** | Extracted plain text + two-level split (`PARENT_CHILD_ENABLED=True`) | Feed `FileArtefact.text` (or `parsed_doc.to_text()`) into `index_meeting()` and enable parent-child configuration |
 
-### 2.4 参数预设
+### 2.4 Parameter preset
 
-对每种方法，测试 **3 组参数预设**，覆盖小/中/大三种 chunk 粒度。
+For each method, **3 sets of parameter presets** are tested, covering three chunk granularities of small/medium/large.
 
-#### Flat / Page-Aware / Caption-OCR Flat 参数
+#### Flat / Page-Aware / Caption-OCR Flat parameters
 
-| 预设 | `CHUNK_SIZE` | `CHUNK_OVERLAP` | 说明 |
-|------|-------------|-----------------|------|
-| **S** (Small) | 512 | 64 | 高粒度；chunk 数量多；有利于关键词/BM25 匹配 |
-| **M** (Medium) | 1024 | 128 | **当前默认值**；均衡配置 |
-| **L** (Large) | 2048 | 256 | 低粒度；chunk 数量少；保留更多 chunk 内上下文 |
+| Default | `CHUNK_SIZE` | `CHUNK_OVERLAP` | Description |
+|------|-------------|------------------|------|
+| **S** (Small) | 512 | 64 | High granularity; large number of chunks; good for keyword/BM25 matching |
+| **M** (Medium) | 1024 | 128 | Plan baseline; balanced configuration |
+| **L** (Large) | 2048 | 256 | Low granularity; small number of chunks; retain more intra-chunk context |
 
-#### Parent-Child 参数
+#### Parent-Child parameter
 
-| 预设 | Parent `CHUNK_SIZE` | Parent Overlap | Child `CHILD_CHUNK_SIZE` | Child Overlap |
+| Default | Parent `CHUNK_SIZE` | Parent Overlap | Child `CHILD_CHUNK_SIZE` | Child Overlap |
 |------|--------------------|----------------|--------------------------|---------------|
-| **S** | 1024 | 128 | 256 | 32 | 小 parent，细粒度 child |
-| **M** | 1024 | 128 | 256 | 32 | 与 S 相同（parent-child 对 parent size 敏感度较低） |
-| **L** | 2048 | 256 | 512 | 64 | 大 parent，大 child；总单元数更少 |
+| **S** | 1024 | 128 | 256 | 32 | small parent, fine-grained child |
+| **M** | 1024 | 128 | 256 | 32 | Same as S (parent-child is less sensitive to parent size) |
+| **L** | 2048 | 256 | 512 | 64 | Big parent, big child; fewer total units |
 
-> **说明**：Parent-Child 实际只需测试 **S** 和 **L** 两组（跳过 M），因为 child size 主导了检索粒度，而 parent size 主要影响 context window 的使用。
+> **Note**: Parent-Child actually only needs to test **S** and **L** two groups (skip M), because child size dominates the retrieval granularity, while parent size mainly affects the use of context window.
 
-#### Segment-Aware 参数
+#### Segment-Aware Parameters
 
-| 预设 | `CHUNK_SIZE`（每组上限） | `AUDIO_SEMANTIC_BOUNDARY_ENABLED` | `AUDIO_SEMANTIC_BOUNDARY_THRESHOLD` | 说明 |
-|------|------------------------|-----------------------------------|-------------------------------------|------|
-| **S** | 512 | `True` | 0.5 | 小分组，严格语义边界 |
-| **M** | 1024 | `True` | 0.5 | 默认配置；中等分组，标准边界敏感度 |
-| **L** | 2048 | `False` | — | 大尺寸上限，**关闭语义边界**（纯基于大小的分组） |
-| **M-Loose** | 1024 | `True` | 0.3 | 更多边界 → 更小的语义组 |
-| **M-Strict** | 1024 | `True` | 0.7 | 更少边界 → 更大的语义组 |
+| Default | `CHUNK_SIZE` (maximum limit per group) | `AUDIO_SEMANTIC_BOUNDARY_ENABLED` | `AUDIO_SEMANTIC_BOUNDARY_THRESHOLD` | Description |
+|------|------------------------|-----------------------------------|----------------------------------------|------|
+| **S** | 512 | `True` | 0.5 | Small grouping, strict semantic boundaries |
+| **M** | 1024 | `True` | 0.5 | Plan baseline; medium grouping, standard boundary sensitivity |
+| **L** | 2048 | `False` | — | Large size limit, **turn off semantic boundaries** (pure size-based grouping) |
+| **M-Loose** | 1024 | `True` | 0.3 | More bounds → smaller semantic groups |
+| **M-Strict** | 1024 | `True` | 0.7 | Fewer boundaries → larger semantic groups |
 
-> **说明**：Segment-Aware 的核心对比为 **S**、**M**、**L** 三组。**M-Loose** 和 **M-Strict** 为可选项——仅在视频/音频是重点模态且预期边界敏感度会产生显著影响时加入。
+> **Note**: The core comparisons of Segment-Aware are three groups: **S**, **M**, and **L**. **M-Loose** and **M-Strict** are optional - only add if video/audio is the focused modality and boundary sensitivity is expected to have a significant impact.
 
-### 2.5 Phase 1 测试矩阵汇总
+### 2.5 Phase 1 test matrix summary
 
-| 模态 | 方法 A（Native） | 方法 B（Flat） | 方法 C（Parent-Child） | 单次运行数 |
-|------|-----------------|---------------|----------------------|----------|
-| 视频 / 音频 | Segment-Aware × 3–5 组预设 | Flat × 3 组预设 | Parent-Child × 2 组预设 | **8–10** |
-| 文档 | Page-Aware × 3 组预设 | Flat × 3 组预设 | Parent-Child × 2 组预设 | **8** |
-| 图片 | Caption-OCR × 3 组预设 | Flat × 3 组预设 | Parent-Child × 2 组预设 | **8** |
+| Modal | Method A (Native) | Method B (Flat) | Method C (Parent-Child) | Number of single runs |
+|------|------------------|---------------|-----------------------|----------|
+| Video/Audio | Segment-Aware × 3–5 presets | Flat × 3 presets | Parent-Child × 2 presets | **8–10** |
+| Documentation | Page-Aware × 3 presets | Flat × 3 presets | Parent-Child × 2 presets | **8** |
+| Image | Caption-OCR × 3 presets | Flat × 3 presets | Parent-Child × 2 presets | **8** |
 
-每组运行均在 **Scoped** 和 **Unscoped** 两份数据集上各执行一次。
+Each set of runs is performed once on both **Scoped** and **Unscoped** datasets.
 
-### 2.6 Top-2 筛选标准
+### 2.6 Top-2 filtering criteria
 
-对每个模态的每种 "chunk 方法 + 预设" 组合，计算：
+For each "chunk method + preset" combination for each modal, calculate:
 
 ```
 Combined_Recall@10 = 0.5 × Scoped_Recall@10 + 0.5 × Unscoped_Recall@10
-```
+```Sort by `Combined_Recall@10` from high to low and select the **top-2** default. If two presets belong to the same **method** (for example, both are Flat), only the best preset in that method will be retained, and the next best preset of a different method will be taken. This ensures that the Phase 2 grid covers diverse chunk architectures.
 
-按 `Combined_Recall@10` 从高到低排序，选取 **top-2** 预设。若两个预设属于同一 **方法**（例如都是 Flat），则只保留该方法中的最优预设，并顺延取不同方法的下一个最优预设。这样可以确保 Phase 2 的网格覆盖多样化的 chunk 架构。
-
-**平局打破规则**：若 Recall@10 相同，优先选择 `File Coverage@10`（仅 Unscoped）更高的方法。
+**Tie Breaker**: If Recall@10 is the same, the method with higher `File Coverage@10` (Unscoped only) will be preferred.
 
 ---
 
-## 3. Phase 2：检索策略 Grid Search
+## 3. Phase 2: Retrieval strategy Grid Search
 
-### 3.1 为什么在 Phase 1 之后还要做 Grid Search？
+### 3.1 Why do we need to do Grid Search after Phase 1?
 
-Chunk 策略与检索策略**并非独立**：
+Chunk strategy and retrieval strategy are not independent:
 
-1. **BM25（Hybrid）受益于粒度**：细粒度的 flat chunk 能产生更多离散的关键词目标，而大段语义 segment 的关键词密度较低。在 Hybrid 下表现优异的 chunk 方法，在 Native 下未必最优。
-2. **Reranker 的区分度受 chunk size 影响**：Reranker 基于完整 chunk 文本打分。若 chunk 过大，相关句子可能被淹没在冗余内容中，导致 reranker 分数被拉低，从而影响 cutoff 判断。
-3. **Parent-Child 改变了检索单元**：实际被检索的是 child chunk，但 parent chunk 提供扩展上下文。对 child chunk 做 rerank 与对 parent chunk 做 rerank 的效果不同；reranker 对 Parent-Child 的相对价值高于 Flat。
-4. **Scope 改变了 Hybrid 的价值**：在 Scoped 模式下候选池很小（仅几十个 chunk），Native 与 Hybrid 差异不大；在 Unscoped Broad Recall 下候选池是全局的（数千个 chunk），BM25 的关键词精确匹配价值被放大。
+1. **BM25 (Hybrid) benefits from granularity**: fine-grained flat chunks can generate more discrete keyword targets, while large semantic segments have lower keyword density. The chunk method that performs well under Hybrid may not be optimal under Native.
+2. **Reranker’s discrimination is affected by chunk size**: Reranker scores based on the complete chunk text. If the chunk is too large, the relevant sentences may be submerged in redundant content, causing the reranker score to be lowered, thus affecting the cutoff judgment.
+3. **Parent-Child changes the retrieval unit**: the child chunk is actually retrieved, but the parent chunk provides extended context. Reranking child chunks has different effects than reranking parent chunks; the relative value of reranker to Parent-Child is higher than Flat.
+4. **Scope changes the value of Hybrid**: In Scoped mode, the candidate pool is very small (only a few dozen chunks), and there is not much difference between Native and Hybrid; under Unscoped Broad Recall, the candidate pool is global (thousands of chunks), and the value of BM25's exact keyword matching is amplified.
 
-因此，不能假设在 `Hybrid+Rerank` 下最优的 chunk 策略，在 `Native+Rerank` 或 `Hybrid`（无 rerank）下依然最优。必须联合优化。
+Therefore, it cannot be assumed that the optimal chunk strategy under `Hybrid+Rerank` will still be optimal under `Native+Rerank` or `Hybrid` (without rerank). Must be jointly optimized.
 
 ### 3.2 Scoped Grid Search
 
-对每个模态，取其 **Phase 1 top-2 chunk 策略**，运行以下组合：
+For each modality, take its **Phase 1 top-2 chunk strategy** and run the following combinations:
 
-| 检索策略 | Reranker | 配置项 | 说明 |
+| Retrieval Strategy | Reranker | Configuration Items | Description |
 |---------|----------|--------|------|
-| `NativeStrategy` | OFF | `RAG_RETRIEVER_PROVIDER=native`, `RERANKER_BINDING=""` | 纯向量基线 |
-| `NativeStrategy` | ON | `RAG_RETRIEVER_PROVIDER=native`, `RERANKER_BINDING=cohere/bge` | 向量 + rerank |
-| `HybridStrategy` | OFF | `RAG_RETRIEVER_PROVIDER=hybrid`, `RERANKER_BINDING=""` | 向量 + BM25（RRF 融合） |
-| `HybridStrategy` | ON | `RAG_RETRIEVER_PROVIDER=hybrid`, `RERANKER_BINDING=cohere/bge` | **生产默认配置** |
+| `VectorStrategy` | OFF | `RAG_RETRIEVER_PROVIDER=vector`, `RERANKER_BINDING=""` | Pure vector baseline |
+| `VectorStrategy` | ON | `RAG_RETRIEVER_PROVIDER=vector`, `RERANKER_BINDING=cohere/bge` | vector + rerank |
+| `HybridStrategy` | OFF | `RAG_RETRIEVER_PROVIDER=hybrid`, `RERANKER_BINDING=""` | Vector + BM25 (RRF fusion) |
+| `HybridStrategy` | ON | `RAG_RETRIEVER_PROVIDER=hybrid`, `RERANKER_BINDING=cohere/bge` | Experimental hybrid + reranker cell; not the repository runtime default |
 
-**执行方式**：调用检索时显式传入 `meeting_ids=[mid]`（或 `file_ids=[fid]`），强制进入 Scoped 检索路径。
+**Execution method**: Explicitly pass in `meeting_ids=[mid]` (or `file_ids=[fid]`) when calling retrieval to force the Scoped retrieval path.
 
-**每轮记录指标**：
+**Record metrics for each round**:
 - `Recall@10`
 - `MRR`
 - `NDCG@10`
 
-### 3.3 Unscoped（Broad Recall）Grid Search
+### 3.3 Unscoped (Broad Recall) Grid Search
 
-使用与 Scoped 相同的 **top-2 chunk 策略** 和相同的 **4 种检索×rerank 组合**。
+Use the same **top-2 chunk strategy** and the same **4 retrieval × rerank combinations** as Scoped.
 
-**Unscoped 关键配置**（需保持固定）：
-- `RAG_SUMMARY_ROUTER_ENABLED=True`（生产默认）
+**Unscoped key configuration** (need to remain fixed):
+- `RAG_SUMMARY_ROUTER_ENABLED=True` (production default)
 - `RAG_FAIR_ADAPTIVE_CHUNKS=True`
-- `RAG_HIERARCHICAL_ENABLED=True`（funnel 逻辑在 Broad Recall 中因 `file_ids` 被指定而被短路，但仍保持开启以模拟生产环境）
+- `RAG_FILE_SCOPING_MODE=router_and_funnel` (production broad-recall strategy)
 
-**执行方式**：调用检索时**不传入** `meeting_ids` 或 `file_ids`，触发完整的 Broad Recall 路径：
-1. Summary Router 筛选候选文件
-2. `fair_retrieve_per_file()` 对每个文件独立检索
-3. Over-fetch 机制生效（`per_file_fetch = max(budget*2, budget+2)`）
-4. Per-file guarantee 截断生效（`min_floor = max(top_k, distinct_files)`）
-5. 全局 rerank 与去重
+**Execution method**: **Do not pass in** `meeting_ids` or `file_ids` when calling retrieval, triggering the complete Broad Recall path:
+1. Summary Router filters candidate files
+2. `fair_retrieve_per_file()` retrieves each file independently
+3. Over-fetch mechanism takes effect (`per_file_fetch = max(budget*2, budget+2)`)
+4. Per-file guarantee truncation takes effect (`min_floor = max(top_k, distinct_files)`)
+5. Global rerank and deduplication
 
-**每轮记录指标**：
+**Record metrics for each round**:
 - `Recall@10`
 - `MRR`
 - `NDCG@10`
-- **`File Coverage@10`**：包含 golden chunk 的文件中，有多大比例出现在 top-10 结果里？
-- **`Per-File Recall Mean`**：各相关文件的 Recall@10 均值（公平性指标）
+- **`File Coverage@10`**: What proportion of files containing golden chunks appear in the top-10 results?
+- **`Per-File Recall Mean`**: Recall@10 mean value of each related file (fairness indicator)
 
-### 3.4 Phase 2 Grid Search 表格模板
+### 3.4 Phase 2 Grid Search table template
 
-以某模态的 top-2 chunk 策略 `{C1, C2}` 为例：
+Take the top-2 chunk strategy `{C1, C2}` of a certain mode as an example:
 
-| Chunk 策略 | 检索策略 | Rerank | Scoped Recall@10 | Scoped MRR | Scoped NDCG | Unscoped Recall@10 | Unscoped MRR | Unscoped NDCG | Unscoped File Coverage | **综合得分** |
-|-----------|---------|--------|------------------|------------|-------------|--------------------|--------------|---------------|------------------------|-------------|
+| Chunk Strategy | Search Strategy | Rerank | Scoped Recall@10 | Scoped MRR | Scoped NDCG | Unscoped Recall@10 | Unscoped MRR | Unscoped NDCG | Unscoped File Coverage | **Comprehensive Score** |
+|-----------|----------|--------|-------------------|------------|-------------|--------------------|---------------|---------------|------------------------|-------------|
 | C1 | Native | OFF | | | | | | | | |
 | C1 | Native | ON | | | | | | | | |
 | C1 | Hybrid | OFF | | | | | | | | |
@@ -168,75 +175,74 @@ Chunk 策略与检索策略**并非独立**：
 | C2 | Hybrid | OFF | | | | | | | | |
 | C2 | Hybrid | ON | | | | | | | | |
 
-**每模态最终选择**：按以下公式计算综合得分，取最高者：
+**Final selection for each modality**: Calculate the comprehensive score according to the following formula, whichever is the highest:
 
 ```
-综合得分 = 0.4 × Unscoped_Recall + 0.3 × Scoped_Recall + 0.2 × File_Coverage + 0.1 × NDCG
+Overall Score = 0.4 × Unscoped_Recall + 0.3 × Scoped_Recall + 0.2 × File_Coverage + 0.1 × NDCG
 ```
 
-> 权重可根据业务优先级调整。若系统以 Scoped 查询为主，可提高 `Scoped_Recall` 权重。
+> Weights can be adjusted based on business priorities. If the system is mainly based on Scoped queries, the weight of `Scoped_Recall` can be increased.
 
 ---
 
-## 4. Phase 1 → Phase 2 流转流程
+## 4. Phase 1 → Phase 2 transfer process
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  PHASE 1: Chunk 策略对比                                      │
-│  固定条件: Hybrid + Rerank ON                                 │
-│  数据集: golden_set_scoped.json + golden_set_unscoped.json    │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ PHASE 1: Chunk strategy comparison │
+│ Fixed condition: Hybrid + Rerank ON │
+│ Dataset: golden_set_scoped.json + golden_set_unscoped.json │
+└─────────────────────────────────────────────────────────┘
                               │
                               ▼
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-   ┌─────────┐          ┌─────────┐          ┌─────────┐
-   │ 视频    │          │ 文档    │          │ 图片    │
-   │ Top-2   │          │ Top-2   │          │ Top-2   │
-   │ Chunk   │          │ Chunk   │          │ Chunk   │
-   └────┬────┘          └────┬────┘          └────┬────┘
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  PHASE 2: 检索策略 Grid Search                                │
-│  变量: Native/Hybrid × Rerank ON/OFF                         │
-│  数据集: golden_set_scoped.json + golden_set_unscoped.json    │
-│  每模态输出: 最优 (Chunk + 检索 + Rerank) 组合                │
-└─────────────────────────────────────────────────────────────┘
+        ┌──────────────────────┼─────────────────────┐
+        │ │ │
+        ▼ ▼ ▼
+   ┌─────────┐ ┌─────────┐ ┌──────────┐
+   │ Video │ │ Documentation │ │ Pictures │
+   │ Top-2 │ │ Top-2 │ │ Top-2 │
+   │ Chunk │ │ Chunk │ │ Chunk │
+   └────┬────┘ └────┬────┘ └────┬────┘
+        │ │ │
+        └──────────────────────┼─────────────────────┘
+                              ▼┌─────────────────────────────────────────────────────────┐
+│ PHASE 2: Search Strategy Grid Search │
+│ Variable: Native/Hybrid × Rerank ON/OFF │
+│ Dataset: golden_set_scoped.json + golden_set_unscoped.json │
+│Per-modal output: Optimal (Chunk + Retrieval + Rerank) combination │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 4.1 为什么不能直接分别选最优 Chunk 和最优检索，再组合？
+### 4.1 Why can’t we directly select the optimal Chunk and the optimal search separately, and then combine them?
 
-一种直觉上的捷径是：
-1. 先找到最优 chunk 策略（Phase 1）。
-2. 再独立找到最优检索策略。
-3. 将两者直接组合。
+An intuitive shortcut is:
+1. First find the optimal chunk strategy (Phase 1).
+2. Then independently find the optimal search strategy.
+3. Combine the two directly.
 
-这种做法**无效**，原因在于 **交互效应**：
+This approach is **ineffective** due to the **interaction effect**:
 
-| 交互效应 | 说明 |
+| Interaction effects | Description |
 |---------|------|
-| **Chunk Size × Hybrid** | BM25 关键词匹配在 chunk 小而聚焦时效果最好。2048 字符的大 chunk 可能在 Native 下表现不错（embedding 上下文更完整），但在 Hybrid 下会失败，因为 BM25 无法在巨大 chunk 中精确定位关键词。 |
-| **Chunk Size × Reranker** | Reranker 基于完整 chunk 文本打分。若 chunk 过大，相关句子可能被埋没，导致 reranker 分数下降，在 cutoff 处产生假阴性。 |
-| **Segment-Aware × Native** | Segment-Aware chunk 保留了 speaker label 和 timestamp。这种结构性元数据有助于 embedding 相似度计算（speaker/时间类查询），但对纯关键词查询（BM25）可能引入噪音。 |
-| **Parent-Child × Reranker** | Parent-Child 检索的是 child chunk（小粒度），但 parent 提供扩展上下文。没有 reranker 时 child chunk 可能显得过短；有 reranker 时 child 文本可被精确打分。reranker 对 Parent-Child 的相对价值高于 Flat。 |
-| **Scope × 策略** | Scoped 模式下候选池很小（仅几十个 chunk），Native 与 Hybrid 差异不大。Unscoped Broad Recall 下候选池是全局的（数千个 chunk），Hybrid 的关键词精确匹配价值被显著放大。"最优"检索策略取决于 scope 类型。 |
+| **Chunk Size × Hybrid** | BM25 keyword matching works best when the chunk is small and focused. A large chunk of 2048 characters may perform well under Native (the embedding context is more complete), but will fail under Hybrid because BM25 cannot accurately locate keywords in a huge chunk. |
+| **Chunk Size × Reranker** | Reranker scores based on the complete chunk text. If the chunk is too large, relevant sentences may be buried, resulting in a decrease in the reranker score and false negatives at the cutoff. |
+| **Segment-Aware × Native** | Segment-Aware chunk retains speaker label and timestamp. This structural metadata is useful for embedding similarity calculations (speaker/time queries), but may introduce noise for pure keyword queries (BM25). |
+| **Parent-Child × Reranker** | Parent-Child retrieves the child chunk (small granularity), but parent provides extended context. Without reranker, the child chunk may appear too short; with reranker, the child text can be accurately scored. The relative value of reranker to Parent-Child is higher than Flat. |
+| **Scope × Strategy** | The candidate pool in Scoped mode is very small (only a few dozen chunks), and there is not much difference between Native and Hybrid. Under Unscoped Broad Recall, the candidate pool is global (thousands of chunks), and the value of Hybrid's exact keyword matching is significantly amplified. The "optimal" retrieval strategy depends on the scope type. |
 
-**结论**：必须联合优化 chunk 与检索。Phase 1 缩小 chunk 搜索空间；Phase 2 在该空间内评估交互效应。
+**Conclusion**: Chunk and retrieval must be jointly optimized. Phase 1 narrows the chunk search space; Phase 2 evaluates interaction effects within this space.
 
 ---
 
-## 5. Benchmark 数据集规范
+## 5. Benchmark data set specification
 
-### 5.1 数据集拆分要求
+### 5.1 Data set splitting requirements
 
-需要准备**两份独立的 golden set**。切勿将 scoped 与 unscoped 查询混合在同一文件中。
+**Two separate golden sets** need to be prepared. Never mix scoped and unscoped queries in the same file.
 
 ### 5.2 `golden_set_scoped.json`
 
-每个查询仅针对 **一个已知文件/会议**，golden chunk 必须位于该 scope 内。
+Each query only targets **one known file/session**, and the golden chunk must be within that scope.
 
 ```json
 {
@@ -245,7 +251,7 @@ Chunk 策略与检索策略**并非独立**：
   "items": [
     {
       "id": "scoped_q001",
-      "query": "Alice 在 Q1 planning meeting 中关于预算说了什么？",
+      "query": "What did Alice say about the budget in the Q1 planning meeting?",
       "fixture_file": "sample.pdf",
       "meeting_id": 42,
       "file_id": 101,
@@ -254,7 +260,7 @@ Chunk 策略与检索策略**并非独立**：
         "meeting_42_file_101_chunk_4"
       ],
       "expected_file_ids": [101],
-      "expected_answer": "Alice 表示预算需要增加 20%。"
+      "expected_answer": "Alice says the budget needs to be increased by 20%."
     }
   ]
 }
@@ -262,7 +268,7 @@ Chunk 策略与检索策略**并非独立**：
 
 ### 5.3 `golden_set_unscoped.json`
 
-每个查询**不指定范围**。答案可能跨越多个文件/会议。必须显式记录哪些文件是相关的，以便计算 File Coverage。
+Each query does not specify a range. Answers may span multiple documents/sessions. You must explicitly record which files are relevant in order to calculate File Coverage.
 
 ```json
 {
@@ -271,53 +277,53 @@ Chunk 策略与检索策略**并非独立**：
   "items": [
     {
       "id": "unscoped_q001",
-      "query": "哪些会议讨论了预算增加？",
+      "query": "Which meetings discussed the budget increase?",
       "expected_chunks": [
         "meeting_42_file_101_chunk_3",
         "meeting_43_file_102_chunk_1"
       ],
       "expected_file_ids": [101, 102],
       "expected_meeting_ids": [42, 43],
-      "expected_answer": "Q1 planning meeting 和 all-hands meeting 都讨论了预算增加。"
+      "expected_answer": "Budget increases were discussed at both the Q1 planning meeting and the all-hands meeting."
     }
   ]
 }
 ```
 
-### 5.4 数据集规模建议
+### 5.4 Data set size recommendations
 
-| 模态 | Scoped 查询数 | Unscoped 查询数 | 说明 |
+| Modal | Number of Scoped queries | Number of Unscoped queries | Description |
 |------|-------------|----------------|------|
-| 视频 / 音频 | 8–12 | 4–6 | 需包含 speaker-specific 和 temporal 查询 |
-| 文档 | 12–16 | 6–10 | 混合单页细节查询与跨页综合查询 |
-| 图片 | 4–6 | 2–4 | 聚焦 caption-based 和 OCR-based 查询 |
+| Video/Audio | 8–12 | 4–6 | Requires speaker-specific and temporal queries |
+| Documentation | 12–16 | 6–10 | Mixed single-page detailed query and cross-page comprehensive query |
+| Images | 4–6 | 2–4 | Focus on caption-based and OCR-based queries |
 
-**最低可行规模**：每模态每 scope 类型至少 5 条查询。查询数量越多，统计稳定性越好。
+**Minimum feasible size**: At least 5 queries per scope type per modal. The greater the number of queries, the better the statistical stability.
 
-### 5.5 Chunk ID 命名规范与歧义消除
+### 5.5 Chunk ID naming convention and ambiguity elimination
 
-#### 为什么必须使用完整 Chunk ID？
+#### Why must I use the full Chunk ID?
 
-系统内实际的 chunk ID 由 `_chunk_id_prefix(meeting_id, file_id)` 生成，规则如下：
+The actual chunk ID in the system is generated by `_chunk_id_prefix(meeting_id, file_id)`, the rules are as follows:
 
-- 有 `file_id` 时：`meeting_{meeting_id}_file_{file_id}_chunk_{index}`
-- 无 `file_id`（legacy 单文件 meeting）时：`meeting_{meeting_id}_chunk_{index}`
+- When there is `file_id`: `meeting_{meeting_id}_file_{file_id}_chunk_{index}`
+- When there is no `file_id` (legacy single file meeting): `meeting_{meeting_id}_chunk_{index}`
 
-在当前的 multi-file 架构下，**绝大多数 chunk ID 都包含 `file_id`**。如果 `golden_set` 中只写 `"chunk_3"`，再由 benchmark 脚本拼接为 `meeting_42_chunk_3`，则与实际 ID `meeting_42_file_101_chunk_3` **无法匹配**，会导致 recall 计算恒为 0。
+Under the current multi-file architecture, most chunk IDs contain file_id. If only `"chunk_3"` is written in `golden_set` and then spliced ​​into `meeting_42_chunk_3` by the benchmark script, it will not match the actual ID `meeting_42_file_101_chunk_3`, which will cause the recall calculation to always be 0.
 
-此外，在 Unscoped 场景下，一个查询的答案可能分布在多个 `meeting_id` + `file_id` 组合中，仅写 `"chunk_3"` 完全无法区分归属。
+In addition, in the Unscoped scenario, the answer to a query may be distributed in multiple `meeting_id` + `file_id` combinations, and it is completely impossible to distinguish the ownership by just writing `"chunk_3"`.
 
-#### 完整 Chunk ID 示例
+#### Complete Chunk ID Example
 
-| 场景 | 旧写法（有歧义） | 新写法（完整 ID） |
+| Scene | Old way of writing (ambiguous) | New way of writing (complete ID) |
 |------|----------------|----------------|
-| Scoped，单文件 | `["chunk_3"]` | `["meeting_42_file_101_chunk_3"]` |
-| Unscoped，跨文件 | `["chunk_3", "chunk_1"]` | `["meeting_42_file_101_chunk_3", "meeting_43_file_102_chunk_1"]` |
-| Legacy 无 file_id | `["chunk_0"]` | `["meeting_42_chunk_0"]` |
+| Scoped, single file | `["chunk_3"]` | `["meeting_42_file_101_chunk_3"]` |
+| Unscoped, across files | `["chunk_3", "chunk_1"]` | `["meeting_42_file_101_chunk_3", "meeting_43_file_102_chunk_1"]` |
+| Legacy None file_id | `["chunk_0"]` | `["meeting_42_chunk_0"]` |
 
-#### 如何确定完整 Chunk ID？
+#### How to determine the complete Chunk ID?
 
-在标注 golden set 前，先对测试数据执行一次索引，然后查询 vectorstore 或 `bm25_index` 表获取实际 chunk ID：
+Before marking the golden set, first perform an index on the test data, and then query the vectorstore or `bm25_index` table to obtain the actual chunk ID:
 
 ```python
 from src.services.rag._vectorstore import get_vectorstore
@@ -327,120 +333,124 @@ for cid, meta in zip(results["ids"], results["metadatas"]):
     print(cid, meta.get("content_type"), meta.get("file_id"))
 ```
 
-或在 SQLite 中直接查询：
+Or query directly in SQLite:
 
 ```sql
 SELECT chunk_id, meeting_id, metadata FROM bm25_index WHERE meeting_id = 42;
 ```
 
-#### Benchmark 脚本修改要点
+#### Benchmark script modification points
 
-现有 `scripts/benchmark.py` 中的匹配逻辑需删除前缀拼接，改为直接比较完整 ID：
+Historical implementation note: the planned change targeted
+`backend/scripts/benchmark.py`. The current runner canonicalizes physical
+chunk IDs before comparison; the obsolete prefix-splicing example below is
+retained only to explain the design transition.
 
-```python
-# 旧的拼接逻辑（需删除）
+```python#Old splicing logic (needs to be deleted)
 # expected = {f"meeting_{meeting_id}_{chunk}" for chunk in item.get("expected_chunks", [])}
 
-# 新的直接比较逻辑
+# New direct comparison logic
 expected = set(item.get("expected_chunks", []))
 ```
 
-同时，检索结果中的 chunk ID 也应直接取自 `metadata.chunk_id`（若存在）或根据返回结果的 `id` 字段直接比较，避免再次拼接。
+At the same time, the chunk ID in the search results should also be taken directly from `metadata.chunk_id` (if it exists) or directly compared based on the `id` field of the returned results to avoid re-splicing.
 
 ---
 
-## 6. 实现说明
+## 6. Implementation instructions
 
-### 6.1 如何生成纯文本变体
+### 6.1 How to generate plain text variants
 
-对每个 fixture 文件，在正常处理完成后，提取其纯文本并重新调用 `index_meeting()` 进行索引：
+For each fixture file, after normal processing is complete, extract its plain text and re-call `index_meeting()` for indexing:
 
-| 模态 | 源文本 | 索引函数 | 关键配置 |
+| Modal | Source text | Index function | Key configuration |
 |------|--------|---------|---------|
-| 视频/音频 | `FileArtefact.text`（带 speaker 的转录文本） | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
-| 文档 | `parsed_doc.to_text()`（拼接后的各页文本） | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
-| 图片 | `FileArtefact.text`（caption + OCR） | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
+| Video/Audio | `FileArtefact.text` (transcribed text with speaker) | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
+| Documentation | `parsed_doc.to_text()` (spliced text of each page) | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
+| Image | `FileArtefact.text` (caption + OCR) | `index_meeting()` | `PARENT_CHILD_ENABLED=False/True` |
 
-> **注意**：测试纯文本变体时，务必先删除该文件的原生索引（或使用独立的临时向量库），避免不同 chunk 策略的索引数据相互污染。
+> **Note**: When testing plain text variants, be sure to delete the native index of the file first (or use an independent temporary vector library) to avoid mutual contamination of index data of different chunk strategies.
 
-### 6.2 Benchmark Runner 的扩展
+### 6.2 Benchmark Runner extension
 
-现有 `scripts/benchmark.py` 仅测试 **Scoped** 检索（`meeting_ids=[meeting_id]`）。你需要扩展以支持 Unscoped：
+Historical implementation note: the original runner tested only **Scoped**
+retrieval (`meeting_ids=[meeting_id]`). The implemented Phase 1/2 runners now
+exercise Unscoped retrieval with the following call shape:
 
 ```python
-# Unscoped 检索调用（触发 Broad Recall）
+# Unscoped retrieval call (trigger Broad Recall)
 results = retrieve(
     query,
-    meeting_ids=None,   # 不指定范围
-    file_ids=None,      # 不指定范围
+    meeting_ids=None, # Do not specify a range
+    file_ids=None, # No range specified
     top_k=top_k,
 )
 ```
 
-或使用完整 pipeline：
+Or use the full pipeline:
 
 ```python
 from src.services.chain import ask
-result = await ask(question=query, user_id="benchmark")  # 不传入 meeting_ids
+result = await ask(question=query, user_id="benchmark") # Do not pass in meeting_ids
 ```
 
-### 6.3 单次运行中的配置锁定
+### 6.3 Configuration locking within a single run
 
-为确保公平对比，单轮 benchmark 中需锁定以下配置：
+To ensure a fair comparison, the following configurations need to be locked in a single round of benchmark:
 
-| 配置项 | Phase 1 取值 | Phase 2 取值 |
+| Configuration item | Phase 1 value | Phase 2 value |
 |--------|-------------|-------------|
 | `TOP_K` | 10 | 10 |
 | `RERANKER_TOP_N` | 10 | 10 |
 | `HYBRID_ALPHA` | 0.5 | 0.5 |
 | `RAG_RERANK_FETCH_MULTIPLIER` | 6 | 6 |
-| `RAG_SUMMARY_ROUTER_ENABLED` | True | 按需求 |
-| `RAG_FAIR_ADAPTIVE_CHUNKS` | True | 按需求 |
+| `RAG_SUMMARY_ROUTER_ENABLED` | True | On demand |
+| `RAG_FAIR_ADAPTIVE_CHUNKS` | True | On demand |
 | `QUERY_REWRITE_ENABLED` | False | False |
 
-> **为什么要关闭 query rewrite？** Query rewrite 引入了 LLM 调用，可能改变查询语义。在检索 benchmark 中，应测量检索系统回答 *原始问题* 的能力，排除 query rewrite 的干扰。
+> **Why should we turn off query rewrite? ** Query rewrite introduces LLM calls that may change query semantics. In the retrieval benchmark, the ability of the retrieval system to answer the *original question* should be measured, excluding the interference of query rewrite.
 
 ---
 
-## 7. 执行清单
+## 7. Execution list
 
-### Phase 1 清单
+### Phase 1 Checklist
 
-- [ ] 准备 `golden_set_scoped.json`，包含各模态的 scoped 查询
-- [ ] 准备 `golden_set_unscoped.json`，包含跨文件的 unscoped 查询
-- [ ] 为每模态生成 3 种 chunk 方法 × 参数预设的组合
-- [ ] 在 Scoped 数据集上运行所有组合（Hybrid + Rerank）
-- [ ] 在 Unscoped 数据集上运行所有组合（Hybrid + Rerank）
-- [ ] 计算 Combined Recall 并选出每模态的 top-2
+- [ ] Prepare `golden_set_scoped.json`, containing scoped queries for each mode
+- [ ] Prepare `golden_set_unscoped.json`, containing unscoped queries across files
+- [ ] Generate 3 combinations of chunk methods × parameter presets for each mode
+- [ ] Run all combinations (Hybrid + Rerank) on the Scoped dataset
+- [ ] Run all combinations (Hybrid + Rerank) on Unscoped dataset
+- [ ] Calculate Combined Recall and select the top-2 of each mode
 
-### Phase 2 清单
+### Phase 2 Checklist
 
-- [ ] 为每模态的 top-2 配置 4 种检索×rerank 组合
-- [ ] 执行 Scoped Grid Search，记录 Recall/MRR/NDCG
-- [ ] 执行 Unscoped Grid Search，记录 Recall/MRR/NDCG + File Coverage + Per-File Recall
-- [ ] 按加权综合得分选出每模态的最终最优配置
-- [ ] （可选）在最终选定配置上运行 `rag-snapshot`，建立回归基线
+- [ ] Configure 4 retrieval × rerank combinations for top-2 of each modality
+- [ ] Execute Scoped Grid Search and record Recall/MRR/NDCG
+- [ ] Execute Unscoped Grid Search, record Recall/MRR/NDCG + File Coverage + Per-File Recall
+- [ ] Select the final optimal configuration of each mode according to the weighted comprehensive score
+- [ ] (Optional) Run `rag-snapshot` on the final selected configuration to establish a regression baseline
 
 ---
 
-## 8. 预期输出示例
+## 8. Example of expected output
 
-### Phase 1 输出示例（视频/音频）
+### Phase 1 output example (video/audio)
 
-| 排名 | 方法 | 预设 | Scoped Recall@10 | Unscoped Recall@10 | Combined | 是否入选 |
-|------|------|------|------------------|--------------------|----------|---------|
+| Ranking | Method | Default | Scoped Recall@10 | Unscoped Recall@10 | Combined | Selected |
+|------|------|------|------------------|--------------------|----------|----------|
 | 1 | Segment-Aware | M | 0.82 | 0.71 | **0.765** | ✅ Top-1 |
 | 2 | Pure-Text Flat | S | 0.78 | 0.68 | 0.730 | ✅ Top-2 |
 | 3 | Segment-Aware | L | 0.75 | 0.70 | 0.725 | — |
 | 4 | Pure-Text Parent-Child | S | 0.76 | 0.65 | 0.705 | — |
 
-### Phase 2 输出示例（视频/音频）
+### Phase 2 output example (video/audio)
 
-| Chunk | 检索 | Rerank | Scoped Rec@10 | Unscoped Rec@10 | File Cov | 综合得分 | 排名 |
-|-------|------|--------|---------------|-----------------|----------|---------|------|
+| Chunk | Search | Rerank | Scoped Rec@10 | Unscoped Rec@10 | File Cov | Comprehensive score | Ranking |
+|-------|------|--------|---------------|------------------|----------|----------|------|
 | Seg-Aware M | Hybrid | ON | 0.82 | 0.71 | 0.88 | **0.763** | 1 |
 | Seg-Aware M | Hybrid | OFF | 0.80 | 0.65 | 0.82 | 0.712 | 2 |
 | Flat S | Hybrid | ON | 0.78 | 0.68 | 0.85 | 0.730 | 3 |
 | Flat S | Native | ON | 0.72 | 0.55 | 0.70 | 0.617 | 4 |
 
-**视频/音频模态最终推荐配置**：`Segment-Aware (M) + Hybrid + Rerank ON`。
+**Final recommended configuration for video/audio mode**: `Segment-Aware (M) + Hybrid + Rerank ON`.

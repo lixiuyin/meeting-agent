@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestBm25RebuildTimeout:
     def test_rebuild_skips_when_already_loaded(self):
@@ -44,7 +46,20 @@ class TestBm25RebuildTimeout:
                 return_value=False,
             ),
         ):
-            rebuild_bm25_from_chroma(force=True, timeout=10.0)
+            assert rebuild_bm25_from_chroma(force=True, timeout=10.0) is False
+
+    def test_strict_rebuild_propagates_chroma_failure(self):
+        """Orchestrated swaps must be able to roll back on BM25 failure."""
+        from src.services.rag._bm25_maintenance import rebuild_bm25_from_chroma
+
+        mock_vs = MagicMock()
+        mock_vs.get.side_effect = RuntimeError("chroma unavailable")
+
+        with (
+            patch("src.services.rag._bm25_maintenance.get_vectorstore", return_value=mock_vs),
+            pytest.raises(RuntimeError, match="chroma unavailable"),
+        ):
+            rebuild_bm25_from_chroma(force=True, timeout=10.0, strict=True)
 
     def test_is_bm25_rebuilding_flag(self):
         """The _bm25_rebuilding flag should be accessible."""

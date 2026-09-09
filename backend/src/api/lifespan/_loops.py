@@ -10,34 +10,14 @@ from ._shared import logger, record_best_effort_failure
 
 async def expired_purge_loop() -> None:
     """Periodic expired-memory purge (every hour)."""
-    from ...core.database import (
-        delete_expired_memories,
-        get_expired_memory_ids,
-        get_write_connection,
-    )
+    from ...services.memory._service._crud import purge_expired_memories_durable
 
     while True:
         await asyncio.sleep(3600)
         try:
-            with get_write_connection() as conn:
-                expired = get_expired_memory_ids(conn)
-                if expired:
-                    try:
-                        from ...services.memory import get_memory_vectorstore
-
-                        vs = get_memory_vectorstore()
-                        for m in expired:
-                            eid = m.get("embedding_id")
-                            if eid:
-                                try:
-                                    vs.delete(eid)
-                                except Exception:
-                                    logger.warning("Failed to delete vector %s", eid, exc_info=True)
-                    except Exception:
-                        logger.warning("Failed to clean up expired memory vectors", exc_info=True)
-                deleted = delete_expired_memories(conn)
-                if deleted:
-                    logger.info("Periodic purge: cleaned up %d expired memories", deleted)
+            deleted = await asyncio.to_thread(purge_expired_memories_durable)
+            if deleted:
+                logger.info("Periodic purge: cleaned up %d expired memories", deleted)
         except Exception:
             record_best_effort_failure("periodic_expired_memory_purge")
             logger.warning("Periodic expired-memory purge failed", exc_info=True)
@@ -76,16 +56,16 @@ async def idle_summary_loop() -> None:
 
 
 def checkpoint_wal_once() -> tuple[int, int, int]:
-    from ...core.database._connection import _get_thread_conn
+    from ...core.database import get_connection
 
-    conn = _get_thread_conn()
-    conn.execute("PRAGMA busy_timeout=5000")
-    result = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-    busy, log, ckpt = int(result[0]), int(result[1]), int(result[2])
-    if busy == 0 and ckpt == log and log > 0:
-        result2 = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        return int(result2[0]), int(result2[1]), int(result2[2])
-    return busy, log, ckpt
+    with get_connection() as conn:
+        conn.execute("PRAGMA busy_timeout=5000")
+        result = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        busy, log, ckpt = int(result[0]), int(result[1]), int(result[2])
+        if busy == 0 and ckpt == log and log > 0:
+            result2 = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            return int(result2[0]), int(result2[1]), int(result2[2])
+        return busy, log, ckpt
 
 
 async def wal_checkpoint_loop() -> None:
@@ -139,36 +119,41 @@ async def wal_checkpoint_loop() -> None:
 def _force_close_stale_read_connections() -> None:
     """Close the most-idle read connection to unblock WAL checkpoint."""
     from ...core.database._connection import (
+        _conn_active,
         _conn_last_active,
         _connections,
         _pool_lock,
     )
 
-    with _pool_lock:
-        conns = list(_connections.items())
-    if not conns:
-        return
     now = time.monotonic()
-    oldest_tid, oldest_conn = min(
-        conns,
-        key=lambda x: now - _conn_last_active.get(x[0], 0),
-    )
-    try:
-        with contextlib.suppress(Exception):
-            oldest_conn.interrupt()
-        with contextlib.suppress(Exception):
-            oldest_conn.rollback()
-        oldest_conn.close()
-        logger.warning(
-            "Closed oldest read connection (thread=%d) to unblock WAL checkpoint",
-            oldest_tid,
+    with _pool_lock:
+        idle = [(tid, conn) for tid, conn in _connections.items() if _conn_active.get(tid, 0) == 0]
+        if not idle:
+            logger.warning("No idle read connection is safe to close for WAL recovery")
+            return
+        oldest_tid, oldest_conn = max(
+            idle,
+            key=lambda x: now - _conn_last_active.get(x[0], 0),
         )
-    except Exception:
-        logger.warning(
-            "Failed to close stale read connection (thread=%d)",
-            oldest_tid,
-            exc_info=True,
-        )
+        try:
+            with contextlib.suppress(Exception):
+                oldest_conn.interrupt()
+            with contextlib.suppress(Exception):
+                oldest_conn.rollback()
+            oldest_conn.close()
+            _connections.pop(oldest_tid, None)
+            _conn_last_active.pop(oldest_tid, None)
+            _conn_active.pop(oldest_tid, None)
+            logger.warning(
+                "Closed oldest read connection (thread=%d) to unblock WAL checkpoint",
+                oldest_tid,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to close stale read connection (thread=%d)",
+                oldest_tid,
+                exc_info=True,
+            )
 
 
 async def index_reconcile_loop() -> None:
@@ -195,12 +180,21 @@ async def index_reconcile_loop() -> None:
             if legacy.get("vector") or legacy.get("bm25"):
                 logger.info(
                     "Legacy chunks without file_id: vector=%d bm25=%d "
-                    "(run migrate_bm25_metadata.py to backfill)",
+                    "(run migrate_bm25_metadata.py --db <database-path> to backfill)",
                     legacy.get("vector", 0),
                     legacy.get("bm25", 0),
                 )
         except Exception:
             logger.debug("Legacy chunk count query failed", exc_info=True)
+        try:
+            from ...services.memory._summary_vectorstore import sync_missing_summary_vectors
+
+            repaired = await asyncio.to_thread(sync_missing_summary_vectors, repair_limit=100)
+            if repaired:
+                logger.info("Periodic session-summary vector sync repaired %d rows", repaired)
+        except Exception:
+            record_best_effort_failure("session_summary_vector_sync_failed")
+            logger.warning("Periodic session-summary vector sync failed", exc_info=True)
 
 
 async def retention_loop() -> None:
@@ -214,9 +208,11 @@ async def retention_loop() -> None:
     while True:
         await asyncio.sleep(86400)
         try:
-            msgs = purge_old_chat_messages()
-            states = purge_old_decay_state()
-            mems = purge_stale_low_importance_memories()
+            # SQLite permits a single writer. Run each write job off the event
+            # loop, but keep them sequential to avoid needless lock contention.
+            msgs = await asyncio.to_thread(purge_old_chat_messages)
+            states = await asyncio.to_thread(purge_old_decay_state)
+            mems = await asyncio.to_thread(purge_stale_low_importance_memories)
             if msgs or states or mems:
                 logger.info(
                     "Retention purge: %d chat messages, %d decay states, %d memories removed",
@@ -232,10 +228,13 @@ async def retention_loop() -> None:
         try:
             from ...core.database import cleanup_expired_audit_logs, get_write_connection
 
-            with get_write_connection() as conn:
-                audit_deleted = cleanup_expired_audit_logs(conn)
-                if audit_deleted:
-                    logger.info("Retention purge: %d expired audit logs removed", audit_deleted)
+            def _cleanup_audit_logs() -> int:
+                with get_write_connection() as conn:
+                    return cleanup_expired_audit_logs(conn)
+
+            audit_deleted = await asyncio.to_thread(_cleanup_audit_logs)
+            if audit_deleted:
+                logger.info("Retention purge: %d expired audit logs removed", audit_deleted)
         except Exception:
             logger.debug("Audit log cleanup failed", exc_info=True)
         try:
@@ -250,12 +249,17 @@ async def retention_loop() -> None:
 
 async def stale_recovery_loop() -> None:
     """Periodic stale-meeting recovery (every 15 min)."""
-    from ...services.processor import recover_stale_meetings
+    from ...services.processor import recover_stale_meetings, resume_interrupted_processing
+    from ...services.processor._scheduler import active_processing_file_ids
 
     while True:
         await asyncio.sleep(15 * 60)
         try:
-            await asyncio.to_thread(recover_stale_meetings)
+            await resume_interrupted_processing(stale_only=True)
+            await asyncio.to_thread(
+                recover_stale_meetings,
+                active_file_ids=active_processing_file_ids(),
+            )
         except Exception:
             record_best_effort_failure("periodic_stale_recovery")
             logger.warning("Periodic stale recovery failed", exc_info=True)

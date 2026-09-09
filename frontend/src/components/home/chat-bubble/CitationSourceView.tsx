@@ -1,29 +1,34 @@
 import { useEffect, useState } from "react";
 import { Spin } from "antd";
-import {
-  getFileTimeline,
-  getMeetingFileUrl,
-  type FileTimelineResponse,
-  type SourceItem,
-} from "../../../api/client";
+import { getFileTimeline, type FileTimelineResponse, type SourceItem } from "../../../api/client";
 import ImageAssetCard, { type ImageAsset } from "../../materials/file-views/ImageAssetCard";
 import PageLayoutView from "../../materials/file-views/PageLayoutView";
 import { reportNonCriticalError } from "../../../utils/monitoring";
 import { FallbackSourceView } from "./SourcePreviewContent";
 import { isImageDerivedSource } from "./sourceHelpers";
+import { useMeetingFileUrl } from "../../../hooks/useMeetingFileUrl";
 
 const TIMELINE_CACHE_MAX = 200;
 const timelineCache = new Map<string, Promise<FileTimelineResponse>>();
 
-async function fetchTimeline(meetingId: number, fileId: number): Promise<FileTimelineResponse> {
-  const key = `${meetingId}:${fileId}`;
+async function fetchTimeline(
+  meetingId: number,
+  fileId: number,
+  revision?: string | null,
+): Promise<FileTimelineResponse> {
+  const key = `${meetingId}:${fileId}:${revision ?? "legacy"}`;
   const cached = timelineCache.get(key);
   if (cached) {
     timelineCache.delete(key);
     timelineCache.set(key, cached);
     return cached;
   }
-  const promise = getFileTimeline(meetingId, fileId).then((res) => res.data);
+  const promise = getFileTimeline(meetingId, fileId)
+    .then((res) => res.data)
+    .catch((error) => {
+      if (timelineCache.get(key) === promise) timelineCache.delete(key);
+      throw error;
+    });
   timelineCache.set(key, promise);
   if (timelineCache.size > TIMELINE_CACHE_MAX) {
     const oldestKey = timelineCache.keys().next().value;
@@ -41,7 +46,12 @@ export function CitationSourceView({ source }: Props) {
     return <FallbackSourceView source={source} />;
   }
 
-  return <CitationSourceViewInner key={`${source.meeting_id}:${source.file_id}`} source={source} />;
+  return (
+    <CitationSourceViewInner
+      key={`${source.meeting_id}:${source.file_id}:${source.document_revision ?? "legacy"}`}
+      source={source}
+    />
+  );
 }
 
 function CitationSourceViewInner({ source }: Props) {
@@ -49,10 +59,11 @@ function CitationSourceViewInner({ source }: Props) {
   const [loading, setLoading] = useState(true);
   const meetingId = source.meeting_id!;
   const fileId = source.file_id!;
+  const fileUrl = useMeetingFileUrl(meetingId, fileId);
 
   useEffect(() => {
     let cancelled = false;
-    fetchTimeline(meetingId, fileId)
+    fetchTimeline(meetingId, fileId, source.document_revision)
       .then((data) => {
         if (!cancelled) {
           setTimeline(data);
@@ -66,7 +77,7 @@ function CitationSourceViewInner({ source }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [meetingId, fileId]);
+  }, [meetingId, fileId, source.document_revision]);
 
   if (loading) {
     return (
@@ -97,10 +108,6 @@ function CitationSourceViewInner({ source }: Props) {
   }
 
   if (timeline.kind === "captions" && isImageDerivedSource(source)) {
-    const fileUrl =
-      source.meeting_id != null && source.file_id != null
-        ? getMeetingFileUrl(source.meeting_id, source.file_id)
-        : undefined;
     if (fileUrl) {
       const asset: ImageAsset = {
         storage_path: fileUrl,

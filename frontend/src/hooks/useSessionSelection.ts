@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { message } from "antd";
 import {
-  listMeetings,
+  listAllMeetings,
   getMeetingFiles,
   formatApiErrorMessage,
   type MeetingInfo,
@@ -16,17 +16,30 @@ export function useSessionSelection() {
   const [meetingFilesMap, setMeetingFilesMap] = useState<Record<number, MeetingFileInfo[]>>({});
   const [loadingMeetings, setLoadingMeetings] = useState(true);
   const [loadingFiles, setLoadingFiles] = useState(false);
+  const meetingsAbortRef = useRef<AbortController | null>(null);
+  const meetingsGenerationRef = useRef(0);
 
   const refreshMeetings = useCallback(() => {
+    meetingsAbortRef.current?.abort();
+    const controller = new AbortController();
+    meetingsAbortRef.current = controller;
+    const generation = ++meetingsGenerationRef.current;
     setLoadingMeetings(true);
-    listMeetings({ limit: 50, status: "ready" })
-      .then((res: { data: { meetings: MeetingInfo[] } }) => {
-        if (res?.data?.meetings) setMeetings(res.data.meetings);
+    listAllMeetings({ status: "ready", signal: controller.signal })
+      .then((incoming) => {
+        if (!controller.signal.aborted && generation === meetingsGenerationRef.current) {
+          setMeetings(incoming);
+        }
       })
       .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
         message.error(formatApiErrorMessage(err, "Failed to load meetings"));
       })
-      .finally(() => setLoadingMeetings(false));
+      .finally(() => {
+        if (!controller.signal.aborted && generation === meetingsGenerationRef.current) {
+          setLoadingMeetings(false);
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -35,6 +48,8 @@ export function useSessionSelection() {
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [refreshMeetings]);
+
+  useEffect(() => () => meetingsAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const onFocus = () => refreshMeetings();

@@ -101,6 +101,41 @@ class TestDbHelpers:
             ids = list_recent_ready_file_ids(conn, limit=10)
             assert len(ids) == 2
 
+    def test_file_enumeration_is_user_scoped(self):
+        _setup_db()
+        with get_write_connection() as conn:
+            meeting_a = create_meeting(conn, title="A", user_id="principal-a")
+            meeting_b = create_meeting(conn, title="B", user_id="principal-b")
+            file_a = create_meeting_file(
+                conn,
+                meeting_id=meeting_a,
+                file_type="pdf",
+                file_name="a.pdf",
+                file_path="/a.pdf",
+                user_id="principal-a",
+            )
+            file_b = create_meeting_file(
+                conn,
+                meeting_id=meeting_b,
+                file_type="pdf",
+                file_name="b.pdf",
+                file_path="/b.pdf",
+                user_id="principal-b",
+            )
+            update_meeting_file_status(conn, file_a, "ready")
+            update_meeting_file_status(conn, file_b, "ready")
+        with get_connection() as conn:
+            assert list_recent_ready_file_ids(
+                conn,
+                limit=10,
+                user_id="principal-a",
+            ) == [file_a]
+            assert list_ready_file_ids_for_meetings(
+                conn,
+                [meeting_a, meeting_b],
+                user_id="principal-b",
+            ) == [file_b]
+
     def test_get_meeting_files_summaries(self):
         _setup_db()
         with get_write_connection() as conn:

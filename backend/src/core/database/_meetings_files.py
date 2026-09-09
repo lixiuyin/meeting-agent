@@ -9,12 +9,24 @@ from ...models.meeting_status import assert_transition
 logger = logging.getLogger(__name__)
 
 _UNSET: Any = object()
+_FILE_INDEX_STATE_COLUMNS = (
+    "(SELECT i.native_status FROM index_state i WHERE i.file_id=mf.id) AS native_index_status, "
+    "(SELECT i.native_last_error FROM index_state i WHERE i.file_id=mf.id) "
+    "AS native_index_error"
+)
 _MEETING_FILE_LIST_COLUMNS = (
     "mf.id, mf.meeting_id, mf.file_type, mf.file_name, mf.file_path, mf.content_hash, "
     "mf.status, mf.transcript, mf.error_message, "
     "mf.created_at, mf.updated_at, mf.summary, mf.summary_status, "
     "mf.duration_seconds, mf.page_count, mf.word_count, mf.language, "
-    "mf.raganything_doc_id, mf.raganything_indexed_at"
+    "mf.raganything_doc_id, mf.raganything_indexed_at, "
+    "mf.material_role, mf.business_domain, mf.approval_status, mf.approval_reason, "
+    "mf.source_revision, mf.content_recorded_at, mf.semantic_updated_at, "
+    "(SELECT json_extract(b.metadata, '$.index_generation') FROM bm25_index b "
+    "WHERE b.meeting_id=mf.meeting_id "
+    "AND CAST(json_extract(b.metadata, '$.file_id') AS INTEGER)=mf.id "
+    "AND json_extract(b.metadata, '$.index_generation') IS NOT NULL "
+    "ORDER BY b.rowid DESC LIMIT 1) AS active_index_generation, " + _FILE_INDEX_STATE_COLUMNS
 )
 
 
@@ -33,9 +45,9 @@ def create_meeting_file(
         """INSERT INTO meeting_files
            (
                meeting_id, file_type, file_name, file_path, content_hash, status,
-               processing_started_at, user_id
+               processing_started_at, user_id, content_recorded_at
            )
-           VALUES (?, ?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP, ?)""",
+           VALUES (?, ?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)""",
         (meeting_id, file_type, file_name, file_path, content_hash, user_id),
     )
     if cursor.lastrowid is None:
@@ -85,9 +97,9 @@ def create_meeting_file_if_absent(
         """INSERT OR IGNORE INTO meeting_files
            (
                meeting_id, file_type, file_name, file_path, content_hash, status,
-               processing_started_at, user_id
+               processing_started_at, user_id, content_recorded_at
            )
-           VALUES (?, ?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP, ?)""",
+           VALUES (?, ?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)""",
         (meeting_id, file_type, file_name, file_path, content_hash, user_id),
     )
     if cursor.lastrowid is None or cursor.rowcount == 0:
@@ -105,14 +117,108 @@ def get_meeting_file(
     """
     if user_id is not None:
         row = conn.execute(
-            "SELECT mf.* FROM meeting_files mf "
+            "SELECT mf.*, " + _FILE_INDEX_STATE_COLUMNS + " FROM meeting_files mf "
             "JOIN meetings m ON mf.meeting_id = m.id "
             "WHERE mf.id=? AND m.user_id=?",
             (file_id, user_id),
         ).fetchone()
     else:
-        row = conn.execute("SELECT * FROM meeting_files WHERE id=?", (file_id,)).fetchone()
+        row = conn.execute(
+            "SELECT mf.*, " + _FILE_INDEX_STATE_COLUMNS + " FROM meeting_files mf WHERE mf.id=?",
+            (file_id,),
+        ).fetchone()
     return dict(row) if row else None
+
+
+def update_meeting_file_semantics(
+    conn: sqlite3.Connection,
+    file_id: int,
+    *,
+    material_role: object = _UNSET,
+    business_domain: object = _UNSET,
+    approval_status: object = _UNSET,
+    approval_reason: object = _UNSET,
+    user_id: str = "default",
+) -> int | None:
+    """Update user-reviewed meeting semantics without changing file content."""
+    updates: list[str] = []
+    params: list[Any] = []
+    if business_domain is not _UNSET:
+        updates.append("business_domain=?")
+        params.append(business_domain)
+    if material_role is not _UNSET:
+        updates.append("material_role=?")
+        params.append(material_role)
+    if approval_status is not _UNSET:
+        updates.append("approval_status=?")
+        params.append(approval_status)
+    if approval_reason is not _UNSET:
+        updates.append("approval_reason=?")
+        params.append(approval_reason)
+    if not updates:
+        return None
+    updates.extend(
+        (
+            "updated_at=CURRENT_TIMESTAMP",
+            "semantic_updated_at=CURRENT_TIMESTAMP",
+            "source_revision=source_revision+1",
+        )
+    )
+    params.append(file_id)
+    cursor = conn.execute(
+        f"UPDATE meeting_files SET {', '.join(updates)} WHERE id=?",
+        params,
+    )
+    if cursor.rowcount <= 0:
+        return None
+    row = conn.execute(
+        "SELECT source_revision, COALESCE(material_role, 'attachment') AS material_role, "
+        "COALESCE(approval_status, 'unreviewed') AS approval_status, "
+        "approval_reason, business_domain "
+        "FROM meeting_files WHERE id=?",
+        (file_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute(
+        "INSERT INTO meeting_file_semantic_events "
+        "(file_id, user_id, source_revision, material_role, approval_status, "
+        "approval_reason, business_domain) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            file_id,
+            user_id,
+            int(row["source_revision"]),
+            str(row["material_role"]),
+            str(row["approval_status"]),
+            row["approval_reason"],
+            row["business_domain"],
+        ),
+    )
+    return int(row["source_revision"])
+
+
+def list_meeting_file_semantic_events(
+    conn: sqlite3.Connection,
+    file_id: int,
+    *,
+    user_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Return the immutable review trail for one meeting file."""
+    params: list[Any] = [file_id]
+    ownership = ""
+    if user_id is not None:
+        ownership = " AND e.user_id=?"
+        params.append(user_id)
+    params.append(max(1, min(limit, 500)))
+    rows = conn.execute(
+        "SELECT e.source_revision, e.material_role, e.approval_status, "
+        "e.approval_reason, e.changed_at, e.business_domain FROM meeting_file_semantic_events e "
+        "WHERE e.file_id=?" + ownership + " ORDER BY e.source_revision DESC, e.id DESC LIMIT ?",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def list_meeting_files(
@@ -167,7 +273,9 @@ def update_meeting_file_status(
     content_hash: str | None = _UNSET,
 ) -> None:
     """Update file processing status and transcript."""
-    current = conn.execute("SELECT status FROM meeting_files WHERE id=?", (file_id,)).fetchone()
+    current = conn.execute(
+        "SELECT status, transcript, content_hash FROM meeting_files WHERE id=?", (file_id,)
+    ).fetchone()
     if current is None:
         return
     normalized = assert_transition(str(current["status"]), status).value
@@ -190,6 +298,17 @@ def update_meeting_file_status(
     if content_hash is not _UNSET:
         set_parts.append("content_hash=?")
         params.append(content_hash)
+
+    source_changed = (transcript is not _UNSET and transcript != current["transcript"]) or (
+        content_hash is not _UNSET and content_hash != current["content_hash"]
+    )
+    if source_changed:
+        set_parts.extend(
+            (
+                "source_revision=source_revision+1",
+                "content_recorded_at=CURRENT_TIMESTAMP",
+            )
+        )
 
     params.append(file_id)
     # Column names in set_parts are hardcoded string literals from conditionals above.
@@ -276,44 +395,72 @@ def update_meeting_file_summary(
 def list_ready_file_ids_for_meetings(
     conn: sqlite3.Connection,
     meeting_ids: list[int],
+    *,
+    user_id: str | None = None,
 ) -> list[int]:
     """Return file IDs in 'ready' status for the given meeting IDs."""
     if not meeting_ids:
         return []
     placeholders = ",".join("?" for _ in meeting_ids)
-    rows = conn.execute(
-        f"SELECT id FROM meeting_files "
-        f"WHERE meeting_id IN ({placeholders}) AND status='ready' "
-        f"ORDER BY meeting_id, created_at",
-        meeting_ids,
-    ).fetchall()
+    sql = (
+        "SELECT mf.id FROM meeting_files mf "
+        "JOIN meetings m ON m.id=mf.meeting_id "
+        f"WHERE mf.meeting_id IN ({placeholders}) AND mf.status='ready'"
+    )
+    params: list[Any] = list(meeting_ids)
+    if user_id is not None:
+        sql += " AND m.user_id=?"
+        params.append(user_id)
+    sql += " ORDER BY mf.meeting_id, mf.created_at"
+    rows = conn.execute(sql, params).fetchall()
     return [row["id"] for row in rows]
 
 
 def list_recent_ready_file_ids(
     conn: sqlite3.Connection,
     limit: int = 50,
+    *,
+    user_id: str | None = None,
 ) -> list[int]:
     """Return file IDs across all meetings, ordered by most recent first."""
-    rows = conn.execute(
-        "SELECT id FROM meeting_files WHERE status='ready' ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    sql = (
+        "SELECT mf.id FROM meeting_files mf "
+        "JOIN meetings m ON m.id=mf.meeting_id "
+        "WHERE mf.status='ready'"
+    )
+    params: list[Any] = []
+    if user_id is not None:
+        sql += " AND m.user_id=?"
+        params.append(user_id)
+    sql += " ORDER BY mf.created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [row["id"] for row in rows]
 
 
 def get_meeting_files_summaries(
     conn: sqlite3.Connection,
     file_ids: list[int],
+    *,
+    user_id: str | None = None,
 ) -> dict[int, str]:
-    """Return {file_id: summary} for the given file IDs that have a summary."""
+    """Return summaries for the requested files, optionally owner-scoped."""
     if not file_ids:
         return {}
     placeholders = ",".join("?" for _ in file_ids)
+    sql = (
+        "SELECT mf.id, mf.summary FROM meeting_files mf "
+        "JOIN meetings m ON m.id=mf.meeting_id "
+        f"WHERE mf.id IN ({placeholders}) "
+        "AND mf.summary IS NOT NULL AND mf.summary != ''"
+    )
+    params: list[Any] = list(file_ids)
+    if user_id is not None:
+        sql += " AND m.user_id=?"
+        params.append(user_id)
     rows = conn.execute(
-        f"SELECT id, summary FROM meeting_files "
-        f"WHERE id IN ({placeholders}) AND summary IS NOT NULL AND summary != ''",
-        file_ids,
+        sql,
+        params,
     ).fetchall()
     return {row["id"]: row["summary"] for row in rows}
 
@@ -322,17 +469,18 @@ def get_file_metadata_bulk(
     conn: sqlite3.Connection,
     file_ids: list[int],
 ) -> dict[int, dict]:
-    """Return {file_id: {page_count, duration_seconds, file_type}} for the given file IDs."""
+    """Return routing and size metadata keyed by file ID."""
     if not file_ids:
         return {}
     placeholders = ",".join("?" for _ in file_ids)
     rows = conn.execute(
-        f"SELECT id, file_type, page_count, duration_seconds "
+        f"SELECT id, meeting_id, file_type, page_count, duration_seconds "
         f"FROM meeting_files WHERE id IN ({placeholders})",
         file_ids,
     ).fetchall()
     return {
         row["id"]: {
+            "meeting_id": row["meeting_id"],
             "file_type": row["file_type"] or "",
             "page_count": row["page_count"] or 0,
             "duration_seconds": row["duration_seconds"] or 0.0,

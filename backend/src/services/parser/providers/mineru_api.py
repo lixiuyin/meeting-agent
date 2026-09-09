@@ -21,9 +21,13 @@ import base64
 import io
 import json
 import logging
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+import anyio
 
 from src.core.config import settings
 
@@ -47,6 +51,11 @@ _LEGACY_BASE_SUFFIXES = (
 )
 
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"})
+_MAX_RESULT_ARCHIVE_BYTES = 100 * 1024 * 1024
+_MAX_ARCHIVE_ENTRIES = 2_000
+_MAX_ARCHIVE_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
+_MAX_SELECTED_FILE_BYTES = 50 * 1024 * 1024
+_MAX_COMPRESSION_RATIO = 200
 
 
 class MinerUAPIParser:
@@ -61,6 +70,25 @@ class MinerUAPIParser:
                 base = base[: -len(suffix)]
                 break
         return base.rstrip("/")
+
+    @staticmethod
+    def _validate_signed_url(url: str) -> None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        allowed = [
+            item.strip().lower().rstrip(".")
+            for item in settings.MINERU_RESULT_ALLOWED_HOSTS.split(",")
+            if item.strip()
+        ]
+        matched = any(
+            host == rule or (rule.startswith(".") and host.endswith(rule)) for rule in allowed
+        )
+        if parsed.scheme != "https" or not host or not matched:
+            raise ParserProviderError(
+                provider="mineru",
+                retryable=False,
+                cause=Exception(f"MinerU returned a non-allowlisted HTTPS URL host: {host!r}"),
+            )
 
     @staticmethod
     def _raise_http_error(resp: Any, *, context: str) -> None:
@@ -203,8 +231,14 @@ class MinerUAPIParser:
         httpx adds one for ``content=`` payloads, so we pass an empty header
         explicitly to suppress it.
         """
-        body = await asyncio.to_thread(file_path.read_bytes)
-        resp = await client.put(upload_url, content=body, headers={"Content-Type": ""})
+        self._validate_signed_url(upload_url)
+
+        async def _chunks():
+            async with await anyio.open_file(file_path, "rb") as handle:
+                while chunk := await handle.read(1024 * 1024):
+                    yield chunk
+
+        resp = await client.put(upload_url, content=_chunks(), headers={"Content-Type": ""})
         if resp.status_code >= 400:
             raise ParserProviderError(
                 provider="mineru",
@@ -291,31 +325,73 @@ class MinerUAPIParser:
                 retryable=False,
                 cause=Exception(f"Batch result has no full_zip_url: {entry}"),
             )
-        resp = await client.get(full_zip_url)
-        if resp.status_code >= 400:
-            raise ParserProviderError(
-                provider="mineru",
-                retryable=resp.status_code >= 500,
-                cause=Exception(f"Result download failed (HTTP {resp.status_code})"),
-            )
-        markdown, content_list = self._unpack_zip(resp.content)
+        self._validate_signed_url(str(full_zip_url))
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as archive:
+            total = 0
+            async with client.stream("GET", full_zip_url) as resp:
+                if resp.status_code >= 400:
+                    raise ParserProviderError(
+                        provider="mineru",
+                        retryable=resp.status_code >= 500,
+                        cause=Exception(f"Result download failed (HTTP {resp.status_code})"),
+                    )
+                content_length = int(resp.headers.get("content-length", "0") or 0)
+                if content_length > _MAX_RESULT_ARCHIVE_BYTES:
+                    raise ParserProviderError(
+                        provider="mineru",
+                        retryable=False,
+                        cause=Exception("MinerU result archive exceeds the safety limit"),
+                    )
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MAX_RESULT_ARCHIVE_BYTES:
+                        raise ParserProviderError(
+                            provider="mineru",
+                            retryable=False,
+                            cause=Exception("MinerU result archive exceeds the safety limit"),
+                        )
+                    archive.write(chunk)
+            archive.seek(0)
+            markdown, content_list = self._unpack_zip_file(archive)
         return self._build_parsed_doc(markdown, content_list, entry, file_path)
 
     @staticmethod
     def _unpack_zip(zip_bytes: bytes) -> tuple[str, list]:
         """Pull markdown + content_list.json out of the result archive."""
+        if len(zip_bytes) > _MAX_RESULT_ARCHIVE_BYTES:
+            raise ValueError("MinerU result archive exceeds the safety limit")
+        return MinerUAPIParser._unpack_zip_file(io.BytesIO(zip_bytes))
+
+    @staticmethod
+    def _unpack_zip_file(archive: Any) -> tuple[str, list]:
+        """Validate archive expansion limits and extract selected result files."""
         markdown = ""
         content_list: list = []
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            for name in zf.namelist():
+        with zipfile.ZipFile(archive) as zf:
+            infos = zf.infolist()
+            if len(infos) > _MAX_ARCHIVE_ENTRIES:
+                raise ValueError("MinerU result archive contains too many entries")
+            if sum(info.file_size for info in infos) > _MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise ValueError("MinerU result archive expands beyond the safety limit")
+            for info in infos:
+                if info.file_size > _MAX_SELECTED_FILE_BYTES:
+                    raise ValueError("MinerU result file exceeds the safety limit")
+                if info.file_size and info.compress_size == 0:
+                    raise ValueError("MinerU result archive has an invalid compression ratio")
+                if (
+                    info.compress_size
+                    and info.file_size / info.compress_size > _MAX_COMPRESSION_RATIO
+                ):
+                    raise ValueError("MinerU result archive has a suspicious compression ratio")
+                name = info.filename
                 lower = name.lower()
                 if not markdown and (
                     lower.endswith("/full.md") or lower == "full.md" or lower.endswith(".md")
                 ):
-                    markdown = zf.read(name).decode("utf-8", errors="replace")
+                    markdown = zf.read(info).decode("utf-8", errors="replace")
                 if not content_list and lower.endswith("content_list.json"):
                     try:
-                        parsed = json.loads(zf.read(name).decode("utf-8", errors="replace"))
+                        parsed = json.loads(zf.read(info).decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
                         parsed = []
                     if isinstance(parsed, list):
@@ -444,7 +520,7 @@ class MinerUAPIParser:
 
         if suffix == ".pdf":
             try:
-                import fitz  # PyMuPDF — only used for asset attachment
+                import pymupdf as fitz  # only used for asset attachment
 
                 with fitz.open(str(file_path)) as doc:
                     rendered: dict[int, str] = {}

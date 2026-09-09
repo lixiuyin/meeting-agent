@@ -1,6 +1,7 @@
 """Query rewriting and adaptive top-k logic."""
 
 import asyncio
+import hashlib
 import logging
 import re
 import threading
@@ -40,6 +41,12 @@ _COMPLEXITY_KEYWORDS = {
     "what are the",
     "could you",
     "can you",
+    "generate",
+    "proposal",
+    "write",
+    "create",
+    "draft",
+    "summarize",
 }
 _SIMPLE_QUESTION_MIN_CHARS = 30
 _SIMPLE_QUERY_TOP_K = 3  # QR-4: Extracted constant, was hardcoded 3
@@ -47,16 +54,81 @@ _MAX_TOP_K_HARD_LIMIT = 50  # M-14: Prevent unbounded retrieval
 
 # Anaphora / pronouns that signal the query needs context rewriting
 _ANAPHORA_PATTERN = re.compile(
-    r"\b(it|that|this|they|them|these|those|the above|the previous|the last)\b",
+    r"\b(it|that|this|they|them|these|those|he|she|his|her|the above|the previous|the last)\b"
+    r"|(?<!其)[他她它](?:们)?|上述|前者|后者|刚才|之前提到|继续"
+    r"|^(?:那|这)(?:个|些|项|件|么|截止|负责人)|呢[\uff1f?]?$",
     re.IGNORECASE,
 )
 
 _REWRITE_MAX_TOKENS = 6  # skip rewrite if query is this short or less
 
+
+def _is_context_free_query(question: str, *, include_summary: bool = False) -> bool:
+    """Return whether a standalone fact lookup can use the low-latency path.
+
+    The normal rewrite/resolver and hierarchical summary routing are useful for
+    follow-ups and broad analytical questions, but they add multiple remote
+    calls for short, self-contained lookups. Keep the gate conservative for
+    follow-ups and comparisons; explicitly scoped summaries may skip redundant
+    query rewriting but still require full answer generation. The
+    word budget is configurable so deployments can tune recall without code.
+    """
+    if not question or _ANAPHORA_PATTERN.search(question):
+        return False
+    folded = question.casefold()
+    # Chinese has no whitespace word boundaries. Do not treat a paragraph,
+    # comparison or contextual follow-up as a one-word fact lookup.
+    if len(re.findall(r"[\u3400-\u9fff]", question)) > 24 or any(
+        marker in folded
+        for marker in (
+            "比较",
+            "对比",
+            "分析",
+            "为什么",
+            "原因",
+            "关系",
+            "所有",
+            "全部",
+            "这些",
+            "那些",
+            "上述",
+            "它们",
+            "继续",
+            "总结",
+            "概览",
+            "主要内容",
+        )
+    ):
+        return False
+    # ``what is/are the ...`` is common factual lookup phrasing; keep it on the
+    # fast path. Other complexity markers (compare, explain, list all, why)
+    # still require the full resolver and broad-recall pipeline. Short scoped
+    # summaries are explicitly relaxed below for the streaming SLO guard.
+    complexity_markers = _COMPLEXITY_KEYWORDS - {"what is the", "what are the"}
+    summary_relaxation = include_summary and any(
+        marker in folded for marker in {"summarize", "summary of", "overview"}
+    )
+    if any(keyword in folded for keyword in complexity_markers) and not summary_relaxation:
+        return False
+    return include_summary or not is_summary_intent(question)
+
+
+def is_fast_query(question: str, *, include_summary: bool = False) -> bool:
+    """Use the same multilingual safety gate as resolver and query rewriting."""
+    if not _is_context_free_query(question, include_summary=include_summary):
+        return False
+    from ...core.config import settings as _settings
+
+    if not getattr(_settings, "RAG_FAST_PATH_ENABLED", True):
+        return False
+    max_words = max(1, int(getattr(_settings, "RAG_FAST_PATH_MAX_WORDS", 12)))
+    return len(question.split()) <= max_words
+
+
 # Singleton for the lightweight rewrite model (thread-safe)
 _rewrite_llm: Any = None
 _rewrite_llm_lock = threading.Lock()
-_cached_rewrite_model: str | None = None
+_cached_rewrite_key: tuple[str, str, str] | None = None
 
 # C-2: TTL cache for query rewrites to avoid repeated LLM calls for identical queries.
 _REWRITE_CACHE: TTLCache = TTLCache(maxsize=2048, ttl=600)
@@ -76,28 +148,34 @@ register_epoch_cache(_clear_rewrite_cache)
 def _get_rewrite_llm() -> Any:
     """Get or create the singleton lightweight rewrite model (thread-safe).
 
-    All reads/writes of ``_rewrite_llm`` and ``_cached_rewrite_model`` happen
+    All reads/writes of ``_rewrite_llm`` and ``_cached_rewrite_key`` happen
     inside ``_rewrite_llm_lock`` to prevent data races under concurrent access.
     """
-    global _rewrite_llm, _cached_rewrite_model
+    global _rewrite_llm, _cached_rewrite_key
     rewrite_model = settings.QUERY_REWRITE_MODEL
     if not rewrite_model:
         with _rewrite_llm_lock:
             if _rewrite_llm is not None:
                 _rewrite_llm = None
-                _cached_rewrite_model = None
+                _cached_rewrite_key = None
                 logger.info("Query rewrite LLM singleton cleared (model unset)")
         return None
     with _rewrite_llm_lock:
-        # If settings changed, invalidate the singleton
-        if _cached_rewrite_model is not None and _cached_rewrite_model != rewrite_model:
+        api_key = settings.LLM_API_KEY.get_secret_value()
+        base_url = settings.LLM_BASE_URL or "https://api.openai.com/v1"
+        rewrite_key = (
+            rewrite_model,
+            base_url,
+            hashlib.sha256(api_key.encode()).hexdigest() if api_key else "",
+        )
+        # An older request snapshot may recreate a client after a global reset.
+        # Key every access so a newer request can never inherit that client.
+        if _cached_rewrite_key is not None and _cached_rewrite_key != rewrite_key:
             _rewrite_llm = None
-            _cached_rewrite_model = None
+            _cached_rewrite_key = None
         if _rewrite_llm is None:
             from langchain_openai import ChatOpenAI
 
-            api_key = settings.LLM_API_KEY.get_secret_value()
-            base_url = settings.LLM_BASE_URL or "https://api.openai.com/v1"
             kwargs: dict[str, Any] = {
                 "model": rewrite_model,
                 "temperature": 0.0,
@@ -108,16 +186,16 @@ def _get_rewrite_llm() -> Any:
             if base_url:
                 kwargs["base_url"] = base_url
             _rewrite_llm = ChatOpenAI(**kwargs)  # type: ignore[arg-type]
-            _cached_rewrite_model = rewrite_model
+            _cached_rewrite_key = rewrite_key
         return _rewrite_llm
 
 
 def reset_rewrite_llm() -> None:
     """Reset the cached rewrite model singleton (call when settings change)."""
-    global _rewrite_llm, _cached_rewrite_model
+    global _rewrite_llm, _cached_rewrite_key
     with _rewrite_llm_lock:
         _rewrite_llm = None
-        _cached_rewrite_model = None
+        _cached_rewrite_key = None
     with _REWRITE_CACHE_LOCK:
         _REWRITE_CACHE.clear()
 
@@ -125,7 +203,7 @@ def reset_rewrite_llm() -> None:
 def _is_simple_query(question: str) -> bool:
     """Return True if the query is short and has no anaphora, making rewrite unnecessary."""
     words = question.split()
-    return len(words) <= _REWRITE_MAX_TOKENS and not _ANAPHORA_PATTERN.search(question)
+    return len(words) <= _REWRITE_MAX_TOKENS and _is_context_free_query(question)
 
 
 async def rewrite_query(
@@ -138,7 +216,7 @@ async def rewrite_query(
     When ``speaker_names`` are provided, they are injected into the prompt
     so the rewritten query preserves speaker identity (HIGH-6).
     """
-    if _is_simple_query(question):
+    if _is_simple_query(question) or is_fast_query(question):
         logger.debug("Skipping rewrite for simple query: '%s'", question[:50])
         return question
 
@@ -178,13 +256,18 @@ async def rewrite_query(
             speaker_hint = f"\nKnown speakers in this context: {', '.join(safe_names)}."
     formatted = prompt.format_messages(query=question, speaker_hint=speaker_hint)
     try:
-        from ..llm import cached_retry_invoke
-
+        # Use the provider's async transport so the optional rewrite deadline
+        # cancels the request. A timed-out worker thread otherwise keeps retrying
+        # in the background and delays process shutdown. Successful rewrites
+        # already have their own scoped cache above; provider retries stay
+        # inside this single deadline.
         response = await asyncio.wait_for(
-            asyncio.to_thread(cached_retry_invoke, llm, formatted),
+            llm.ainvoke(formatted),
             timeout=settings.QUERY_REWRITE_TIMEOUT_SECONDS,
         )
-        result = response.content if hasattr(response, "content") else str(response)
+        from ..llm import extract_visible_text
+
+        result = extract_visible_text(response)
         # QR-2: Log token usage for cost observability
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             token_in = response.usage_metadata.get("input_tokens", 0)
@@ -240,6 +323,8 @@ def determine_adaptive_top_k(
         if is_summary_intent(question):
             return min(max(base, settings.SUMMARY_INTENT_TOP_K), _MAX_TOP_K_HARD_LIMIT)
         return min(max(base, 8), _MAX_TOP_K_HARD_LIMIT)
+    if is_summary_intent(question):
+        return min(max(base, settings.SUMMARY_INTENT_TOP_K), _MAX_TOP_K_HARD_LIMIT)
     q = question.lower().strip()
     if len(q) < _SIMPLE_QUESTION_MIN_CHARS and not any(kw in q for kw in _COMPLEXITY_KEYWORDS):
         return _SIMPLE_QUERY_TOP_K

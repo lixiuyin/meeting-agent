@@ -9,7 +9,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from ...core import database as db
 from ...core.database import get_write_connection
-from . import settings
 from ._common import (
     _CACHE_MAX_SIZE,
     _CACHE_TTL_SECONDS,
@@ -34,23 +33,17 @@ class SQLiteChatMessageHistory(BaseChatMessageHistory):
             "system": SystemMessage,
         }
         with db.get_connection() as conn:
-            rows = db.get_messages(conn, self.session_id, limit=settings.SESSION_MAX_HISTORY)
+            # Prompt history is a bounded hot window. Older context is read
+            # directly from SQL by the durable incremental summarizer.
+            rows = db.get_messages(conn, self.session_id, limit=200)
         self._messages = [
             role_map[r["role"]](content=r["content"]) for r in rows if r["role"] in role_map
         ]
 
-        # Apply token-based truncation if configured
-        if settings.SESSION_MAX_TOKENS > 0:
-            try:
-                from ..tokenizer import truncate_messages
-
-                self._messages = truncate_messages(
-                    self._messages,
-                    settings.SESSION_MAX_TOKENS,
-                    settings.LLM_MODEL,
-                )
-            except Exception:
-                logger.warning("Token truncation failed, using full history", exc_info=True)
+        # Do not token-truncate here. The chain must first see the bounded raw
+        # message window so it can summarize older turns before applying the
+        # generation budget. Resolver and generation consumers sanitize their
+        # own copies immediately before prompt construction.
 
         # Update session access stats
         try:
@@ -105,7 +98,7 @@ class SQLiteChatMessageHistory(BaseChatMessageHistory):
 
 
 # ---- Session history cache ----
-_histories: TTLCache[str, SQLiteChatMessageHistory] = TTLCache(
+_histories: TTLCache[str, SQLiteChatMessageHistory] = TTLCache[str, SQLiteChatMessageHistory](
     maxsize=_CACHE_MAX_SIZE,
     ttl=_CACHE_TTL_SECONDS,
 )
@@ -118,7 +111,12 @@ def get_session_history(session_id: str) -> SQLiteChatMessageHistory:
         cached = _histories.get(session_id)
         if cached is not None:
             return cached
-        history = SQLiteChatMessageHistory(session_id)
+    # Database I/O must not block unrelated cache hits under the global lock.
+    history = SQLiteChatMessageHistory(session_id)
+    with _histories_lock:
+        cached = _histories.get(session_id)
+        if cached is not None:
+            return cached
         _histories[session_id] = history
         return history
 
@@ -159,7 +157,7 @@ def _persist_session_cache() -> None:
     import tempfile
 
     with _histories_lock:
-        cache_data = {k: _serialize_messages(v.messages) for k, v in _histories.items()}
+        cache_data = {k: [] for k in _histories}
     try:
         _SESSION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         # Write to temp file first, then atomically rename
@@ -201,9 +199,17 @@ def _load_session_cache() -> None:
     if not cache_data:
         return
 
-    with _histories_lock:
-        for session_id, messages_data in cache_data.items():
-            history = SQLiteChatMessageHistory(session_id)
-            history._messages = _deserialize_messages(messages_data)
+    # JSON is a warm-up hint, never an authoritative copy of the transcript.
+    # In particular a stale snapshot must not resurrect deleted sessions or
+    # replace newer SQL messages after an unclean shutdown.
+    for session_id in cache_data:
+        with db.get_connection() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM chat_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        if not exists:
+            continue
+        history = SQLiteChatMessageHistory(session_id)
+        with _histories_lock:
             _histories[session_id] = history
     logger.info("Session cache loaded (%d entries)", len(cache_data))

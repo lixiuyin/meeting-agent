@@ -57,3 +57,34 @@ Targets should be reviewed every quarter based on real production telemetry.
 - Weekly: review SLI trend and burn rate
 - Monthly: evaluate whether objectives remain realistic
 - Quarterly: adjust targets after architecture or traffic changes
+
+## Completion-aware collection and acceptance
+
+`chat_completion_total{endpoint,outcome}` records final outcomes, including
+`stream_error` and `incomplete` under HTTP 200. `chat_completion_duration_seconds`
+measures through the final response body, with a bucket at the 3-second target.
+The existing HTTP histogram measures response-header latency and must not be used
+as streaming completion latency. The completion metric includes queue waiting. Its current request denominator
+includes all POSTs to the two chat endpoints: HTTP 4xx and 5xx both count as
+`http_error`. Interpret validation/authentication traffic accordingly; this is
+a complete-response success SLI, not a server-5xx-only availability measure.
+
+Load `monitoring/prometheus/alerts.yaml`; validate it with `promtool check rules`
+and `promtool test rules monitoring/prometheus/slo-tests.yaml`. Configure the
+existing `X-API-Key` scrape header using a secret file and retain at least 31 days
+of Prometheus history. The default job name and scrape interval are
+`meeting-agent-backend` and 30 seconds.
+
+From `backend`, run:
+
+```sh
+.venv/bin/python -m scripts.slo_report \
+  --prometheus-url http://127.0.0.1:9090 \
+  --output benchmark-results/chat-slo-30d.json
+```
+
+This is a read-only report. Missing data, metrics younger than 30 days, or scrape
+coverage below 99.5% produce null scores and a nonzero exit status. A passing chat
+report does not certify ingestion, human business quality, or release readiness.
+Recording-rule values alone do not establish a full 30-day observation window.
+These calculations follow the [Prometheus query function definitions](https://prometheus.io/docs/prometheus/latest/querying/functions/).

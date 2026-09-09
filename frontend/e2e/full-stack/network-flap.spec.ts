@@ -1,61 +1,39 @@
-/**
- * E2E: Network flap handling — client disconnects and reconnects during streaming.
- *
- * Tests that a network interruption during SSE streaming does not corrupt
- * subsequent sessions or cause server-side errors.
- *
- * Prerequisites: Docker stack running at localhost:8307.
- * Run: npx playwright test network-flap.spec.ts
- */
-import { test, expect } from "@playwright/test";
-
-const BASE = "http://localhost:8307";
+/** E2E: a transient API network failure does not strand the History UI. */
+import { test, expect } from "./fixtures";
+import { deleteSessionIfPresent, seedChatSession } from "./test-data";
 
 test.describe("Network Flap Resilience", () => {
-  const headers = {
-    "X-API-Key": process.env.VITE_API_KEY || "",
-    "Content-Type": "application/json",
-  };
+  test("session list recovers after a simulated network flap", async ({ page, request }) => {
+    const marker = `NETWORK-FLAP-${Date.now()}`;
+    const sessionId = seedChatSession({ title: marker, marker, turns: 1 });
+    let shouldAbort = true;
+    const sessionsRequest = /\/api\/v1\/sessions(?:\?.*)?$/;
 
-  test("chat session survives a simulated network flap", async ({ request }) => {
-    // Step 1: Create a session with a successful request
-    const resp1 = await request.post(`${BASE}/api/v1/chat`, {
-      headers,
-      data: { question: "What is testing?" },
-    });
-    expect(resp1.status()).toBe(200);
-    const body1 = await resp1.json();
-    const sessionId = body1.session_id;
-
-    // Step 2: Simulate flap — abort a streaming request on the same session
-    const controller = new AbortController();
-    const streamPromise = fetch(`${BASE}/api/v1/chat/stream`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        question: "Tell me more",
-        session_id: sessionId,
-      }),
-      signal: controller.signal,
-    });
-
-    // Abort mid-stream
-    setTimeout(() => controller.abort(), 300);
     try {
-      await streamPromise;
-    } catch {
-      // Expected
-    }
+      await page.route(sessionsRequest, async (route) => {
+        if (shouldAbort) {
+          shouldAbort = false;
+          await route.abort("internetdisconnected");
+          return;
+        }
+        await route.continue();
+      });
 
-    // Step 3: Verify the same session still works after the flap
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const resp2 = await request.post(`${BASE}/api/v1/chat`, {
-      headers,
-      data: {
-        question: "Final question after flap",
-        session_id: sessionId,
-      },
-    });
-    expect(resp2.status()).toBe(200);
+      await page.goto("/history");
+      await expect.poll(() => shouldAbort).toBe(false);
+
+      const retryResponse = page.waitForResponse(
+        (response) => response.request().method() === "GET" && sessionsRequest.test(response.url()),
+      );
+      await page.getByRole("button", { name: /refresh sessions/i }).click();
+      expect((await retryResponse).ok()).toBeTruthy();
+      await expect(page.getByText(marker, { exact: true })).toBeVisible();
+
+      const messages = await request.get(`/api/v1/sessions/${sessionId}/messages`);
+      expect(messages.ok(), await messages.text()).toBeTruthy();
+      expect((await messages.json()).total).toBe(2);
+    } finally {
+      await deleteSessionIfPresent(request, sessionId);
+    }
   });
 });

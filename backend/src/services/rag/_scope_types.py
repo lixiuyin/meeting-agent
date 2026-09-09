@@ -7,6 +7,7 @@ Lives in its own module so that :mod:`_funnel_narrow` and
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -47,21 +48,25 @@ class BroadRecallContext:
     """
 
     def __init__(self) -> None:
-        self._cache: dict[frozenset[int], list[dict]] = {}
-        self._futures: dict[frozenset[int], asyncio.Future[list[dict]]] = {}
+        self._cache: dict[tuple[frozenset[int], str], list[dict]] = {}
+        self._futures: dict[tuple[frozenset[int], str], asyncio.Future[list[dict]]] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
     def make_key(
         meeting_ids: list[int] | None,
         anchor_meeting_ids: list[int] | None,
-    ) -> frozenset[int]:
-        """Compute a scope key from the effective meeting scope."""
-        return frozenset(set(meeting_ids or []) | set(anchor_meeting_ids or []))
+        query: str = "",
+    ) -> tuple[frozenset[int], str]:
+        """Compute a cache key from scope and semantic query identity."""
+        normalized = " ".join(query.casefold().split())
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+        scope = frozenset(set(meeting_ids or []) | set(anchor_meeting_ids or []))
+        return scope, digest
 
     async def get_or_compute(
         self,
-        key: frozenset[int],
+        key: tuple[frozenset[int], str],
         compute: Callable[[], Awaitable[list[dict]]],
     ) -> list[dict]:
         """Return cached docs for *key*, or run *compute* and cache.
@@ -86,7 +91,7 @@ class BroadRecallContext:
 
     async def _run_and_cache(
         self,
-        key: frozenset[int],
+        key: tuple[frozenset[int], str],
         compute: Callable[[], Awaitable[list[dict]]],
     ) -> list[dict]:
         try:

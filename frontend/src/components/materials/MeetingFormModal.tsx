@@ -1,4 +1,5 @@
 import { Modal, Input } from "antd";
+import { useIntl } from "react-intl";
 
 export interface EditModalData {
   id: number;
@@ -22,9 +23,10 @@ export default function MeetingFormModal({
   onSave,
   onCancel,
 }: MeetingFormModalProps) {
+  const { formatMessage } = useIntl();
   return (
     <Modal
-      title="Edit Meeting"
+      title={formatMessage({ id: "materials.edit.title" })}
       open={open}
       onCancel={onCancel}
       centered
@@ -33,32 +35,38 @@ export default function MeetingFormModal({
       onOk={() => {
         if (data) onSave(data);
       }}
-      okText="Save"
+      okText={formatMessage({ id: "common.save" })}
       okButtonProps={{ disabled: !data?.title.trim() }}
       zIndex={1220}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Title</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+            {formatMessage({ id: "materials.edit.name" })}
+          </div>
           <Input
             value={data?.title ?? ""}
             onChange={(e) => onChange((prev) => (prev ? { ...prev, title: e.target.value } : null))}
-            placeholder="Meeting title"
+            placeholder={formatMessage({ id: "materials.edit.namePlaceholder" })}
           />
         </div>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Description</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+            {formatMessage({ id: "materials.edit.description" })}
+          </div>
           <Input.TextArea
             value={data?.description ?? ""}
             onChange={(e) =>
               onChange((prev) => (prev ? { ...prev, description: e.target.value } : null))
             }
-            placeholder="Meeting description"
+            placeholder={formatMessage({ id: "materials.edit.descriptionPlaceholder" })}
             rows={3}
           />
         </div>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Meeting Date</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+            {formatMessage({ id: "materials.edit.date" })}
+          </div>
           <Input
             type="date"
             value={data?.meeting_date ?? ""}

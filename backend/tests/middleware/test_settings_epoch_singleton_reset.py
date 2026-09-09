@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.core.config import activate_settings_snapshot, build_settings_snapshot, settings
 from src.services.embedder import get_embeddings, reset_embeddings
 from src.services.llm import get_llm, reset_llm
 from src.services.rag._reranker import reset_reranker_state
@@ -38,3 +39,27 @@ class TestSettingsEpochSingletonReset:
         for _ in range(3):
             reset_llm()
             get_llm()
+
+    def test_new_request_never_reuses_client_created_by_old_snapshot(self, monkeypatch):
+        from src.services.llm import _providers
+
+        monkeypatch.setattr(settings, "LLM_BINDING", "old-test-provider")
+        old_snapshot = build_settings_snapshot(epoch=1)
+        monkeypatch.setattr(settings, "LLM_BINDING", "new-test-provider")
+        monkeypatch.setitem(
+            _providers._LLM_CREATORS,
+            "old-test-provider",
+            lambda model_name=None: {"provider": "old", "model": model_name},
+        )
+        monkeypatch.setitem(
+            _providers._LLM_CREATORS,
+            "new-test-provider",
+            lambda model_name=None: {"provider": "new", "model": model_name},
+        )
+        reset_llm()
+
+        with activate_settings_snapshot(old_snapshot):
+            assert get_llm() == {"provider": "old", "model": None}
+
+        assert get_llm() == {"provider": "new", "model": None}
+        reset_llm()

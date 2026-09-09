@@ -1,6 +1,7 @@
 import hashlib
 import threading
 import time
+from typing import Any, cast
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -9,6 +10,7 @@ from . import settings
 from ._common import logger
 
 _memory_vectorstore: "MemoryVectorStore | None" = None
+_memory_vectorstore_embeddings_id: int | None = None
 _vectorstore_lock = threading.Lock()
 
 # Per-user circuit breaker with half-open probe and exponential backoff.
@@ -64,9 +66,10 @@ def _vector_cb_open(collection: str, user_id: str | None = None) -> bool:
         count, last_ts, wait, half_open = entry
         if count < _VECTOR_CB_MAX_FAILURES:
             return False
-        # Already in half_open — allow one probe
+        # A probe is already in flight.  Block every other caller until that
+        # probe either resets the breaker or records another failure.
         if half_open:
-            return False
+            return True
         # Check if cooldown has elapsed
         elapsed = time.monotonic() - last_ts
         if elapsed >= wait:
@@ -115,6 +118,7 @@ class MemoryVectorStore:
         category: str | None = None,
         meeting_ids: list[int] | None = None,
         file_ids: list[int] | None = None,
+        generation: str | None = None,
     ) -> str | None:
         """Add or update a memory in the vector store. Returns embedding_id.
 
@@ -131,8 +135,12 @@ class MemoryVectorStore:
             return None
         try:
             embedding_id = self._memory_id(user_id, key)
+            if generation is not None:
+                embedding_id += f"_v{generation}"
             text = f"[{category or 'general'}] {key}: {value}" if category else f"{key}: {value}"
             metadata: dict = {"user_id": user_id, "key": key, "importance": importance}
+            if generation is not None:
+                metadata["generation"] = generation
             if category:
                 metadata["category"] = category
             if meeting_ids:
@@ -159,6 +167,7 @@ class MemoryVectorStore:
         key: str,
         importance: float,
         *,
+        embedding_id: str | None,
         category: str | None = None,
         meeting_ids: list[int] | None = None,
         file_ids: list[int] | None = None,
@@ -184,8 +193,14 @@ class MemoryVectorStore:
                 user_id,
             )
             return False
+        if not embedding_id:
+            logger.debug(
+                "Memory %s/%s has no published embedding; importance sync deferred",
+                user_id,
+                key,
+            )
+            return False
         try:
-            embedding_id = self._memory_id(user_id, key)
             metadata: dict = {"user_id": user_id, "key": key, "importance": importance}
             if category:
                 metadata["category"] = category
@@ -211,11 +226,8 @@ class MemoryVectorStore:
             return False
 
     def delete(self, embedding_id: str) -> None:
-        """Delete a memory vector."""
-        try:
-            self._chromadb.delete(ids=[embedding_id])
-        except Exception as e:
-            logger.warning("Failed to delete memory vector %s: %s", embedding_id, e, exc_info=True)
+        """Delete a memory vector, propagating failures to the retry owner."""
+        self._chromadb.delete(ids=[embedding_id])
 
     def similarity_search(
         self,
@@ -225,6 +237,7 @@ class MemoryVectorStore:
         min_importance: float = 1,
         *,
         fetch_multiplier: int = 2,
+        allowed_keys: list[str] | None = None,
     ) -> list[dict]:
         """Semantic search over user memories.
 
@@ -234,11 +247,45 @@ class MemoryVectorStore:
         (via ``MEMORY_SEARCH_OVERSAMPLE_FACTOR``) to avoid filter-induced
         recall collapse when top-K is dominated by out-of-scope memories.
         """
+        cb_collection = self._collection_name
+        if _vector_cb_open(cb_collection, user_id):
+            from ...core.metrics import MEMORY_SEARCH_TOTAL
+
+            MEMORY_SEARCH_TOTAL.labels(status="vector_degraded").inc()
+            logger.debug(
+                "Vector store circuit breaker open for user %s; using SQL fallback",
+                user_id,
+            )
+            return []
+        if allowed_keys is not None and not allowed_keys:
+            return []
         try:
             fetch_k = max(top_k * max(fetch_multiplier, 1), top_k)
-            results = self._chromadb.similarity_search_with_score(
-                query, k=fetch_k, filter={"user_id": user_id}
-            )
+            base_filters: list[dict] = [
+                {"user_id": user_id},
+                {"key": {"$ne": "__profile__"}},
+            ]
+            # Chroma's `$in` filter is bounded in batches so large user stores
+            # do not create oversized metadata expressions.  Query every
+            # eligible batch and globally merge by distance.
+            key_batches: list[list[str] | None]
+            if allowed_keys is None:
+                key_batches = [None]
+            else:
+                key_batches = [allowed_keys[i : i + 200] for i in range(0, len(allowed_keys), 200)]
+            results = []
+            for key_batch in key_batches:
+                filters = list(base_filters)
+                if key_batch is not None:
+                    filters.append({"key": {"$in": key_batch}})
+                results.extend(
+                    cast(Any, self._chromadb).similarity_search_with_score(
+                        query,
+                        k=min(fetch_k, len(key_batch)) if key_batch is not None else fetch_k,
+                        filter={"$and": filters},
+                    )
+                )
+            results.sort(key=lambda item: float(item[1]))
             memories = []
             for doc, score in results:
                 meta = doc.metadata
@@ -250,6 +297,7 @@ class MemoryVectorStore:
                 raw_fids = meta.get("file_ids")
                 entry = {
                     "key": meta["key"],
+                    "generation": meta.get("generation"),
                     "content": doc.page_content,
                     "score": float(score),
                     "importance": meta.get("importance", 3),
@@ -264,8 +312,15 @@ class MemoryVectorStore:
                 memories.append(entry)
                 if len(memories) >= top_k:
                     break
+            _vector_cb_reset(cb_collection, user_id)
             return memories
         except Exception as e:
+            _vector_cb_fail(cb_collection, user_id)
+            # The SQL importance fallback remains available, but surface the
+            # degraded vector path instead of reporting a silent success.
+            from ...core.metrics import MEMORY_SEARCH_TOTAL
+
+            MEMORY_SEARCH_TOTAL.labels(status="vector_degraded").inc()
             logger.error("Memory semantic search failed: %s", e, exc_info=True)
             return []
 
@@ -279,15 +334,26 @@ class MemoryVectorStore:
 
 def get_memory_vectorstore() -> MemoryVectorStore:
     """Get or create the singleton memory vector store."""
-    global _memory_vectorstore
-    if _memory_vectorstore is None:
-        with _vectorstore_lock:
-            if _memory_vectorstore is None:
-                from ..embedder import get_embeddings
+    global _memory_vectorstore, _memory_vectorstore_embeddings_id
+    from ..embedder import get_embeddings
 
-                _memory_vectorstore = MemoryVectorStore(get_embeddings())
+    embeddings = get_embeddings()
+    embeddings_id = id(embeddings)
+    if _memory_vectorstore is None or _memory_vectorstore_embeddings_id != embeddings_id:
+        with _vectorstore_lock:
+            if _memory_vectorstore is None or _memory_vectorstore_embeddings_id != embeddings_id:
+                _memory_vectorstore = MemoryVectorStore(embeddings)
+                _memory_vectorstore_embeddings_id = embeddings_id
                 logger.info("MemoryVectorStore initialized")
     return _memory_vectorstore
+
+
+def reset_memory_vectorstore() -> None:
+    """Drop the cached wrapper after embedding configuration changes."""
+    global _memory_vectorstore, _memory_vectorstore_embeddings_id
+    with _vectorstore_lock:
+        _memory_vectorstore = None
+        _memory_vectorstore_embeddings_id = None
 
 
 def reconcile_orphan_memory_vectors() -> int:

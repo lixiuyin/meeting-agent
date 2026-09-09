@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from ..models.schemas import ErrorResponse
+from ..models.schemas._common import RequestValidationErrorResponse
 from .routers import (
     chat,
     file_download,
@@ -14,6 +15,7 @@ from .routers import (
     skills,
     websocket,
 )
+from .routers.meetings._speakers import media_router as speaker_media_router
 
 # Common error responses surfaced by FastAPI/middleware/handlers across most
 # routes. Declared once here so the OpenAPI schema documents them on every
@@ -25,6 +27,10 @@ _COMMON_ERROR_RESPONSES: dict[int | str, dict] = {
     403: {"model": ErrorResponse, "description": "Forbidden"},
     404: {"model": ErrorResponse, "description": "Not Found"},
     409: {"model": ErrorResponse, "description": "Conflict"},
+    422: {
+        "model": ErrorResponse | RequestValidationErrorResponse,
+        "description": "Request validation or application input error",
+    },
     429: {"model": ErrorResponse, "description": "Too Many Requests"},
     500: {"model": ErrorResponse, "description": "Internal Server Error"},
 }
@@ -37,6 +43,7 @@ def register_routers(app: FastAPI) -> None:
     # endpoint (with dual header+token auth) takes precedence over the meetings
     # router's auth-only endpoint for the same path.
     app.include_router(file_download.router, prefix=prefix, responses=_COMMON_ERROR_RESPONSES)
+    app.include_router(speaker_media_router, prefix=prefix, responses=_COMMON_ERROR_RESPONSES)
     app.include_router(meetings.router, prefix=prefix, responses=_COMMON_ERROR_RESPONSES)
     app.include_router(chat.router, prefix=prefix, responses=_COMMON_ERROR_RESPONSES)
     app.include_router(sessions.router, prefix=prefix, responses=_COMMON_ERROR_RESPONSES)

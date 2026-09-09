@@ -7,6 +7,7 @@ import {
   parseApiErrorPayload,
 } from "./client-core";
 import { reportNonCriticalError } from "../utils/monitoring";
+import type { components } from "./generated";
 
 /**
  * Combine multiple AbortSignals so that aborting any one of them aborts the
@@ -32,7 +33,13 @@ function anySignal(signals: AbortSignal[]): AbortSignal & { cleanup?: () => void
   return sig;
 }
 
-export interface SourceItem {
+type GeneratedSourceItem = components["schemas"]["SourceResponse"];
+type GeneratedChatRequest = components["schemas"]["ChatRequest"];
+
+export type RetrievalProfile = GeneratedChatRequest["retrieval_profile"];
+export type MemoryMode = GeneratedChatRequest["memory_mode"];
+
+export interface SourceItem extends GeneratedSourceItem {
   meeting_id: number;
   meeting_title: string;
   content: string;
@@ -67,8 +74,12 @@ export interface SourceItem {
   confidence?: number | null;
 }
 
-export interface ChatResponse {
+type GeneratedChatResponse = components["schemas"]["ChatResponse"];
+
+export interface ChatResponse extends Omit<GeneratedChatResponse, "sources" | "trace"> {
   answer: string;
+  degraded: boolean;
+  degradation_reason?: string | null;
   sources: SourceItem[];
   session_id: string;
   web_results?: { title: string; url: string; snippet: string }[];
@@ -81,6 +92,11 @@ export interface ChatResponse {
       duration_ms: number | null;
       status: string;
       metadata?: Record<string, unknown>;
+      span_id?: string;
+      parent_span_id?: string;
+      sequence?: number;
+      start_offset_ms?: number;
+      end_offset_ms?: number;
       parent_label?: string;
       skipped?: boolean;
       tokens_in?: number;
@@ -117,6 +133,12 @@ export interface StreamWebResultsEvent {
   items: { title: string; url: string; snippet: string }[];
 }
 
+export interface StreamStatusEvent {
+  type: "status";
+  status: string;
+  reason?: string | null;
+}
+
 export interface StreamErrorEvent {
   type: "error";
   message: string;
@@ -128,10 +150,13 @@ export interface StreamErrorEvent {
 export interface StreamDoneEvent {
   type: "done";
   session_id: string;
+  message_ids?: [number, number];
 }
 
 export interface StreamHeartbeatEvent {
   type: "heartbeat";
+  session_id?: string;
+  run_id?: string;
 }
 
 export type StreamEvent =
@@ -140,31 +165,75 @@ export type StreamEvent =
   | StreamSourcesEvent
   | StreamTraceEvent
   | StreamWebResultsEvent
+  | StreamStatusEvent
   | StreamErrorEvent
   | StreamDoneEvent
   | StreamHeartbeatEvent;
 
 export interface ChatOptions {
+  resumeRunId?: string;
+  resumeAfter?: number;
+  idempotencyKey?: string;
+  onRunIdentified?: (runId: string) => void;
+  onEventCursor?: (cursor: number) => void;
   signal?: AbortSignal;
   fileTypes?: string[];
   dateFrom?: string;
   dateTo?: string;
+  validAt?: string;
+  knownAt?: string;
   topK?: number;
   useWebSearch?: boolean;
+  webSearchMode?: "off" | "fallback" | "always";
   webSearchResults?: number;
-  ragMode?: "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto";
+  ragMode?: "vector" | "native" | "hybrid" | "multimodal" | "hybrid_multimodal" | "auto";
+  retrievalProfile?: RetrievalProfile;
+  memoryMode?: MemoryMode;
+  continuationMode?: "latest" | "saved_scope" | "saved_snapshot";
+}
+
+export function withdrawChatRun(runId: string) {
+  return api.post<{
+    session: import("./client-sessions").SessionInfo;
+    messages: {
+      id?: number;
+      role: string;
+      content: string;
+      sources: SourceItem[];
+      degraded?: boolean;
+      degradation_reason?: string | null;
+    }[];
+    total: number;
+    next_before_id: number | null;
+  }>(`/chat/runs/${encodeURIComponent(runId)}/withdraw`);
+}
+
+export function cancelChatRun(runId: string) {
+  return api.post<{ message: string }>(`/chat/runs/${encodeURIComponent(runId)}/cancel`);
 }
 
 /** Map camelCase ChatOptions fields back to snake_case for the API request body. */
+function toIsoInstant(value?: string): string | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
 function mapChatOptionsToBody(options?: ChatOptions): Record<string, unknown> {
   return {
     file_types: options?.fileTypes?.length ? options.fileTypes : undefined,
     date_from: options?.dateFrom || undefined,
     date_to: options?.dateTo || undefined,
+    valid_at: toIsoInstant(options?.validAt),
+    known_at: toIsoInstant(options?.knownAt),
     top_k: options?.topK,
     use_web_search: options?.useWebSearch,
+    web_search_mode: options?.webSearchMode,
     web_search_results: options?.webSearchResults,
     rag_mode: options?.ragMode,
+    retrieval_profile: options?.retrievalProfile,
+    memory_mode: options?.memoryMode,
+    continuation_mode: options?.continuationMode,
   };
 }
 
@@ -225,10 +294,11 @@ export async function* sendChatStream(
   sessionId?: string,
   options?: ChatOptions,
 ): AsyncGenerator<StreamEvent> {
+  const turnKey = options?.idempotencyKey ?? crypto.randomUUID();
   const headers = buildAuthHeaders({
     "Content-Type": "application/json",
     Accept: "text/event-stream",
-    "Idempotency-Key": crypto.randomUUID(),
+    "Idempotency-Key": turnKey,
   });
 
   const body: Record<string, unknown> = {
@@ -249,12 +319,54 @@ export async function* sendChatStream(
   if (options?.signal) signals.push(options.signal);
   const combinedSignal = anySignal(signals);
 
-  const response = await fetch(`${getApiBaseUrl()}/chat/stream`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: combinedSignal,
-  });
+  const replayUrl = (runId: string) => {
+    const url = new URL(
+      `${getApiBaseUrl()}/chat/runs/${encodeURIComponent(runId)}/events`,
+      window.location.origin,
+    );
+    if (options?.resumeAfter) url.searchParams.set("after", String(options.resumeAfter));
+    return url.toString();
+  };
+  let response: Response;
+  try {
+    response = await fetch(
+      options?.resumeRunId ? replayUrl(options.resumeRunId) : `${getApiBaseUrl()}/chat/stream`,
+      {
+        method: options?.resumeRunId ? "GET" : "POST",
+        headers,
+        body: options?.resumeRunId ? undefined : JSON.stringify(body),
+        signal: combinedSignal,
+      },
+    );
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (!options?.resumeRunId && options?.signal?.aborted) {
+      if (!["Stream detached", "Cancellation delegated"].includes(options.signal.reason?.message)) {
+        await fetch(`${getApiBaseUrl()}/chat/run-cancel?key=${encodeURIComponent(turnKey)}`, {
+          method: "POST",
+          headers: buildAuthHeaders(),
+          keepalive: true,
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (options?.resumeRunId) throw error;
+
+    // The POST may have been accepted even though its response headers were
+    // lost. Resolve the same logical turn instead of generating a duplicate.
+    const lookup = await fetch(
+      `${getApiBaseUrl()}/chat/run-lookup?key=${encodeURIComponent(turnKey)}`,
+      { headers: buildAuthHeaders() },
+    );
+    if (!lookup.ok) throw error;
+    const state = (await lookup.json()) as { id: string };
+    response = await fetch(replayUrl(state.id), { headers: buildAuthHeaders() });
+  }
+
+  // The network timer protects connection/response headers only.  Once the
+  // server has responded, stream liveness is governed by heartbeat, stall and
+  // absolute timers in useChatStream.
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     const raw = await response.text().catch(() => response.statusText);
@@ -276,10 +388,23 @@ export async function* sendChatStream(
 
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
+  const durableRunId = response.headers?.get("X-Run-ID") ?? options?.resumeRunId;
+  if (durableRunId) options?.onRunIdentified?.(durableRunId);
+  const cancelExecution = () => {
+    if (["Stream detached", "Cancellation delegated"].includes(options?.signal?.reason?.message))
+      return;
+    if (durableRunId)
+      void fetch(`${getApiBaseUrl()}/chat/runs/${encodeURIComponent(durableRunId)}/cancel`, {
+        method: "POST",
+        headers: buildAuthHeaders(),
+        keepalive: true,
+      }).catch(() => {});
+  };
+  options?.signal?.addEventListener("abort", cancelExecution, { once: true });
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let sawDone = false;
+  let sawTerminal = false;
 
   function parseSseEvent(rawEvent: string): StreamEvent | null {
     const dataLines: string[] = [];
@@ -292,6 +417,13 @@ export async function* sendChatStream(
     if (dataLines.length === 0) return null;
     const jsonStr = dataLines.join("\n");
     return JSON.parse(jsonStr) as StreamEvent;
+  }
+
+  function reportSseCursor(rawEvent: string) {
+    const idLine = rawEvent.split("\n").find((line) => line.trim().startsWith("id:"));
+    if (!idLine) return;
+    const cursor = Number(idLine.slice(idLine.indexOf(":") + 1).trim());
+    if (Number.isSafeInteger(cursor) && cursor >= 0) options?.onEventCursor?.(cursor);
   }
 
   function* parseTrailingEvents(raw: string): Generator<StreamEvent> {
@@ -339,13 +471,14 @@ export async function* sendChatStream(
 
         if (!rawEvent.trim()) continue;
 
-        // Strictly drop any events after the terminal "done" event.
-        if (sawDone) continue;
+        // Strictly drop any events after the first terminal event.
+        if (sawTerminal) continue;
 
         try {
+          reportSseCursor(rawEvent);
           const event = parseSseEvent(rawEvent);
           if (event) {
-            if (event.type === "done") sawDone = true;
+            if (event.type === "done" || event.type === "error") sawTerminal = true;
             yield event;
           }
         } catch {
@@ -361,11 +494,18 @@ export async function* sendChatStream(
     // Flush any trailing frames at EOF. The fallback also tolerates
     // line-delimited `data:` events from mocks and misbehaving proxies.
     for (const event of parseTrailingEvents(buffer)) {
-      if (sawDone) break;
-      if (event.type === "done") sawDone = true;
+      if (sawTerminal) break;
+      if (event.type === "done" || event.type === "error") sawTerminal = true;
       yield event;
     }
+
+    if (!sawTerminal) {
+      throw new ApiError(0, "The response stream ended before completion. Please retry.", {
+        code: "STREAM_TRUNCATED",
+      });
+    }
   } finally {
+    options?.signal?.removeEventListener("abort", cancelExecution);
     clearTimeout(timeoutId);
     combinedSignal.cleanup?.();
     await reader.cancel().catch(() => {});

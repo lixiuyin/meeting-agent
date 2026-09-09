@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-06 — meeting memory and RAG correctness
+
+- Fixed bitemporal memory authority selection so lifecycle and fact-type changes
+  cannot resurrect older matching revisions.
+- Added checksum-bound, message-bound full-context continuation snapshots that
+  isolate frozen turns from current document, memory, KG, session, and web state.
+- Preserved definite future action commitments as open action items while keeping
+  forecasts and ordinary future claims pending review.
+- Added editable material roles and approval states with automatic native-index
+  rebuild, plus timezone-safe memory editing and Unicode-safe evidence offsets.
+- Made saved-snapshot continuation fail closed when its evidence is unavailable,
+  and made explicit speaker/time retrieval constraints refuse scope widening.
+- Added monotonic meeting-file source revisions, immutable semantic review history,
+  atomic reindex queueing, rejected-evidence filtering, and dependent auto-memory
+  retraction when no accepted evidence remains.
+- Added evidence sync state and rejection-reason/history controls to the Materials UI.
+- Added a fingerprinted, provider-free meeting-evidence governance benchmark for
+  authority filtering, strict temporal scope, source revision fences, and prompt labels.
+- Tightened supersession evaluation to require the retired record and replacement
+  to share a logical identity.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -11,8 +32,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Demo videos**: README now embeds four YouTube walkthroughs (Full Demo,
   Invoke Skills, Step by Step, Memory & Knowledge Graph) as a clickable
   thumbnail grid linking to <https://www.youtube.com/@lixiuyin>.
+- **Current architecture documentation**: reconciled the documentation map,
+  full-stack and deployment diagrams, Memory/RAG flows, API surface, runtime
+  lifecycle, configuration, migration head, and frontend Memory workspace with
+  current source/OpenAPI; dated reports and benchmark plans now state their
+  historical or design-only scope.
+- **Model-role benchmark publication guidance**: documented the dated main,
+  judge, Memory-extraction, and Vision verification roles; published failed SLO
+  evidence without converting it into a general model ranking; and added
+  requirements for route/configuration disclosure, sanitized aggregates, and
+  explicit release-readiness boundaries. Superseded public score snapshots and
+  the historical README table were removed; `latest-benchmark.json` is now the
+  single current score source.
 
 ### Fixed
+- **Implementation-grounded ingestion documentation**: corrected the
+  transcriber module path, replaced the obsolete four-provider/local routing
+  description with the actual three-provider quality-gated cascade, documented
+  the PDF-only PyMuPDF fallback, and synchronized the complete upload-extension
+  matrix with the canonical file-kind registry.
+- **Configuration and identity documentation**: documented every current
+  `Settings` field, including the generation deadline, deprecated history
+  alias, meeting-summary exploration share, and `PRINCIPAL_ID` ownership
+  continuity contract for API-key rotation.
+- **Memory workspace viewport containment**: the library selector and memory list
+  now share one bounded flex column. On desktop, filters and actions remain
+  visible while the virtualized records scroll inside the card instead of
+  pushing the final record and evidence text below the rounded container.
+- **History and responsive UI**: persisted `ai` messages now render with the
+  same Markdown and citation controls as live `agent` messages; chat context
+  selectors wrap at mobile widths; and Memory tabs unload hidden entity trees
+  while entity groups render only when expanded.
+- **BM25 legacy metadata diagnostics**: valid JSON objects are no longer
+  misreported as empty metadata. Runtime and one-shot repair paths now recover
+  both `file_id` and `chunk_id`, honor the configured database path, and support
+  explicit `--db` selection.
+- **Browser and summary reliability**: form validation no longer creates an
+  unhandled browser rejection, deprecated Ant Design List/Descriptions APIs
+  were removed, network-flap coverage is deterministic, and malformed session
+  summary output receives one bounded corrective retry.
+- **Summary lifecycle and materials status**: startup now requeues incomplete
+  file summaries only when automatic summaries are enabled; otherwise parsed
+  files return to `ready` with a durable `pending` summary state. The materials
+  UI now reserves “Summarizing” for actively generating summaries.
+- **History search and batch actions**: semantic session-summary results retain
+  their authoritative conversation title; deleting a search result updates the
+  visible search state; selection is limited to visible sessions; and the batch
+  toolbar remains usable after clearing a selection.
+- **Browser acceptance coverage**: the isolated Chromium suite now exercises
+  navigation, upload/ingest/RAG, generation skills, materials, history and
+  continuation, memory CRUD/search/export/decay, settings/rebuild/reload,
+  deletion, streaming aborts, network recovery, and WebSocket behavior. A
+  separate production-mode run verifies API-key rejection and access.
+- **RAG ownership and score contracts**: all vector, BM25, summary-routing,
+  broad-recall, speaker, and optional multimodal paths now retain the request
+  principal; retrieval adapters expose one explicit higher-is-better relevance
+  contract so distance scores cannot reverse multi-query ranking or web fallback
+  decisions.
+- **Atomic native-index lifecycle**: per-file replacements use generation-tagged
+  shadow writes, verified Chroma/BM25 manifests, rollback, and durable repair
+  jobs. Full vector rebuilds swap only after complete transcript-backed rebuild
+  and restore the matching BM25 generation on failure.
+- **Durable jobs and live settings**: expired final-attempt leases dead-letter
+  instead of remaining permanently `running`; admitted requests/jobs use
+  immutable settings snapshots; index-shaping updates are rejected until a
+  controlled rebuild, while retrieval-only hybrid gating is hot-changeable.
+- **Reproducible release promotion**: Docker base images are digest-pinned and
+  release workflows test, promote, and sign the exact candidate image digest
+  without rebuilding it. Helm now enforces the documented single-backend
+  architecture instead of advertising unsupported HPA/PDB behavior.
 - **Citation alignment across all source kinds**: chunks, file summaries,
   and meeting summaries now share a single ``[N]`` index. The markdown
   summary blocks surface ``[N]`` in their headings (matching the index in
@@ -76,7 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `src/core/database.py` → `src/core/database/` package (`meetings.py`, `chat.py`, `memories.py`, `bm25.py`, `knowledge_graph.py`, `_connection.py`, `_migrations.py`, `idempotency.py`, `index_state.py`)
 - All packages maintain backward-compatible imports via `__init__.py` re-exports
 - **ASR provider**: removed local Whisper and VibeVoice; AssemblyAI is now the sole ASR provider (keeps Docker image lean — no PyTorch/CUDA)
-- **Meeting status values**: `completed` → `ready`, `error` → `failed` across all APIs and database
+- **Meeting status values**: `completed` → `ready`; parent meeting aggregation
+  uses `failed`, while file-processing rows and compatibility paths retain the
+  explicit `error` state
 
 ### Added
 - **Knowledge Graph**: entity/relation extraction, CRUD API (`GET/DELETE /memory/entities/{name}`, `POST /memory/entities/merge`), and semantic integration with memory service
@@ -91,18 +181,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **File timeline**: `GET /meetings/{id}/files/{fid}/timeline` (keyframes/pages)
 - **Session citation**: `GET /sessions/{id}/cite`
 - **Settings endpoints**: `POST /settings/rebuild-multimodal`, `POST /settings/reload-config`
-- **RAGAnything multimodal retrieval**: optional dual-index/retrieval pipeline with `RAG_RETRIEVER_PROVIDER=native|raganything|hybrid_multimodal`
+- **RAGAnything multimodal retrieval**: optional dual-index/retrieval pipeline
+  with `RAG_RETRIEVER_PROVIDER=multimodal|hybrid_multimodal`; the ordinary
+  production strategies are `vector|hybrid` (`native` remains a deprecated
+  alias for `vector`, while `raganything` is rejected)
 - **Content-aware parser routing**: `parser/_profile.py` + `parser/_router.py` replace simple L1/L2/L3 cascade with document-profile-based provider selection
 - **Vision captioner**: image description via configurable vision model
 - **TTS configuration**: text-to-speech settings (`TTS_BINDING`, `TTS_MODEL`, `TTS_API_KEY`)
 - **Prometheus metrics**: `GET /metrics` endpoint with meeting/session/memory counters
 - **Security headers**: configurable CSP, HSTS, X-Frame-Options via `SECURITY_*` settings
 - **Idempotency**: AES-GCM encrypted response storage for safe retries
-- **Tests expansion**: ~785 tests across 104 files, adding dedicated test modules for meetings, knowledge graph, RAG decomposition, memory clustering, and parser cascade
+- **Tests expansion**: added dedicated test modules for meetings, knowledge
+  graph, RAG decomposition, memory clustering, and parser cascade
 
 ### Fixed
 - Vector store directory standardized to `data/vectordb/` (was `data/chroma/`)
-- `PARSE_TIMEOUT_SECONDS` default raised to 900s (was 120s) for large documents
+- Parser deadlines now start at `PARSE_TIMEOUT_SECONDS=300`, add
+  `PARSE_TIMEOUT_PER_MB_SECONDS=2` per MiB, and cap at
+  `PARSE_TIMEOUT_MAX_SECONDS=900` for large documents
 - Security: `.env.example` no longer contains real API keys
 
 ## [0.1.0] - 2026-04-02

@@ -1,0 +1,32 @@
+{
+  "release_ready": false,
+  "implementation_fingerprints": {
+    "dataset_fingerprint_sha256": "77836c65be280b0cf781b0c40b4c691d9ed386f67a06273a74d4634762349007",
+    "harness_fingerprint_sha256": "d4a40672fa771ee55dc1e23c70f66a78a2bf6b992d06faf08c9dc211b2ad5751",
+    "implementation_fingerprint_sha256": "d68c74c77885144e6a39539996e6828353403b8564aae333a1b3c00d319c32e1"
+  },
+  "release_gates": {
+    "production_quality_passed": false,
+    "human_business_review_passed": false,
+    "performance_slo_passed": false,
+    "security_review_passed": false
+  },
+  "evidence_references": {
+    "production_quality_passed": {
+      "path": "docs/validation/evidence/production-quality.json",
+      "sha256": "73e1951b41d92744e0259896cadf5dbbadc5595022b7307c3c4c813d78d6959b"
+    },
+    "human_business_review_passed": {
+      "path": "docs/validation/evidence/human-business-review.json",
+      "sha256": "7fead0ecc266e0e4585c5a6338bbd743db67676259b20afd03e94d1b2bea5e59"
+    },
+    "performance_slo_passed": {
+      "path": "docs/validation/evidence/performance-slo.json",
+      "sha256": "d596f7a747b6bca148d4b4ea4d23d14801268eccf27f2d4b677a98f9c182aa3e"
+    },
+    "security_review_passed": {
+      "path": "docs/validation/evidence/security-review.json",
+      "sha256": "7c3d0a3b0832c75aa288baa9142eb8100ccc2f5bf567df96b60a7ecfbfd33816"
+    }
+  }
+}

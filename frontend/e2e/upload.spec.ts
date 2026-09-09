@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { installMeetingApiMock } from "./fixtures/mock-api";
 
 test.describe("File upload flow", () => {
   test.beforeEach(async ({ page }) => {
+    await installMeetingApiMock(page);
     await page.goto("/materials");
     // Wait for Materials toolbar to be visible
     await expect(page.getByRole("button", { name: /new meeting/i })).toBeVisible();
@@ -106,14 +108,24 @@ test.describe("File upload flow", () => {
       buffer: Buffer.from("Testing upload progress indicator."),
     });
 
-    // Click upload button — triggers the upload process
-    await page.getByRole("button", { name: /create meeting & upload/i }).click();
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/meetings" &&
+        response.request().method() === "POST",
+    );
+    const uploadResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/meetings/upload" &&
+        response.request().method() === "POST",
+    );
 
-    // The upload button should show loading state or progress text
-    // Either the button text changes or a progress indicator appears
-    const progressIndicator = page.getByText(/uploading/i);
-    // The indicator may appear briefly; use toHaveCount with timeout
-    await expect(progressIndicator).toBeDefined();
+    await page.getByRole("button", { name: /create meeting & upload/i }).click();
+    const createResponse = await createResponsePromise;
+    const { meeting_id: meetingId } = (await createResponse.json()) as { meeting_id: number };
+
+    expect(meetingId).toBeGreaterThan(0);
+    await expect(page.locator(".ant-btn-loading").first()).toBeVisible();
+    await uploadResponsePromise;
   });
 
   test("should display uploaded file in list after completion", async ({ page }) => {
@@ -131,11 +143,18 @@ test.describe("File upload flow", () => {
       buffer: Buffer.from("File content for verifying upload completion."),
     });
 
-    // Submit upload
-    await page.getByRole("button", { name: /create meeting & upload/i }).click();
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/meetings" &&
+        response.request().method() === "POST",
+    );
 
-    // Wait for either success message or meeting card to appear in the list
-    // The upload triggers background processing, so the meeting may appear with a status
+    await page.getByRole("button", { name: /create meeting & upload/i }).click();
+    const createResponse = await createResponsePromise;
+    const { meeting_id: meetingId } = (await createResponse.json()) as { meeting_id: number };
+
+    expect(meetingId).toBeGreaterThan(0);
+    // The successful upload refreshes the mocked list just like the live API.
     await expect(page.getByText("E2E Complete Upload").first()).toBeVisible({ timeout: 15_000 });
   });
 
@@ -143,13 +162,14 @@ test.describe("File upload flow", () => {
     await page.getByRole("button", { name: /new meeting/i }).click();
 
     // Upload modal should be open
-    await expect(page.getByText("Upload Meeting Files")).toBeVisible();
+    const uploadModal = page.locator(".ant-modal:visible");
+    await expect(uploadModal.getByText("Upload Meeting Files")).toBeVisible();
 
     // Close the modal (click the X button in the modal header)
-    await page.getByRole("button", { name: /close/i }).first().click();
+    await uploadModal.getByRole("button", { name: /close/i }).click();
 
     // Upload panel should no longer be visible
-    await expect(page.getByText("Upload Meeting Files")).not.toBeVisible();
+    await expect(uploadModal).not.toBeVisible({ timeout: 10_000 });
   });
 
   test("should require title before upload", async ({ page }) => {

@@ -121,6 +121,17 @@ class TestSessionCRUD:
         sessions = db.list_sessions(db_conn, user_id="user1")
         assert len(sessions) == 3
 
+    def test_list_sessions_has_stable_tie_breaker(self, db_conn):
+        db.create_session(db_conn, session_id="session-a", user_id="user1")
+        db.create_session(db_conn, session_id="session-b", user_id="user1")
+        db_conn.execute(
+            "UPDATE chat_sessions SET updated_at='2026-09-05 00:00:00' WHERE user_id='user1'"
+        )
+
+        sessions = db.list_sessions(db_conn, user_id="user1")
+
+        assert [session["id"] for session in sessions] == ["session-b", "session-a"]
+
     def test_delete_session(self, db_conn):
         sid = db.create_session(db_conn, user_id="user1")
         db.delete_session(db_conn, sid)
@@ -185,6 +196,18 @@ class TestMemoryCRUD:
         db.set_memory(db_conn, user_id="user1", key="k2", value="v2")
         memories = db.list_memories(db_conn, user_id="user1")
         assert len(memories) == 2
+
+    def test_list_memories_has_stable_tie_breaker(self, db_conn):
+        db.set_memory(db_conn, user_id="user1", key="k2", value="v2")
+        db.set_memory(db_conn, user_id="user1", key="k1", value="v1")
+        db_conn.execute(
+            "UPDATE user_memories SET salience=0.5, updated_at='2026-09-05 00:00:00' "
+            "WHERE user_id='user1'"
+        )
+
+        memories = db.list_memories(db_conn, user_id="user1")
+
+        assert [memory["key"] for memory in memories] == ["k1", "k2"]
 
     def test_delete_memory(self, db_conn):
         db.set_memory(db_conn, user_id="user1", key="k1", value="v1")

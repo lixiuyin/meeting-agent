@@ -13,14 +13,15 @@ test.describe("Frontend smoke tests", () => {
     await expect(page.getByText("New Meeting")).toBeVisible();
 
     // Dismiss any lingering toast notifications that could intercept clicks
-    await page.locator(".ant-message").evaluate((nodes: NodeListOf<HTMLElement>) => {
+    await page.locator(".ant-message").evaluateAll((nodes: HTMLElement[]) => {
       for (let i = nodes.length - 1; i >= 0; i--) nodes[i].remove();
     });
 
-    await page.getByText("History").first().click({ force: true });
-    await expect(page.getByText("History")).toBeVisible();
+    const historyTab = page.getByRole("tab", { name: /history/i });
+    await historyTab.click({ force: true });
+    await expect(historyTab).toHaveAttribute("aria-selected", "true");
 
-    await page.getByText("Chat").first().click();
+    await page.getByRole("tab", { name: /chat/i }).click();
     await expect(page.getByPlaceholder("Ask anything about your meetings...")).toBeVisible();
   });
 

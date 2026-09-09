@@ -1,6 +1,7 @@
 """Settings GET endpoint and helpers."""
 
 from ....core.config import settings
+from ....core.settings_policy import settings_activation_policy
 from ....models.schemas import (
     ASRSettings,
     EmbeddingSettings,
@@ -12,6 +13,7 @@ from ....models.schemas import (
     RetentionSettings,
     SearchSettings,
     ServerInfo,
+    SettingsActivationPolicy,
     SettingsResponse,
     TTSSettings,
     UploadSettings,
@@ -50,6 +52,8 @@ def _get_current_settings() -> SettingsResponse:
         rag=RAGSettings(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP,
+            chunk_size_tokens=settings.CHUNK_SIZE_TOKENS,
+            chunk_overlap_tokens=settings.CHUNK_OVERLAP_TOKENS,
             top_k=settings.TOP_K,
             query_rewrite_enabled=settings.QUERY_REWRITE_ENABLED,
             query_rewrite_model=settings.QUERY_REWRITE_MODEL,
@@ -67,6 +71,8 @@ def _get_current_settings() -> SettingsResponse:
             parent_child_enabled=settings.PARENT_CHILD_ENABLED,
             child_chunk_size=settings.CHILD_CHUNK_SIZE,
             child_chunk_overlap=settings.CHILD_CHUNK_OVERLAP,
+            child_chunk_size_tokens=settings.CHILD_CHUNK_SIZE_TOKENS,
+            child_chunk_overlap_tokens=settings.CHILD_CHUNK_OVERLAP_TOKENS,
             hybrid_search_enabled=settings.HYBRID_SEARCH_ENABLED,
             hybrid_alpha=settings.HYBRID_ALPHA,
             retriever_provider=_normalize_retriever_provider(settings.RAG_RETRIEVER_PROVIDER),
@@ -207,6 +213,9 @@ def _get_current_settings() -> SettingsResponse:
             security_frame_options=settings.SECURITY_FRAME_OPTIONS,
             security_referrer_policy=settings.SECURITY_REFERRER_POLICY,
             security_csp=settings.SECURITY_CSP,
+        ),
+        activation_policy=SettingsActivationPolicy(
+            **settings_activation_policy(type(settings.copy_live()))
         ),
     )
 

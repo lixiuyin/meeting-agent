@@ -15,6 +15,96 @@ function createSseBody(lines: string[]): ReadableStream<Uint8Array> {
 }
 
 describe("sendChatStream", () => {
+  it("uses a caller-owned logical turn key and reports durable cursors", async () => {
+    const onCursor = vi.fn();
+    const onRun = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(createSseBody(['id: 7\ndata: {"type":"done","session_id":"s"}\n\n']), {
+        headers: { "X-Run-ID": "run-7" },
+      }),
+    );
+
+    for await (const event of sendChatStream("hello", undefined, undefined, undefined, {
+      idempotencyKey: "turn-stable",
+      onEventCursor: onCursor,
+      onRunIdentified: onRun,
+    })) {
+      void event;
+    }
+
+    const request = fetchMock.mock.calls[0][1];
+    expect(new Headers(request?.headers).get("Idempotency-Key")).toBe("turn-stable");
+    expect(onRun).toHaveBeenCalledWith("run-7");
+    expect(onCursor).toHaveBeenCalledWith(7);
+  });
+
+  it("resumes after the last durable event cursor", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(createSseBody(['data: {"type":"done","session_id":"s"}\n\n'])),
+      );
+    fetchMock.mockClear();
+
+    for await (const event of sendChatStream("hello", undefined, undefined, undefined, {
+      resumeRunId: "run/with spaces",
+      resumeAfter: 12,
+    })) {
+      void event;
+    }
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/chat/runs/run%2Fwith%20spaces/events?after=12",
+    );
+  });
+
+  it("sends bitemporal and saved-session continuation controls", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(createSseBody(['data: {"type":"done","session_id":"s"}\n\n'])),
+      );
+    fetchMock.mockClear();
+
+    for await (const event of sendChatStream("historical status", undefined, undefined, "s", {
+      validAt: "2025-03-01T00:00",
+      knownAt: "2025-04-01T00:00",
+      continuationMode: "saved_snapshot",
+    })) {
+      void event;
+    }
+
+    const request = fetchMock.mock.calls[0][1];
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      valid_at: new Date("2025-03-01T00:00").toISOString(),
+      known_at: new Date("2025-04-01T00:00").toISOString(),
+      continuation_mode: "saved_snapshot",
+      session_id: "s",
+    });
+  });
+
+  it.each([
+    [undefined, true],
+    [new DOMException("Stream detached", "AbortError"), false],
+    [new DOMException("Cancellation delegated", "AbortError"), false],
+  ])("distinguishes local abort modes: %s", async (reason, expectsRemoteCancel) => {
+    const signal = new AbortController();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(createSseBody(['data: {"type":"heartbeat"}\n\n']), {
+        headers: { "X-Run-ID": "test-run" },
+      }),
+    );
+    fetchMock.mockClear();
+    const stream = sendChatStream("hello", undefined, undefined, undefined, {
+      signal: signal.signal,
+    });
+    await stream.next();
+    signal.abort(reason);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/test-run/cancel"))).toBe(
+      expectsRemoteCancel,
+    );
+    await stream.return(undefined);
+  });
   it("parses SSE events and skips malformed JSON", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({

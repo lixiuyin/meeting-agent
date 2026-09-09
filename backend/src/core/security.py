@@ -33,16 +33,21 @@ def _get_pepper() -> bytes:
 
 
 def _derive_user_id_from_api_key(api_key: str) -> str:
-    """Return a stable, non-reversible user id derived from API key bytes.
+    """Resolve the pinned deployment identity or a legacy HMAC-derived identity.
 
     Uses HMAC-SHA256 with a configurable pepper so the same API key always maps to
     the same user id, but the original key cannot be recovered.
 
-    Note: the resulting user id is deterministic per API key. For deployments
-    that need to hide the fact that user ids are derived from API keys, a
-    random UUID mapping table (e.g. ``api_key_id_map``) should be introduced
-    in a future migration.
+    Every HTTP, file-token and WebSocket path shares this resolution. A pinned
+    identity applies only to the currently configured credential; it does not
+    authenticate arbitrary keys and is not a multi-user identity provider.
     """
+    principal_id = settings.PRINCIPAL_ID
+    if isinstance(principal_id, str) and principal_id:
+        if principal_id == "default" or principal_id.startswith("dev_"):
+            raise HTTPException(503, "Configured principal identity is unsafe")
+        if hmac.compare_digest(api_key, settings.API_KEY.get_secret_value()):
+            return principal_id
     digest = hmac.new(
         _get_pepper(),
         api_key.encode(),

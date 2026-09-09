@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "purpose": "Human review preparation; synthetic fixtures, not production gold labels",
+  "human_reviewed": false,
+  "release_eligible": false,
+  "reviewer": null,
+  "reviewed_at": null,
+  "cases": [
+    {
+      "id": "proposal_reversal",
+      "source": "# Delivery\nAlice: Ship Friday.\nBob: Friday is impossible because QA needs two days.\nAlice: Agreed, ship Monday. Bob owns QA.",
+      "question": "Why did the delivery date change, and who owns QA?",
+      "expected_draft": "Friday changed to Monday because QA needs two days. Bob owns QA.",
+      "required_evidence": ["Friday is impossible because QA needs two days", "ship Monday", "Bob owns QA"],
+      "failure_checks": ["Treating Friday as the final decision", "Dropping the reason in the adjacent turn"]
+    },
+    {
+      "id": "conditional_assignment",
+      "source": "If the budget is approved, Alice will own Orbit. The budget decision is still pending.",
+      "question": "Who currently owns Orbit?",
+      "expected_draft": "Alice is a conditional candidate. Current ownership is not established.",
+      "required_evidence": ["If the budget is approved", "still pending"],
+      "failure_checks": ["Confirming Alice as the current owner"]
+    },
+    {
+      "id": "explicit_absence",
+      "source": "The release owner for Orbit is explicitly unknown and has not been assigned.",
+      "question": "Who owns the release?",
+      "expected_draft": "The recorded state explicitly says the release owner has not been assigned.",
+      "required_evidence": ["explicitly unknown and has not been assigned"],
+      "failure_checks": ["Inventing an owner", "Confusing explicit absence with a failed search"]
+    },
+    {
+      "id": "attributed_owner",
+      "source": "Bob said that Alice owns Orbit. The team has not confirmed Bob's report.",
+      "question": "Is Alice confirmed as Orbit's owner?",
+      "expected_draft": "No. This is an attributed claim awaiting confirmation.",
+      "required_evidence": ["Bob said", "has not confirmed"],
+      "failure_checks": ["Promoting a report to a confirmed assignment", "Parsing that Alice as a person's name"]
+    },
+    {
+      "id": "policy_revision",
+      "source": "2026-01-10: Billing logs are retained for 30 days.\n2026-02-01: The current billing log retention policy is 90 days; it replaced the 30-day policy.",
+      "question": "What was the policy in January and what is it now?",
+      "expected_draft": "30 days in January; 90 days from February 1.",
+      "required_evidence": ["2026-01-10", "2026-02-01", "replaced the 30-day policy"],
+      "failure_checks": ["Overwriting historical validity", "Presenting both durations as current"]
+    },
+    {
+      "id": "same_name_scope",
+      "source": "Design Review: Alex owns the mobile UI specification.\nSecurity Review: Alex owns the threat model.",
+      "question": "What does Alex own in Security Review?",
+      "expected_draft": "The threat model.",
+      "required_evidence": ["Security Review: Alex owns the threat model"],
+      "failure_checks": ["Returning Design Review responsibilities", "Dropping scope in normalized identity"]
+    },
+    {
+      "id": "review_conflict_cas",
+      "source": "Revision 1: Alice owns QA. Candidate: Bob owns QA. While the candidate is being reviewed, the current record changes to revision 2: Carol owns QA.",
+      "question": "Can the previously opened review replace the current record?",
+      "expected_draft": "The stale review must receive a revision conflict and reload both assertions.",
+      "required_evidence": ["revision 2: Carol owns QA"],
+      "failure_checks": ["Overwriting Carol with the stale review"]
+    },
+    {
+      "id": "recall_archive_history",
+      "source": "A confirmed action is archived from semantic recall due to the active-memory cap. No retraction or business-validity end was recorded.",
+      "question": "Should it disappear from the exact action list and historical view?",
+      "expected_draft": "No. Recall archival preserves the business fact and its historical versions.",
+      "required_evidence": ["No retraction or business-validity end"],
+      "failure_checks": ["Using top-k recall as the complete task list", "Cascade-deleting versions"]
+    },
+    {
+      "id": "profile_revocation",
+      "source": "A profile was generated from preference.language revision 1. The user edits that preference to revision 2 or withdraws its source evidence.",
+      "question": "May the old profile still enter the next answer's context?",
+      "expected_draft": "No. The old profile loses authority until regenerated from admissible current sources.",
+      "required_evidence": ["revision 2 or withdraws its source evidence"],
+      "failure_checks": ["Keeping old profile assertions through recursive summarization"]
+    },
+    {
+      "id": "event_anchor_ambiguity",
+      "source": "Two owned project reviews took place on the same calendar date. No order within that date was recorded.",
+      "question": "What changed after the last review?",
+      "expected_draft": "Ask which review/date the user intends; do not infer same-day order.",
+      "required_evidence": ["No order within that date was recorded"],
+      "failure_checks": ["Choosing an arbitrary meeting ID", "Expanding to other users or projects"]
+    }
+  ]
+}

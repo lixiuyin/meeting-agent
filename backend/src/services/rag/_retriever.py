@@ -1,9 +1,4 @@
-"""Document retrieval: vector search, BM25, hybrid RRF merge.
-
-Single-tenant design: meeting/file vectors are tenant-shared (no user_id
-filter). Only memory vectors are user-isolated. This service is not designed
-for multi-tenant SaaS deployment.
-"""
+"""Document retrieval: user-scoped vector, BM25, and hybrid RRF strategies."""
 
 from __future__ import annotations
 
@@ -15,6 +10,7 @@ import threading
 import time
 from typing import Any, cast
 
+from ...core._config_snapshot import submit_with_context
 from ...core.config import settings
 from ...core.database import get_connection, get_page_sibling_chunks
 from ...core.trace import TraceContext
@@ -28,11 +24,13 @@ from ._bm25_maintenance import (  # noqa: F401
 )
 from ._filters import (
     _build_filters,
+    _extract_eq_filter,
     _extract_in_filter,
     _resolve_provider,
     _warn_scoped_zero_results,
     _warn_unscoped_zero_results,
 )
+from ._publication import consistent_index_read
 from ._query_analysis import QueryAnalysis, analyze_query
 from ._raganything import retrieve_with_raganything
 from ._rrf import _rrf_dedup_key, _rrf_merge, _rrf_merge_multi  # noqa: F401
@@ -43,13 +41,20 @@ from ._strategies import (
     NativeStrategy,
     select_strategy,
 )
-from ._vector import _resolve_parent_chunks, _vector_score_lower_is_better
+from ._vector import (
+    _resolve_parent_chunks,
+    _vector_score_lower_is_better,
+    normalize_document_scores,
+)
 from ._vectorstore import get_vectorstore
 
 logger = logging.getLogger(__name__)
 
 _current_speaker_names: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
     "_current_speaker_names", default=None
+)
+_current_lexical_query: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_lexical_query", default=None
 )
 
 
@@ -73,6 +78,7 @@ def _trace_retriever_decision(
     span.finish("success")
 
 
+@consistent_index_read
 def retrieve(
     query: str,
     meeting_ids: list[int] | None = None,
@@ -87,6 +93,8 @@ def retrieve(
     known_speakers: list[str] | None = None,
     _apply_diversity: bool = True,
     user_id: str | None = None,
+    analysis_query: str | None = None,
+    lexical_query: str | None = None,
 ) -> tuple[list[dict], QueryAnalysis]:
     """Retrieve the most relevant text chunks for a query.
 
@@ -110,7 +118,7 @@ def retrieve(
         (docs, query_analysis) where docs is
         [{"content": str, "metadata": dict, "score": float}]
     """
-    qa = analyze_query(query, known_speakers)
+    qa = analyze_query(analysis_query or query, known_speakers)
     if qa.speaker_names:
         logger.info("Query analysis: speakers=%s temporal=%s", qa.speaker_names, qa.temporal_hint)
 
@@ -145,9 +153,39 @@ def retrieve(
     scoped_diversify = scoped and getattr(settings, "SCOPED_MAX_PER_FILE", 0) > 0
     if scoped_diversify:
         k = max(k, (top_k or settings.TOP_K) * 2)
+
+    # The request-scoped fast path uses the already-built local BM25 index.
+    # This avoids a remote embedding round trip while retaining all SQL
+    # tenant/scope filters.  It is an internal runtime mode; the configured
+    # default provider remains vector/hybrid and cannot be set to bm25 through
+    # production settings validation.
+    if provider == "bm25":
+        _trace_retriever_decision(trace, provider="bm25", scoped=scoped)
+        token = _current_speaker_names.set(qa.speaker_names if qa.speaker_names else None)
+        lexical_token = _current_lexical_query.set(lexical_query or analysis_query or query)
+        try:
+            results = _bm25_retrieve(
+                _current_lexical_query.get(None) or query,
+                _extract_in_filter(filters, "meeting_id"),
+                _extract_in_filter(filters, "file_id"),
+                k,
+                trace=trace,
+                speaker_names=_current_speaker_names.get(None),
+                user_id=_extract_eq_filter(filters, "user_id"),
+            )
+        finally:
+            _current_speaker_names.reset(token)
+            _current_lexical_query.reset(lexical_token)
+        results = normalize_document_scores(results)
+        if not results:
+            from ...core.metrics import RAG_ZERO_RESULT_TOTAL
+
+            RAG_ZERO_RESULT_TOTAL.labels(scoped="yes" if scoped else "no").inc()
+        return results, qa
+
     strategy = select_strategy(
         provider,
-        native=NativeStrategy(name="native", run=_run_native_strategy),
+        native=NativeStrategy(name="vector", run=_run_native_strategy),
         hybrid=HybridStrategy(name="hybrid", run=_run_hybrid_strategy),
         multimodal=MultimodalStrategy(name="multimodal", run=_run_multimodal_strategy),
         hybrid_multimodal=HybridMultimodalStrategy(
@@ -158,6 +196,7 @@ def retrieve(
     _trace_retriever_decision(trace, provider=strategy.name, scoped=scoped)
 
     token = _current_speaker_names.set(qa.speaker_names if qa.speaker_names else None)
+    lexical_token = _current_lexical_query.set(lexical_query or analysis_query or query)
     try:
         results = strategy.retrieve(
             query=query,
@@ -170,6 +209,11 @@ def retrieve(
         )
     finally:
         _current_speaker_names.reset(token)
+        _current_lexical_query.reset(lexical_token)
+
+    # Public retrieval boundary: every downstream consumer sees a single,
+    # explicit higher-is-better score contract regardless of backend.
+    results = normalize_document_scores(results)
 
     if apply_diversity and results:
         # H-RAG-4: Treat None meeting_id as a unique sentinel so diversity
@@ -201,6 +245,10 @@ def retrieve(
         if max_per_file > 0 and len(distinct_files) > 1:
             results = _diversify_by_meeting(results, max_per_meeting=max_per_file)
 
+    if not results:
+        from ...core.metrics import RAG_ZERO_RESULT_TOTAL
+
+        RAG_ZERO_RESULT_TOTAL.labels(scoped="yes" if scoped else "no").inc()
     return results, qa
 
 
@@ -239,64 +287,24 @@ def _run_native_strategy(
     threshold: float,
     trace: TraceContext | None,
 ) -> list[dict]:
-    if settings.HYBRID_SEARCH_ENABLED:
-        alpha = settings.HYBRID_ALPHA
-        if alpha <= 0.0:
-            meeting_ids = _extract_in_filter(filters, "meeting_id")
-            file_ids = _extract_in_filter(filters, "file_id")
-            return _bm25_retrieve(
-                query,
-                meeting_ids,
-                file_ids,
-                k,
-                trace=trace,
-                speaker_names=_current_speaker_names.get(None),
-            )
-        if alpha >= 1.0:
-            try:
-                return _vector_retrieve(query, filters, k, threshold, trace=trace)
-            except Exception:
-                logger.warning("Vector retrieval failed, falling back to BM25", exc_info=True)
-                meeting_ids = _extract_in_filter(filters, "meeting_id")
-                file_ids = _extract_in_filter(filters, "file_id")
-                return _bm25_retrieve(
-                    query,
-                    meeting_ids,
-                    file_ids,
-                    k,
-                    trace=trace,
-                    speaker_names=_current_speaker_names.get(None),
-                )
-        try:
-            return _hybrid_retrieve(query, filters, k, top_k, threshold, trace=trace)
-        except Exception:
-            logger.warning("Hybrid retrieval failed, falling back to BM25", exc_info=True)
-            meeting_ids = _extract_in_filter(filters, "meeting_id")
-            file_ids = _extract_in_filter(filters, "file_id")
-            return _bm25_retrieve(
-                query,
-                meeting_ids,
-                file_ids,
-                k,
-                trace=trace,
-                speaker_names=_current_speaker_names.get(None),
-            )
+    _ = top_k
     try:
         return _vector_retrieve(query, filters, k, threshold, trace=trace)
     except Exception:
         logger.warning(
-            "Vector retrieval failed (hybrid disabled), falling back to BM25",
+            "Vector retrieval failed, falling back to user-scoped BM25",
             exc_info=True,
         )
         meeting_ids = _extract_in_filter(filters, "meeting_id")
         file_ids = _extract_in_filter(filters, "file_id")
         return _bm25_retrieve(
-            query,
+            _current_lexical_query.get(None) or query,
             meeting_ids,
             file_ids,
             k,
             trace=trace,
             speaker_names=_current_speaker_names.get(None),
+            user_id=_extract_eq_filter(filters, "user_id"),
         )
 
 
@@ -309,6 +317,26 @@ def _run_hybrid_strategy(
     threshold: float,
     trace: TraceContext | None,
 ) -> list[dict]:
+    alpha = float(settings.HYBRID_ALPHA)
+    if alpha <= 0.0:
+        return _bm25_retrieve(
+            _current_lexical_query.get(None) or query,
+            _extract_in_filter(filters, "meeting_id"),
+            _extract_in_filter(filters, "file_id"),
+            k,
+            trace=trace,
+            speaker_names=_current_speaker_names.get(None),
+            user_id=_extract_eq_filter(filters, "user_id"),
+        )
+    if alpha >= 1.0:
+        return _run_native_strategy(
+            query=query,
+            filters=filters,
+            k=k,
+            top_k=top_k,
+            threshold=threshold,
+            trace=trace,
+        )
     return _hybrid_retrieve(query, filters, k, top_k, threshold, trace=trace)
 
 
@@ -414,8 +442,14 @@ def _run_hybrid_multimodal_strategy(
             query=query, filters=filters, k=k, top_k=top_k, threshold=threshold, trace=trace
         )
     if not settings.RAGANYTHING_ENABLED:
-        return _run_hybrid_strategy(
-            query=query, filters=filters, k=k, top_k=top_k, threshold=threshold, trace=trace
+        fallback = _run_hybrid_strategy if settings.HYBRID_SEARCH_ENABLED else _run_native_strategy
+        return fallback(
+            query=query,
+            filters=filters,
+            k=k,
+            top_k=top_k,
+            threshold=threshold,
+            trace=trace,
         )
     return _hybrid_multimodal_retrieve(query, filters, k, top_k, threshold, trace=trace)
 
@@ -432,13 +466,16 @@ _VECTOR_SEARCH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # unbounded queue growth when all 4 threads are occupied by slow queries.
 _VECTOR_SEARCH_CONCURRENCY = 8  # 4 running + 4 queued max
 _VECTOR_SEARCH_SEMAPHORE: threading.Semaphore | None = None
+_VECTOR_SEARCH_SEMAPHORE_LOCK = threading.Lock()
 
 
 def _get_vector_search_semaphore() -> threading.Semaphore:
     """Lazily initialise the semaphore (avoids import-time threading concerns)."""
     global _VECTOR_SEARCH_SEMAPHORE
     if _VECTOR_SEARCH_SEMAPHORE is None:
-        _VECTOR_SEARCH_SEMAPHORE = threading.Semaphore(_VECTOR_SEARCH_CONCURRENCY)
+        with _VECTOR_SEARCH_SEMAPHORE_LOCK:
+            if _VECTOR_SEARCH_SEMAPHORE is None:
+                _VECTOR_SEARCH_SEMAPHORE = threading.Semaphore(_VECTOR_SEARCH_CONCURRENCY)
     return _VECTOR_SEARCH_SEMAPHORE
 
 
@@ -461,16 +498,21 @@ def _run_with_timeout(func, *args, timeout: float | None, **kwargs):
         raise concurrent.futures.TimeoutError(
             "Vector search concurrency limit reached — backpressure applied"
         )
-    future = _VECTOR_SEARCH_EXECUTOR.submit(func, *args, **kwargs)
+    future = submit_with_context(_VECTOR_SEARCH_EXECUTOR, func, *args, **kwargs)
+    release_now = True
     try:
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
-        # RECALL-1: Signal the future to cancel — won't stop I/O but
-        # releases the threadpool slot when the call eventually completes.
-        future.cancel()
+        # A running callable cannot be cancelled. Keep its permit until it
+        # actually finishes so repeated timeouts cannot create an unbounded
+        # executor queue behind stuck workers.
+        if not future.cancel():
+            release_now = False
+            future.add_done_callback(lambda _future: sem.release())
         raise
     finally:
-        sem.release()
+        if release_now:
+            sem.release()
 
 
 def _vector_retrieve(
@@ -551,11 +593,12 @@ def _vector_retrieve(
 
     if last_exc is not None:
         bm25_out = _bm25_retrieve(
-            query,
+            _current_lexical_query.get(None) or query,
             meeting_ids,
             file_ids,
             k,
             speaker_names=_current_speaker_names.get(None),
+            user_id=_extract_eq_filter(filters, "user_id"),
         )
         if scoped_query and not bm25_out:
             _warn_scoped_zero_results(meeting_ids, file_ids, k)
@@ -565,11 +608,16 @@ def _vector_retrieve(
 
     if settings.PARENT_CHILD_ENABLED:
         out = _resolve_parent_chunks(vectorstore, results, effective_threshold, lower_is_better)
+        score_kind = "distance" if lower_is_better else "relevance"
+        out = [{**doc, "score_kind": score_kind} for doc in out]
         if scoped_query and not out:
             _warn_scoped_zero_results(meeting_ids, file_ids, k)
         return out
     # Standard flat mode
     out = []
+    from ._contextual import restore_display_content
+    from ._vector import source_metadata
+
     for doc, score in results:
         if effective_threshold is not None:
             if lower_is_better:
@@ -577,7 +625,15 @@ def _vector_retrieve(
                     continue
             elif score < effective_threshold:
                 continue
-        out.append({"content": doc.page_content, "metadata": doc.metadata, "score": float(score)})
+        metadata = source_metadata(doc.metadata, getattr(doc, "id", None))
+        out.append(
+            {
+                "content": restore_display_content(doc.page_content, metadata),
+                "metadata": metadata,
+                "score": float(score),
+                "score_kind": "distance" if lower_is_better else "relevance",
+            }
+        )
     if scoped_query and not out:
         _warn_scoped_zero_results(meeting_ids, file_ids, k)
     if not scoped_query and not out:
@@ -624,7 +680,8 @@ def _hybrid_retrieve(
         return _vector_retrieve(query, filters, fetch_k, threshold, trace=trace)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        vector_future = pool.submit(
+        vector_future = submit_with_context(
+            pool,
             _vector_retrieve,
             query,
             filters,
@@ -632,14 +689,16 @@ def _hybrid_retrieve(
             None,
             trace=trace,
         )
-        bm25_future = pool.submit(
+        bm25_future = submit_with_context(
+            pool,
             _bm25_retrieve,
-            query,
+            _current_lexical_query.get(None) or query,
             meeting_ids,
             file_ids,
             fetch_k,
             trace=trace,
             speaker_names=speaker_names,
+            user_id=_extract_eq_filter(filters, "user_id"),
         )
         vector_results = vector_future.result()
         bm25_results = bm25_future.result()
@@ -685,7 +744,14 @@ def _hybrid_multimodal_retrieve(
         # so keyword-heavy queries still get good results.
         mids = _extract_in_filter(filters, "meeting_id")
         fids = _extract_in_filter(filters, "file_id")
-        bm25_results = _bm25_retrieve(query, mids, fids, fetch_k, trace=trace)
+        bm25_results = _bm25_retrieve(
+            _current_lexical_query.get(None) or query,
+            mids,
+            fids,
+            fetch_k,
+            trace=trace,
+            user_id=_extract_eq_filter(filters, "user_id"),
+        )
         return _rrf_merge(vector_results, bm25_results, top_k)
     if trace:
         trace.start_span("rrf_merge", "retrieve", parent_label="retrieve")
@@ -702,6 +768,7 @@ def _hybrid_multimodal_retrieve(
 _MULTIMODAL_TYPES = ("table", "image_caption", "image_ocr", "image_combined")
 
 
+@consistent_index_read
 def retrieve_sibling_chunks(
     docs: list[dict],
     *,
@@ -804,12 +871,23 @@ def _vector_sibling_fallback(
             continue
         docs_payload = payload.get("documents") or []
         metas_payload = payload.get("metadatas") or []
-        for content, md in zip(docs_payload, metas_payload, strict=False):
+        ids_payload = payload.get("ids") or []
+        from ._contextual import restore_display_content
+        from ._vector import source_metadata
+
+        for index, (content, md) in enumerate(zip(docs_payload, metas_payload, strict=False)):
+            md = source_metadata(md, ids_payload[index] if index < len(ids_payload) else None)
             key = f"{md.get('meeting_id')}:{md.get('file_id')}:{md.get('chunk_index')}"
             if key in already_seen:
                 continue
             already_seen.add(key)
-            out.append({"content": content, "metadata": md, "score": 0.0})
+            out.append(
+                {
+                    "content": restore_display_content(content, md),
+                    "metadata": md,
+                    "score": 0.0,
+                }
+            )
             if len(out) >= max_total:
                 break
     return out

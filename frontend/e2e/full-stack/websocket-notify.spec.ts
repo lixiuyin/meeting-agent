@@ -4,36 +4,37 @@
  * Prerequisites: Docker stack running at localhost:8307.
  * Run: npx playwright test websocket-notify.spec.ts
  */
-import { test, expect } from "@playwright/test";
-
-const BASE = "http://localhost:8307";
+import { test, expect } from "./fixtures";
 
 test.describe("WebSocket Notifications", () => {
-  test("websocket endpoint accepts connection", async ({ page }) => {
-    // Use page to create a WebSocket connection via browser
-    const wsMessages: string[] = [];
+  test("authenticated websocket answers ping", async ({ page, request }) => {
+    await page.goto("/");
+    const response = await request.post("/api/v1/ws/token");
+    expect(response.ok()).toBeTruthy();
+    const { token } = (await response.json()) as { token: string };
+    const result = await page.evaluate(async (token) => {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const params = new URLSearchParams({ client_id: crypto.randomUUID(), token });
 
-    await page.goto(`${BASE}/`);
-    await page.evaluate(
-      ({ url, msgs }) => {
-        const ws = new WebSocket(`${url}/api/v1/ws`);
-        ws.onmessage = (event) => msgs.push(event.data);
-        ws.onopen = () => msgs.push("connected");
-        ws.onerror = () => msgs.push("error");
-        // Close after 3 seconds
-        setTimeout(() => ws.close(), 3000);
-      },
-      { url: BASE, msgs: wsMessages as any }
-    );
+      return await new Promise<string>((resolve, reject) => {
+        const ws = new WebSocket(`${protocol}://${location.host}/api/v1/ws?${params}`);
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("websocket pong timed out"));
+        }, 5000);
+        ws.onopen = () => ws.send("ping");
+        ws.onerror = () => reject(new Error("websocket connection failed"));
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data) as { type?: string };
+          if (message.type === "pong") {
+            clearTimeout(timeout);
+            ws.close();
+            resolve("pong");
+          }
+        };
+      });
+    }, token);
 
-    // Wait for connection or error
-    await page.waitForTimeout(4000);
-    expect(wsMessages.length).toBeGreaterThan(0);
-
-    // Should have at least a connection confirmation or error
-    const hasConnection = wsMessages.some(
-      (m) => m === "connected" || m === "error"
-    );
-    expect(hasConnection).toBeTruthy();
+    expect(result).toBe("pong");
   });
 });

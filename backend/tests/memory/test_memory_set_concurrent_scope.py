@@ -5,6 +5,7 @@ import pytest
 from src.core import database as db
 from src.core.database._scopes import get_scopes
 from src.services.memory import memory_service
+from src.services.memory._service._crud import _get_key_lock
 
 
 def _get_scope_ids(user_id: str, key: str) -> tuple[list[int], list[int]]:
@@ -20,13 +21,20 @@ def _get_scope_ids(user_id: str, key: str) -> tuple[list[int], list[int]]:
 
 @pytest.mark.unit
 class TestMemorySetConcurrentScope:
-    def test_scope_union_on_repeated_set(self):
-        """set() with different meeting_ids should merge (union) scopes."""
+    def test_key_lock_remains_stable_across_many_other_keys(self):
+        lock = _get_key_lock("stable-user", "stable-key")
+        with lock:
+            for index in range(10_000):
+                _get_key_lock("stable-user", f"other-{index}")
+            assert _get_key_lock("stable-user", "stable-key") is lock
+
+    def test_scope_union_on_same_value_reconfirmation(self):
+        """The same value can safely accumulate confirming scopes."""
         user_id = "test_scope_user"
         key = "test_scope_key"
 
         memory_service.set(user_id, key, "value_v1", meeting_ids=[1])
-        memory_service.set(user_id, key, "value_v2", meeting_ids=[2])
+        memory_service.set(user_id, key, "value_v1", meeting_ids=[2])
 
         mids, _ = _get_scope_ids(user_id, key)
         assert 1 in mids, f"Expected meeting_id 1 in scope, got: {mids}"
@@ -38,7 +46,7 @@ class TestMemorySetConcurrentScope:
         key = "test_file_key"
 
         memory_service.set(user_id, key, "v1", meeting_ids=[10], file_ids=[100])
-        memory_service.set(user_id, key, "v2", meeting_ids=[20], file_ids=[200])
+        memory_service.set(user_id, key, "v1", meeting_ids=[20], file_ids=[200])
 
         _, fids = _get_scope_ids(user_id, key)
         assert 100 in fids, f"Expected file_id 100, got: {fids}"
