@@ -307,7 +307,8 @@ test("mobile pane unmounts retain the page and within-page reading anchor", asyn
   await expect(page.locator('[data-pdf-pane="pdf"]')).toBeVisible();
   await expect
     .poll(async () => Math.abs((await anchors(page))[0].progress - position.progress))
-    .toBeLessThan(0.02);
+    // One CSS-pixel scroll quantum can exceed 2% on a very short mobile page.
+    .toBeLessThan(0.025);
   expect((await anchors(page))[0].page).toBe(position.page);
   await page.getByText("Parsed", { exact: true }).click();
   await expect

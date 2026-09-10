@@ -96,6 +96,13 @@ function layoutSignature(container: HTMLElement) {
   ].join("|");
 }
 
+function renderedScaleY(container: HTMLElement) {
+  const rect = container.getBoundingClientRect();
+  const layoutHeight = container.offsetHeight;
+  const scale = layoutHeight > 0 ? rect.height / layoutHeight : 1;
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
 // A top-edge reading anchor works even when a parsed page is taller than the viewport.
 function readAnchor(container: HTMLElement): Anchor | null {
   const nodes = pageNodes(container);
@@ -147,13 +154,15 @@ export default function usePdfPageSync({
       const nodes = pageNodes(container);
       const index = nodes.findIndex((node) => Number(node.dataset.pageNum) === anchor.current.page);
       if (index < 0) return; // Never substitute a missing page with its array index.
+      const containerRect = container.getBoundingClientRect();
+      const scaleY = renderedScaleY(container);
       const rect = nodes[index].getBoundingClientRect();
       const next = nodes[index + 1]?.getBoundingClientRect();
-      const height = next ? next.top - rect.top : rect.height;
+      const height = (next ? next.top - rect.top : rect.height) / scaleY;
+      let positionedOnContent = false;
       let top =
         container.scrollTop +
-        rect.top -
-        container.getBoundingClientRect().top -
+        (rect.top - containerRect.top) / scaleY -
         container.clientTop +
         anchor.current.progress * height;
       if (anchor.current.citation && evidenceExcerpt) {
@@ -164,7 +173,8 @@ export default function usePdfPageSync({
         if (quote) {
           // Citation landing uses each representation's actual quotation position.
           // Plain scrolling switches back to the shared page + progress anchor.
-          top += Math.max(0, quote.getBoundingClientRect().top - rect.top - 48);
+          top += Math.max(0, (quote.getBoundingClientRect().top - rect.top) / scaleY - 48);
+          positionedOnContent = true;
         }
       } else if (anchor.current.blockText) {
         const text = anchor.current.blockText;
@@ -176,13 +186,21 @@ export default function usePdfPageSync({
           const blockRect = block.getBoundingClientRect();
           top =
             container.scrollTop +
-            blockRect.top -
-            container.getBoundingClientRect().top -
+            (blockRect.top - containerRect.top) / scaleY -
             container.clientTop +
-            (anchor.current.blockProgress ?? 0) * blockRect.height;
+            (anchor.current.blockProgress ?? 0) * (blockRect.height / scaleY);
+          positionedOnContent = true;
         }
       }
       container.scrollTop = Math.max(0, top);
+      if (!positionedOnContent && anchor.current.progress === 0) {
+        // WebKit can quantize the assigned scrollTop just before a page edge.
+        // Correct only a measurable undershoot so an explicit page jump is not
+        // reported as the final pixels of the preceding page.
+        const edge = container.getBoundingClientRect().top + container.clientTop * scaleY;
+        const undershoot = (nodes[index].getBoundingClientRect().top - edge) / scaleY;
+        if (undershoot > 1) container.scrollTop += undershoot + 0.5;
+      }
       expectedScroll.current[source] = container.scrollTop;
       expectedLayout.current[source] = layoutSignature(container);
     },
@@ -239,6 +257,17 @@ export default function usePdfPageSync({
     window.addEventListener("resize", prepareForLayoutChange);
     return () => window.removeEventListener("resize", prepareForLayoutChange);
   }, [prepareForLayoutChange]);
+
+  const restoreAfterLayoutChange = useCallback(() => {
+    pendingUserScroll.current = null;
+    expectedScroll.current = {};
+    expectedLayout.current = {};
+    if (enabled) SOURCES.forEach(writeAnchor);
+    // Repeat on the next frame so nested PDF layers committed by react-pdf
+    // cannot replace the position restored by the parent's layout effect.
+    layoutChangePending.current = true;
+    schedule();
+  }, [enabled, schedule, writeAnchor]);
 
   const connect = useCallback(
     (source: SyncSource, container: HTMLDivElement | null) => {
@@ -371,6 +400,7 @@ export default function usePdfPageSync({
     pdfContainerRef,
     parsedContainerRef,
     prepareForLayoutChange,
+    restoreAfterLayoutChange,
   };
 }
 

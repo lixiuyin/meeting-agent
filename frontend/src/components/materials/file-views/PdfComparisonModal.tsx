@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Modal, Segmented, Spin, Tooltip } from "antd";
 import { ZoomInOutlined, ZoomOutOutlined, FilePdfOutlined } from "@ant-design/icons";
 import { Document } from "react-pdf";
@@ -54,7 +54,16 @@ export default function PdfComparisonModal({
   const sync = usePdfPageSync({
     totalPages: Math.max(numPages, sortedPages.length),
   });
-  const { prepareForLayoutChange } = sync;
+  const { prepareForLayoutChange, restoreAfterLayoutChange } = sync;
+  const zoomMounted = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!zoomMounted.current) {
+      zoomMounted.current = true;
+      return;
+    }
+    restoreAfterLayoutChange();
+  }, [restoreAfterLayoutChange, zoom]);
 
   // Mobile breakpoint detection (RAF-debounced)
   useEffect(() => {

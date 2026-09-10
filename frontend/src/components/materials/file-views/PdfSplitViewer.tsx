@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from "react";
 import { Button, Spin, Tooltip, Segmented, Alert, Switch, Space } from "antd";
 import { useIntl } from "react-intl";
 import { ZoomInOutlined, ZoomOutOutlined, FilePdfOutlined } from "@ant-design/icons";
@@ -82,7 +82,16 @@ function PdfSplitViewerInner({
     evidenceExcerpt,
     enabled: syncEnabled,
   });
-  const { prepareForLayoutChange } = sync;
+  const { prepareForLayoutChange, restoreAfterLayoutChange } = sync;
+  const zoomMounted = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!zoomMounted.current) {
+      zoomMounted.current = true;
+      return;
+    }
+    restoreAfterLayoutChange();
+  }, [restoreAfterLayoutChange, zoom]);
 
   // Mobile breakpoint detection
   useEffect(() => {
