@@ -16,8 +16,8 @@ in the [ingest guide](backend/docs/ingest-pipeline.md#45-support-formats-and-old
 
 > Documentation status: the maintained guides and architecture references were
 > reconciled with the source tree, OpenAPI contract, Compose topology, and
-> Alembic chain on 2026-09-09. Dated audit reports remain historical evidence;
-> start at [`docs/README.md`](docs/README.md) for the current documentation map.
+> Alembic chain on 2026-09-10. Dated audit reports remain historical evidence;
+> start at [docs/README.md](docs/README.md) for the current documentation map.
 
 ## Interface Preview
 
@@ -40,13 +40,13 @@ Walk-throughs and feature demos are on the project's YouTube channel:
 
 > Click a thumbnail to play on YouTube — GitHub-flavored Markdown does not embed live players inline.
 
-| Full Demo | Invoke Skills |
-|:---:|:---:|
-| [![Full Demo](https://img.youtube.com/vi/IuMp47AY_Do/maxresdefault.jpg)](https://youtu.be/IuMp47AY_Do) | [![Invoke Skills](https://img.youtube.com/vi/YDGAmJN0t0M/maxresdefault.jpg)](https://youtu.be/YDGAmJN0t0M) |
-| End-to-end overview of upload → ingest → chat with citations | Custom skills registered via the API, fired either by direct invocation or by intent matching from chat |
-| **Step by Step** | **Memory & Knowledge Graph** |
-| [![Step by Step](https://img.youtube.com/vi/76IJ_jyXTMU/maxresdefault.jpg)](https://youtu.be/76IJ_jyXTMU) | [![Memory & Knowledge Graph](https://img.youtube.com/vi/027BUwJe1lE/maxresdefault.jpg)](https://youtu.be/027BUwJe1lE) |
-| Chat at three scope levels — unscoped (all meetings), meeting-scoped, and file-scoped — showing how retrieval narrows with each pick | Long-term memory, knowledge-graph entities, and cross-session recall |
+| Full Demo                                                                                                                            | Invoke Skills                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| [![Full Demo](https://img.youtube.com/vi/IuMp47AY_Do/maxresdefault.jpg)](https://youtu.be/IuMp47AY_Do)                               | [![Invoke Skills](https://img.youtube.com/vi/YDGAmJN0t0M/maxresdefault.jpg)](https://youtu.be/YDGAmJN0t0M)            |
+| End-to-end overview of upload → ingest → chat with citations                                                                         | Custom skills registered via the API, fired either by direct invocation or by intent matching from chat               |
+| **Step by Step**                                                                                                                     | **Memory & Knowledge Graph**                                                                                          |
+| [![Step by Step](https://img.youtube.com/vi/76IJ_jyXTMU/maxresdefault.jpg)](https://youtu.be/76IJ_jyXTMU)                            | [![Memory & Knowledge Graph](https://img.youtube.com/vi/027BUwJe1lE/maxresdefault.jpg)](https://youtu.be/027BUwJe1lE) |
+| Chat at three scope levels — unscoped (all meetings), meeting-scoped, and file-scoped — showing how retrieval narrows with each pick | Long-term memory, knowledge-graph entities, and cross-session recall                                                  |
 
 ### Demo scope versus the current system
 
@@ -56,16 +56,16 @@ Walk-throughs and feature demos are on the project's YouTube channel:
 > screens, and workflows now differ. The running application and the maintained
 > [documentation index](docs/README.md) are the source of truth.
 
-| Area | What the earlier videos demonstrate | Capabilities added or substantially expanded afterwards | Current UI |
-|---|---|---|---|
-| Chat lifecycle | Basic questions, streaming answers, and cited sources | Stop an active generation, withdraw the active turn, and edit or regenerate an earlier message by creating an immutable conversation branch instead of rewriting the original history | **Chat**, **History** |
-| Session continuation | Ordinary follow-up questions in one conversation | Preview source changes and continue from the latest state, the previously saved scope, or a saved evidence snapshot | **Chat parameters**, **History** |
-| Memory workspace | Long-term memories, entities, and cross-session recall | A seven-view workspace: **Projects**, **Memories**, **Decisions & tasks**, **State changes**, **Meeting review**, **Entities**, and **Past Sessions**, with typed facts, lifecycle state, evidence, revisions, comparison, and project filtering | **Memory** |
-| Projects and meeting preparation | Not covered as a unified workflow | Project directory and material assignment, unfinished decisions/tasks, recent state changes, and meeting-review preparation grouped by project | **Memory → Projects / Meeting review** |
-| Materials and evidence governance | Uploading and reading meeting files | Reviewable material role/domain/approval metadata, immutable semantic history, rejection of inadmissible evidence, evidence-index synchronization state, and speaker identification with re-indexing | **Materials** |
-| Source navigation | Opening cited material | Direct navigation to PDF pages, slides, transcript timestamps, and highlighted evidence excerpts, including synchronized original/parsed PDF views | **Chat citations**, **Materials** |
-| Retrieval controls | All-meeting, meeting-level, and file-level scope | Fast/balanced/thorough retrieval profiles, coherent Memory modes, optional web fallback after local-confidence checks, and explicitly labelled source-backed degradation when generation cannot finish safely | **Chat parameters** |
-| Reliability and maintenance | Not covered in operational detail | SQLite-backed durable processing for ingestion, summaries, speaker updates, and fact extraction; visible vector-rebuild progress and failure/cancellation state | **Settings → System** |
+| Area                              | What the earlier videos demonstrate                    | Capabilities added or substantially expanded afterwards                                                                                                                                                                                          | Current UI                             |
+| --------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| Chat lifecycle                    | Basic questions, streaming answers, and cited sources  | Stop an active generation, withdraw the active turn, and edit or regenerate an earlier message by creating an immutable conversation branch instead of rewriting the original history                                                            | **Chat**, **History**                  |
+| Session continuation              | Ordinary follow-up questions in one conversation       | Preview source changes and continue from the latest state, the previously saved scope, or a saved evidence snapshot                                                                                                                              | **Chat parameters**, **History**       |
+| Memory workspace                  | Long-term memories, entities, and cross-session recall | A seven-view workspace: **Projects**, **Memories**, **Decisions & tasks**, **State changes**, **Meeting review**, **Entities**, and **Past Sessions**, with typed facts, lifecycle state, evidence, revisions, comparison, and project filtering | **Memory**                             |
+| Projects and meeting preparation  | Not covered as a unified workflow                      | Project directory and material assignment, unfinished decisions/tasks, recent state changes, and meeting-review preparation grouped by project                                                                                                   | **Memory → Projects / Meeting review** |
+| Materials and evidence governance | Uploading and reading meeting files                    | Reviewable material role/domain/approval metadata, immutable semantic history, rejection of inadmissible evidence, evidence-index synchronization state, and speaker identification with re-indexing                                             | **Materials**                          |
+| Source navigation                 | Opening cited material                                 | Direct navigation to PDF pages, slides, transcript timestamps, and highlighted evidence excerpts, including synchronized original/parsed PDF views                                                                                               | **Chat citations**, **Materials**      |
+| Retrieval controls                | All-meeting, meeting-level, and file-level scope       | Fast/balanced/thorough retrieval profiles, coherent Memory modes, optional web fallback after local-confidence checks, and explicitly labelled source-backed degradation when generation cannot finish safely                                    | **Chat parameters**                    |
+| Reliability and maintenance       | Not covered in operational detail                      | SQLite-backed durable processing for ingestion, summaries, speaker updates, and fact extraction; visible vector-rebuild progress and failure/cancellation state                                                                                  | **Settings → System**                  |
 
 Because the interface and feature set have changed materially, a new recording
 is recommended for an accurate end-to-end product tour. The existing videos can
@@ -82,7 +82,8 @@ visible beside them.
   plain text is read locally and only PDFs have a terminal PyMuPDF text
   fallback. Unsupported or exhausted routes end in an explicit failure state.
 - **Speaker-diarized ASR** — AssemblyAI with editable speaker → real-name mapping that re-indexes the affected file's vectors and per-file summary.
-- **Hybrid retrieval** — semantic (Chroma) + BM25 lexical with Reciprocal Rank Fusion, fair per-file allocation, anchor-based eviction for session continuity, and Cohere / BGE rerank.
+- **Hierarchical hybrid retrieval** — meeting/file summary routers and a funnel narrow the scope before Chroma + BM25/FTS5 candidates are fused with RRF, fairly allocated per file, anchored for session continuity, and optionally reranked by Cohere/BGE.
+- **Conservative query routing** — answer shape classifies requests as atomic facts, bounded synthesis, or analytical synthesis; a post-retrieval Evidence Filter promotes weak or cross-source atomic probes back to the full path.
 - **Unified citations** — chunks, file summaries, and meeting summaries share one `[N]` numbering, all clickable from the chat UI to jump back to source page / slide / timestamp.
 - **Governed long-term memory** — evidence-bound and revisioned facts, lifecycle review, bitemporal queries, projects/tasks, recall decay, knowledge-graph entities, and episodic summaries in one bounded Memory workspace.
 - **Streaming and durable work** — chat and summary generation stream SSE events; file processing, summaries, speaker re-indexing, and fact extraction use a SQLite-backed lease/retry/dead-letter queue. Vector-generation rebuilds remain separately guarded maintenance tasks.
@@ -145,9 +146,9 @@ For an authenticated Compose deployment, copy `.env.compose.example` to
 `CORS_ORIGINS`, and a non-dev `ENVIRONMENT`. Provider keys remain in
 `backend/.env`; `.env.compose` is ignored by git.
 
-- Frontend: <http://localhost:8307>
-- Backend API: <http://localhost:7008>
-- API docs: <http://localhost:7008/docs>
+- Frontend: [http://localhost:8307](http://localhost:8307)
+- Backend API: [http://localhost:7008](http://localhost:7008)
+- API docs: [http://localhost:7008/docs](http://localhost:7008/docs)
 - WebSocket: `ws://localhost:7008/api/v1/ws`
 
 ### Manual setup
@@ -210,28 +211,28 @@ or `backend/docs/configuration.md` for advanced tuning.
 
 ### Key settings
 
-| Setting | Default | Description |
-|---|---|---|
-| `LLM_BINDING` | `openai` | `openai`, `azure_openai`, `anthropic`, `deepseek`, `openrouter`, `groq`, `together`, `mistral`, `ollama`, `lm_studio`, `vllm`, `llama_cpp` |
-| `LLM_MODEL` | `gpt-4o-mini` | Any chat model the binding supports |
-| `LLM_API_KEY` | *(required)* | API key for the chosen LLM provider |
-| `LLM_BASE_URL` / `LLM_HOST` | *(empty)* | Custom endpoint for OpenAI-compatible / local providers |
-| `EMBEDDING_BINDING` | `openai` | `openai`, `azure_openai`, `ollama`, `lm_studio`, `huggingface`, `jina`, `cohere`, `google`, `openrouter`, `deepseek`, `together`, `groq`, `mistral`, `vllm` |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `EMBEDDING_DIMENSION` | `1536` | Must match the model's vector size |
-| `ASR_PROVIDER` | `assemblyai` | Only `assemblyai` is supported |
-| `ASSEMBLYAI_API_KEY` | *(required for AV)* | env-only, never in YAML |
-| `OCR_PROVIDER` | `marker` | Routing hint: `marker`, `mineru`, `paddle` |
-| `RAG_RETRIEVER_PROVIDER` | `hybrid` | `vector`, `hybrid`, `multimodal`, `hybrid_multimodal` (`native` is a deprecated alias for `vector`) |
-| `RAGANYTHING_ENABLED` | `false` | Development-only multimodal branch; production is blocked pending upstream dependency fixes |
-| `SEARCH_BINDING` | `exa` | Web search: `duckduckgo`, `serpapi`, `tavily`, `bing`, `exa`; empty disables search |
-| `MEMORY_AUTO_EXTRACT` | `true` | Auto-extract facts from each Q&A turn |
-| `KNOWLEDGE_GRAPH_ENABLED` | `false` | Opt-in research feature: index entities + relations into the KG |
-| `ENVIRONMENT` | `dev` | `dev`, `staging`, `production` (`prod` is an alias; non-dev requires `API_KEY`) |
-| `API_KEY` | *(empty)* | Empty = dev mode (auth bypassed); required for staging/production |
-| `PRINCIPAL_PEPPER` | *(empty)* | Required secret for stable irreversible principal derivation outside development |
-| `PRINCIPAL_ID` | *(unset)* | Optional verified existing owner ID for preserving ownership across API-key rotation; not multi-user auth |
-| `LOG_FORMAT` | `text` | Set to `json` for structured logs |
+| Setting                     | Default                  | Description                                                                                                                                                 |
+| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_BINDING`               | `openai`                 | `openai`, `azure_openai`, `anthropic`, `deepseek`, `openrouter`, `groq`, `together`, `mistral`, `ollama`, `lm_studio`, `vllm`, `llama_cpp`                  |
+| `LLM_MODEL`                 | `gpt-4o-mini`            | Any chat model the binding supports                                                                                                                         |
+| `LLM_API_KEY`               | _(required)_             | API key for the chosen LLM provider                                                                                                                         |
+| `LLM_BASE_URL` / `LLM_HOST` | _(empty)_                | Custom endpoint for OpenAI-compatible / local providers                                                                                                     |
+| `EMBEDDING_BINDING`         | `openai`                 | `openai`, `azure_openai`, `ollama`, `lm_studio`, `huggingface`, `jina`, `cohere`, `google`, `openrouter`, `deepseek`, `together`, `groq`, `mistral`, `vllm` |
+| `EMBEDDING_MODEL`           | `text-embedding-3-small` | Embedding model                                                                                                                                             |
+| `EMBEDDING_DIMENSION`       | `1536`                   | Must match the model's vector size                                                                                                                          |
+| `ASR_PROVIDER`              | `assemblyai`             | Only `assemblyai` is supported                                                                                                                              |
+| `ASSEMBLYAI_API_KEY`        | _(required for AV)_      | env-only, never in YAML                                                                                                                                     |
+| `OCR_PROVIDER`              | `marker`                 | Routing hint: `marker`, `mineru`, `paddle`                                                                                                                  |
+| `RAG_RETRIEVER_PROVIDER`    | `hybrid`                 | `vector`, `hybrid`, `multimodal`, `hybrid_multimodal` (`native` is a deprecated alias for `vector`)                                                         |
+| `RAGANYTHING_ENABLED`       | `false`                  | Development-only multimodal branch; production is blocked pending upstream dependency fixes                                                                 |
+| `SEARCH_BINDING`            | `exa`                    | Web search: `duckduckgo`, `serpapi`, `tavily`, `bing`, `exa`; empty disables search                                                                         |
+| `MEMORY_AUTO_EXTRACT`       | `true`                   | Auto-extract facts from each Q&A turn                                                                                                                       |
+| `KNOWLEDGE_GRAPH_ENABLED`   | `false`                  | Opt-in research feature: index entities + relations into the KG                                                                                             |
+| `ENVIRONMENT`               | `dev`                    | `dev`, `staging`, `production` (`prod` is an alias; non-dev requires `API_KEY`)                                                                             |
+| `API_KEY`                   | _(empty)_                | Empty = dev mode (auth bypassed); required for staging/production                                                                                           |
+| `PRINCIPAL_PEPPER`          | _(empty)_                | Required secret for stable irreversible principal derivation outside development                                                                            |
+| `PRINCIPAL_ID`              | _(unset)_                | Optional verified existing owner ID for preserving ownership across API-key rotation; not multi-user auth                                                   |
+| `LOG_FORMAT`                | `text`                   | Set to `json` for structured logs                                                                                                                           |
 
 ### Helm deployment notes (SQLite)
 
@@ -259,65 +260,76 @@ Tools: `list_meetings`, `search_meetings`, `ask_about_meetings`, `manage_memory`
 
 ## API Endpoints
 
-All application routes are versioned at `/api/v1`. Protected routes use the `X-API-Key` header (empty `API_KEY` = dev mode); liveness/readiness and basic health probes are intentionally unauthenticated. Rate limits are per-endpoint (upload / chat 20 / min, settings 5 / min, reads 60 / min). Errors share a unified `ErrorResponse` envelope (`code`, `message`, `request_id`, `details`). See [`backend/docs/api-reference.md`](backend/docs/api-reference.md) for the complete contract.
+All product API routes are versioned at `/api/v1`; the Prometheus `/metrics`
+endpoint is intentionally outside that prefix. Protected routes use the
+`X-API-Key` header (empty `API_KEY` = dev mode); liveness/readiness and basic
+health probes are intentionally unauthenticated. Rate limits are per-endpoint
+(upload / chat 20 / min, settings 5 / min, reads 60 / min). Errors share a
+unified `ErrorResponse` envelope (`code`, `message`, `request_id`, `details`).
+See [backend/docs/api-reference.md](backend/docs/api-reference.md) for the
+complete generated-contract map; the tables below are a compact product-facing
+index.
 
 ### Meetings
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/meetings/upload` | Upload a file (creates new meeting if no `meeting_id`) |
-| `POST` | `/meetings` | Create a new empty meeting |
-| `GET` | `/meetings` | List meetings (filterable by status) |
-| `GET` | `/meetings/{id}` | Meeting detail with file list |
-| `PUT` | `/meetings/{id}` | Update meeting metadata |
-| `DELETE` | `/meetings/{id}` | Delete a meeting and all files |
-| `GET` | `/meetings/{id}/files` | List files for a meeting |
-| `GET` | `/meetings/{id}/files/{fid}` | Download a file (header `X-API-Key` or `?token=`) |
-| `POST` | `/meetings/file-token` | Issue a short-lived global file token |
-| `POST` | `/meetings/{id}/files/{fid}/signed-url` | Issue a file-scoped HMAC-signed URL |
-| `GET` | `/meetings/assets` | Fetch a meeting asset by relative path |
-| `GET` | `/meetings/{id}/files/{fid}/timeline` | File timeline (segments / pages / captions / text) |
-| `PATCH` | `/meetings/{id}/files/{fid}/semantics` | Review material role/approval with revision-fenced re-indexing |
-| `GET` | `/meetings/{id}/files/{fid}/semantics/history` | Material semantic-review history |
-| `POST` | `/meetings/{id}/files/{fid}/evidence-location` | Resolve evidence to page/slide/timestamp |
-| `GET` | `/meetings/{id}/files/{fid}/speakers` | List speaker mappings |
-| `PUT` | `/meetings/{id}/files/{fid}/speakers` | Update speaker → real-name mappings |
-| `GET` | `/meetings/{id}/files/{fid}/speakers/{code}/audio` | Sample audio clip for a speaker |
-| `DELETE` | `/meetings/{id}/files/{fid}` | Delete a single file from a meeting |
-| `POST` | `/meetings/{id}/summary` | Generate / fetch meeting summary |
-| `POST` | `/meetings/{id}/summary/stream` | Stream meeting summary via SSE |
-| `POST` | `/meetings/{id}/reprocess` | Re-index all files of a meeting |
-| `POST` | `/meetings/{id}/files/{fid}/reprocess` | Re-index a single file |
-| `GET` | `/meetings/{id}/transcript` | Full transcript text |
-| `GET` | `/meetings/{id}/transcript/timestamps` | Transcript with timestamp segments |
-| `GET` | `/meetings/{id}/export` | Export meeting (JSON / Markdown / TXT) |
-| `GET` | `/meetings/search/content` | Full-text search inside transcripts |
+| Method   | Path                                               | Description                                                    |
+| -------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| `POST`   | `/meetings/upload`                                 | Upload a file (creates new meeting if no `meeting_id`)         |
+| `POST`   | `/meetings`                                        | Create a new empty meeting                                     |
+| `GET`    | `/meetings`                                        | List meetings (filterable by status)                           |
+| `GET`    | `/meetings/{id}`                                   | Meeting detail with file list                                  |
+| `PUT`    | `/meetings/{id}`                                   | Update meeting metadata                                        |
+| `DELETE` | `/meetings/{id}`                                   | Delete a meeting and all files                                 |
+| `GET`    | `/meetings/{id}/files`                             | List files for a meeting                                       |
+| `GET`    | `/meetings/{id}/files/{fid}`                       | Download a file (header `X-API-Key` or `?token=`)              |
+| `POST`   | `/meetings/file-token`                             | Issue a short-lived global file token                          |
+| `POST`   | `/meetings/{id}/files/{fid}/signed-url`            | Issue a file-scoped HMAC-signed URL                            |
+| `GET`    | `/meetings/assets`                                 | Fetch a meeting asset by relative path                         |
+| `GET`    | `/meetings/{id}/files/{fid}/timeline`              | File timeline (segments / pages / captions / text)             |
+| `PATCH`  | `/meetings/{id}/files/{fid}/semantics`             | Review material role/approval with revision-fenced re-indexing |
+| `GET`    | `/meetings/{id}/files/{fid}/semantics/history`     | Material semantic-review history                               |
+| `POST`   | `/meetings/{id}/files/{fid}/evidence-location`     | Resolve evidence to page/slide/timestamp                       |
+| `GET`    | `/meetings/{id}/files/{fid}/speakers`              | List speaker mappings                                          |
+| `PUT`    | `/meetings/{id}/files/{fid}/speakers`              | Update speaker → real-name mappings                            |
+| `GET`    | `/meetings/{id}/files/{fid}/speakers/{code}/audio` | Sample audio clip for a speaker                                |
+| `DELETE` | `/meetings/{id}/files/{fid}`                       | Delete a single file from a meeting                            |
+| `GET`    | `/meetings/{id}/summary`                           | Fetch summary and lifecycle status                             |
+| `POST`   | `/meetings/{id}/summary`                           | Generate / fetch meeting summary                               |
+| `POST`   | `/meetings/{id}/summary/stream`                    | Stream meeting summary via SSE                                 |
+| `POST`   | `/meetings/{id}/reprocess`                         | Re-index all files of a meeting                                |
+| `POST`   | `/meetings/{id}/files/{fid}/reprocess`             | Re-index a single file                                         |
+| `GET`    | `/meetings/{id}/transcript`                        | Full transcript text                                           |
+| `GET`    | `/meetings/{id}/transcript/timestamps`             | Transcript with timestamp segments                             |
+| `GET`    | `/meetings/{id}/export`                            | Export meeting (JSON / Markdown / TXT)                         |
+| `GET`    | `/meetings/search/content`                         | Full-text search inside transcripts                            |
 
 ### Chat
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/chat` | RAG Q&A with memory; `rag_mode` per-query: `vector` / `hybrid` / `multimodal` / `hybrid_multimodal` / `auto` |
-| `POST` | `/chat/stream` | Streaming answer via SSE (token / sources / status / trace / done events) |
-| `GET` | `/chat/runs/{run_id}` / `events` | Inspect a persisted run and replay events |
-| `POST` | `/chat/runs/{run_id}/cancel` / `withdraw` | Cancel generation or withdraw its turn |
-| `POST` | `/chat/search` | Semantic + BM25 search only, no LLM |
+| Method | Path                                      | Description                                                                                                  |
+| ------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `POST` | `/chat`                                   | RAG Q&A with memory; `rag_mode` per-query: `vector` / `hybrid` / `multimodal` / `hybrid_multimodal` / `auto` |
+| `POST` | `/chat/stream`                            | Streaming answer via SSE (token / sources / status / trace / done events)                                    |
+| `GET`  | `/chat/run-lookup`                        | Resolve a persisted run from an idempotent client/run key                                                    |
+| `GET`  | `/chat/runs/{run_id}` / `events`          | Inspect a persisted run and replay events                                                                    |
+| `POST` | `/chat/run-cancel`                        | Cancel by idempotent run key                                                                                 |
+| `POST` | `/chat/runs/{run_id}/cancel` / `withdraw` | Cancel generation or withdraw its turn                                                                       |
+| `POST` | `/chat/search`                            | Semantic + BM25 search only, no LLM                                                                          |
 
 ### Sessions
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/sessions` | List chat sessions |
-| `GET` | `/sessions/{id}/messages` | Session message history with sources |
-| `POST` | `/sessions/{id}/branches` | Branch from a persisted message boundary for edit/regenerate workflows |
-| `GET` | `/sessions/{id}/continuation-preview` | Validate latest/saved-scope/saved-snapshot continuation |
-| `DELETE` | `/sessions/{id}` | Delete a session and its messages |
-| `POST` | `/sessions/batch-delete` | Delete up to 100 sessions |
-| `POST` | `/sessions/{id}/summarize` | Generate session summary |
-| `GET` | `/sessions/{id}/summary` | Fetch existing summary |
-| `GET` | `/sessions/{id}/cite` | Citation context for a session |
-| `GET` | `/sessions/summaries` | Cross-session summary list |
-| `POST` | `/sessions/search` | Semantic search across past sessions |
+| Method   | Path                                  | Description                                                            |
+| -------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| `GET`    | `/sessions`                           | List chat sessions                                                     |
+| `GET`    | `/sessions/{id}/messages`             | Session message history with sources                                   |
+| `POST`   | `/sessions/{id}/branches`             | Branch from a persisted message boundary for edit/regenerate workflows |
+| `GET`    | `/sessions/{id}/continuation-preview` | Validate latest/saved-scope/saved-snapshot continuation                |
+| `DELETE` | `/sessions/{id}`                      | Delete a session and its messages                                      |
+| `POST`   | `/sessions/batch-delete`              | Delete up to 100 sessions                                              |
+| `POST`   | `/sessions/{id}/summarize`            | Generate session summary                                               |
+| `GET`    | `/sessions/{id}/summary`              | Fetch existing summary                                                 |
+| `GET`    | `/sessions/{id}/cite`                 | Citation context for a session                                         |
+| `GET`    | `/sessions/summaries`                 | Cross-session summary list                                             |
+| `POST`   | `/sessions/search`                    | Semantic search across past sessions                                   |
 
 ### Memory & Knowledge Graph
 
@@ -326,15 +338,15 @@ reusing long-term knowledge extracted from conversations and meeting materials.
 Records retain lifecycle state, revisions, project scope, and source evidence
 instead of being treated as unverified free-form model memory.
 
-| View | User-facing capabilities |
-|---|---|
-| **Projects** | Create project directories, bind meeting materials, prepare for meetings, and review project-scoped tasks and changes |
-| **Memories** | Browse personal/project and reference libraries; search, filter, create, edit, confirm, retract, import, export, score, decay, delete, and repair vector indexing |
-| **Decisions & tasks** | Query decisions, action items, and project facts by project, owner, status, deadline, source, and historical time |
-| **State changes** | Compare recorded fact states between two business-time boundaries |
-| **Meeting review** | Review automatically extracted candidates and conflicts, inspect source evidence, edit facts, and confirm or retract revisions |
-| **Entities** | Browse extracted entities and relations, merge aliases, and delete incorrect entities |
-| **Past Sessions** | Browse episodic summaries, topics, and decisions, then continue the original conversation |
+| View                  | User-facing capabilities                                                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Projects**          | Create project directories, bind meeting materials, prepare for meetings, and review project-scoped tasks and changes                                             |
+| **Memories**          | Browse personal/project and reference libraries; search, filter, create, edit, confirm, retract, import, export, score, decay, delete, and repair vector indexing |
+| **Decisions & tasks** | Query decisions, action items, and project facts by project, owner, status, deadline, source, and historical time                                                 |
+| **State changes**     | Compare recorded fact states between two business-time boundaries                                                                                                 |
+| **Meeting review**    | Review automatically extracted candidates and conflicts, inspect source evidence, edit facts, and confirm or retract revisions                                    |
+| **Entities**          | Browse extracted entities and relations, merge aliases, and delete incorrect entities                                                                             |
+| **Past Sessions**     | Browse episodic summaries, topics, and decisions, then continue the original conversation                                                                         |
 
 Key governance behavior:
 
@@ -351,54 +363,59 @@ responsive list. See the [frontend Memory workspace guide](frontend/docs/archite
 for interaction and layout details, and [Memory and Knowledge Graph](backend/docs/memory-and-kg.md)
 for extraction, persistence, recall, lifecycle, and KG behavior.
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` / `POST` / `PUT` / `DELETE` | `/memory` | CRUD on long-term memories |
-| `GET` / `PUT` | `/memory/projects` | Project directory and revision-checked updates |
-| `POST` | `/memory/facts/query` | Deterministic typed/bitemporal facts and tasks |
-| `POST` | `/memory/facts/changes` | Compare authoritative fact states |
-| `POST` | `/memory/review/query` | Stable Meeting Review candidate paging |
-| `GET` | `/memory/versions` | Immutable fact revision history |
-| `POST` | `/memory/resolve-conflict` | Atomically resolve competing fact revisions |
-| `POST` | `/memory/batch` | Batch import |
-| `POST` | `/memory/batch-delete` | Delete up to 100 memories atomically |
-| `GET` | `/memory/export` | Cursor-paginated JSON export |
-| `POST` | `/memory/search` | Semantic search |
-| `POST` | `/memory/decay` | Trigger freshness decay |
-| `POST` | `/memory/feedback` | Record explicit memory usefulness feedback |
-| `GET` | `/memory/entities` | List KG entities |
-| `POST` | `/memory/entities/batch-delete` | Delete up to 100 KG entities |
-| `GET` | `/memory/entities/{name}` | Entity detail with relations |
-| `DELETE` | `/memory/entities/{name}` | Delete an entity |
-| `POST` | `/memory/entities/merge` | Merge duplicate entities |
+| Method                            | Path                            | Description                                    |
+| --------------------------------- | ------------------------------- | ---------------------------------------------- |
+| `GET` / `POST` / `PUT` / `DELETE` | `/memory`                       | CRUD on long-term memories                     |
+| `GET` / `PUT`                     | `/memory/projects`              | Project directory and revision-checked updates |
+| `GET`                             | `/memory/projects/materials`    | Materials available for project assignment     |
+| `POST`                            | `/memory/facts/query`           | Deterministic typed/bitemporal facts and tasks |
+| `POST`                            | `/memory/facts/changes`         | Compare authoritative fact states              |
+| `POST`                            | `/memory/review/query`          | Stable Meeting Review candidate paging         |
+| `GET`                             | `/memory/versions`              | Immutable fact revision history                |
+| `POST`                            | `/memory/resolve-conflict`      | Atomically resolve competing fact revisions    |
+| `POST`                            | `/memory/batch`                 | Batch import                                   |
+| `POST`                            | `/memory/batch-delete`          | Delete up to 100 memories atomically           |
+| `GET`                             | `/memory/export`                | Cursor-paginated JSON export                   |
+| `POST`                            | `/memory/search`                | Semantic search                                |
+| `POST`                            | `/memory/retry-index`           | Retry a pending/failed memory vector write     |
+| `POST`                            | `/memory/decay`                 | Trigger freshness decay                        |
+| `POST`                            | `/memory/feedback`              | Record explicit memory usefulness feedback     |
+| `GET`                             | `/memory/entities`              | List KG entities                               |
+| `POST`                            | `/memory/entities/batch-delete` | Delete up to 100 KG entities                   |
+| `GET`                             | `/memory/entities/{name}`       | Entity detail with relations                   |
+| `DELETE`                          | `/memory/entities/{name}`       | Delete an entity                               |
+| `POST`                            | `/memory/entities/merge`        | Merge duplicate entities                       |
 
 ### Skills
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/skills` | Register a custom skill |
-| `GET` | `/skills` | List skills |
-| `POST` | `/skills/match` | Test intent matching (debug) |
-| `POST` | `/skills/invoke` | Invoke a skill directly |
+| Method | Path             | Description                  |
+| ------ | ---------------- | ---------------------------- |
+| `POST` | `/skills`        | Register a custom skill      |
+| `GET`  | `/skills`        | List skills                  |
+| `POST` | `/skills/match`  | Test intent matching (debug) |
+| `POST` | `/skills/invoke` | Invoke a skill directly      |
 
 ### Settings & system
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` / `PUT` | `/settings` | Read / update runtime settings (in-memory) |
-| `GET` | `/settings/bindings` | List available provider bindings |
-| `GET` | `/settings/rebuild-status` | Inspect vector/multimodal rebuild state |
-| `POST` | `/settings/rebuild-vectors` | Atomically rebuild compatible native indexes; fails closed when source artefacts require durable reprocessing |
-| `POST` | `/settings/rebuild-multimodal` | Backfill multimodal (RAGAnything) index |
-| `POST` | `/settings/reload-config` | Reload `main.yaml` from disk |
-| `DELETE` | `/settings/account` | Wipe all data for the calling user |
-| `GET` | `/health` | Full dependency health check |
-| `GET` | `/health/live` | Liveness probe |
-| `GET` | `/health/ready` | Readiness probe |
-| `GET` | `/health/traffic` | Traffic controller status |
-| `GET` | `/health/index-consistency` | Vector / FTS index consistency |
-| `GET` | `/health/jobs` / `/health/capabilities` | Durable work and provider-capability status |
-| `WS` | `/ws` | Real-time progress / completion notifications |
+| Method         | Path                                               | Description                                                                                                   |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GET` / `PUT`  | `/settings`                                        | Read / update runtime settings (in-memory)                                                                    |
+| `GET`          | `/settings/bindings`                               | List available provider bindings                                                                              |
+| `GET`          | `/settings/rebuild-status`                         | Inspect vector/multimodal rebuild state                                                                       |
+| `POST`         | `/settings/rebuild-vectors`                        | Atomically rebuild compatible native indexes; fails closed when source artefacts require durable reprocessing |
+| `POST`         | `/settings/rebuild-multimodal`                     | Backfill multimodal (RAGAnything) index                                                                       |
+| `POST`         | `/settings/reload-config`                          | Reload `main.yaml` from disk                                                                                  |
+| `DELETE`       | `/settings/account`                                | Wipe all data for the calling user                                                                            |
+| `GET` / `POST` | `/settings/account/deletions/{batch_id}` / `retry` | Inspect or retry external account-cleanup work                                                                |
+| `GET`          | `/health`                                          | Full dependency health check                                                                                  |
+| `GET`          | `/health/live`                                     | Liveness probe                                                                                                |
+| `GET`          | `/health/ready`                                    | Readiness probe                                                                                               |
+| `GET`          | `/health/traffic`                                  | Traffic controller status                                                                                     |
+| `GET`          | `/health/index-consistency`                        | Vector / FTS index consistency                                                                                |
+| `GET`          | `/health/jobs` / `/health/capabilities`            | Durable work and provider-capability status                                                                   |
+| `POST`         | `/health/reset-memory-cb`                          | Reset the Memory circuit breaker                                                                              |
+| `POST`         | `/ws/token`                                        | Issue a short-lived WebSocket token                                                                           |
+| `WS`           | `/ws`                                              | Real-time progress / completion notifications                                                                 |
 
 ## Development
 
@@ -468,31 +485,36 @@ Benchmarks run against temporary databases and synthetic fixtures in `tests/fixt
 #### Latest benchmark results
 
 The table below is the only current score summary. It comes from the latest
-completed verification captured on **2026-09-09 at 03:39 UTC**. The
+completed generation-dependent verification captured on **2026-09-09 at 17:39 UTC**. The
 machine-readable results, report hashes, model roles, and limitations are in
-[`docs/validation/latest-benchmark.json`](docs/validation/latest-benchmark.json).
+[docs/validation/latest-benchmark.json](docs/validation/latest-benchmark.json).
 
-| Suite | Latest evaluated scope | Latest result | Status / boundary |
-|---|---:|---|---|
-| Protocol audit | 9 families | `valid=true`; `execution_ready=true` | Protocol readiness only |
-| Evidence governance | 8 cases | Authority, label visibility, revision fence, and temporal-scope accuracy: **1.000** each | Passed synthetic policy check |
-| RAG answer | 10 cases × 3 judge repeats | Faithfulness **0.997**; relevance **1.000**; context precision **0.983**; context recall **1.000**; correctness **0.997**; citation quality **0.932** | Passed synthetic diagnostic; fewer than 30 cases |
-| Multi-turn | 6 cases × 1 judge repeat | Faithfulness **0.992**; appropriateness **1.000**; naturalness **0.988**; completeness/evidence recall/session continuity **1.000** | Diagnostic only; one judge repeat |
-| Memory extraction | 22 events | **22/22** correct; write recall/latest-value/evidence rate **1.000** | Passed synthetic production-path diagnostic |
-| Reranker quality | 8 × 12-candidate cases | MRR **1.000**; nDCG@10 **0.990** | Latest reranked scores; 8 evaluated, 0 skipped |
-| RAG retrieval | 10 cases | Hybrid recall@10 **0.700**; file recall@8 **1.000** | Reranker: 0 evaluated, 10 skipped; one vector timeout fell back to BM25 |
-| Vision entry point | 1 real UI screenshot | Caption + 2,248 OCR characters + semantics in **5.44 s** | Smoke only; not a representative vision corpus |
-| Upload → ready → cited chat | 1 isolated fixture | Ready **0.94 s**; TTFT **1.87 s**; total **2.72 s**; citation/fact/source checks passed | Functional smoke passed |
-| Main-model Chat | 20 requests | 20/20 completed; degraded **45%**; TTFT P95 **4.17 s**; total P95 **6.15 s** | **SLO gate failed** |
+Chat, RAG Answer, Multi-turn, and E2E were rerun after removing the erroneous
+2.5-second hard generation cutoff. Unaffected suites retain their latest
+earlier result, so this is a per-suite latest snapshot rather than one atomic
+all-suite run.
+
+| Suite                       | Latest evaluated scope     | Latest result                                                                                                                                         | Status / boundary                                                       |
+| --------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Protocol audit              | 9 families                 | `valid=true`; `execution_ready=true`                                                                                                                  | Protocol readiness only                                                 |
+| Evidence governance         | 8 cases                    | Authority, label visibility, revision fence, and temporal-scope accuracy: **1.000** each                                                              | Passed synthetic policy check                                           |
+| RAG answer                  | 10 cases × 3 judge repeats | Faithfulness **0.883**; relevance **0.995**; context precision **0.967**; context recall **1.000**; correctness **1.000**; citation quality **0.927** | Valid synthetic diagnostic; two provider-504 judge retries              |
+| Multi-turn                  | 6 cases × 1 judge repeat   | Faithfulness **0.996**; appropriateness **1.000**; naturalness **0.983**; completeness/evidence recall/session continuity **1.000**                   | Diagnostic only; one judge repeat                                       |
+| Memory extraction           | 22 events                  | **22/22** correct; write recall/latest-value/evidence rate **1.000**                                                                                  | Passed synthetic production-path diagnostic                             |
+| Reranker quality            | 8 × 12-candidate cases     | MRR **1.000**; nDCG@10 **0.990**                                                                                                                      | Latest reranked scores; 8 evaluated, 0 skipped                          |
+| RAG retrieval               | 10 cases                   | Hybrid recall@10 **0.700**; file recall@8 **1.000**                                                                                                   | Reranker: 0 evaluated, 10 skipped; one vector timeout fell back to BM25 |
+| Vision entry point          | 1 real UI screenshot       | Caption + 2,248 OCR characters + semantics in **5.44 s**                                                                                              | Smoke only; not a representative vision corpus                          |
+| Upload → ready → cited chat | 1 isolated fixture         | Ready **4.09 s**; TTFT **15.05 s**; total **15.37 s**; citation/fact/source checks passed                                                             | Functional checks passed; **3 s SLO gate failed**                       |
+| Main-model Chat             | 20 requests                | 20/20 completed; degraded **0%**; TTFT P95 **22.93 s**; total P95 **25.17 s**                                                                         | **SLO gate failed**                                                     |
 
 The verification-time roles were `z-ai/glm-5.3-flash` for main generation,
 `qwen/qwen3.8-flash` for independent judging, and
 `deepseek/deepseek-v4-flash-vision-exp` for Memory extraction and Vision. These
 are project-specific synthetic diagnostics, not repository defaults or a general
 model ranking. The OpenRouter provider endpoint was not pinned. The system
-remains **not release-ready** because the main Chat SLO failed, the public
+remains **not release-ready** because both Chat performance gates failed, the public
 quality sets are small and synthetic, Multi-turn used one judge repeat, Vision
-used one screenshot, and the embedding path showed an intermittent timeout.
+used one screenshot, and provider 504/rewrite-resolution timeouts were observed.
 
 ## Observability
 
@@ -528,7 +550,7 @@ Each gate must reference a regular in-repository JSON artifact by path and
 SHA-256. The artifact must be unexpired, name a reviewer, bind itself to the
 same implementation fingerprints, and contain the gate-specific completion
 fields shown by
-[`docs/validation/release-evidence-artifact.template.json`](docs/validation/release-evidence-artifact.template.json).
+[docs/validation/release-evidence-artifact.template.json](docs/validation/release-evidence-artifact.template.json).
 The workflow then validates the exact candidate-image
 digests before promotion. Start from
 `docs/validation/release-readiness.template.json`; historical validation files
@@ -550,14 +572,14 @@ image is promoted.
 - Retention: `backend/docs/operations/retention.md`
 - Migrations: `backend/docs/operations/alembic.md`
 - Incident runbooks: `backend/docs/operations/runbooks/`
-- Architecture decisions (ADRs): product ADRs in [`docs/adr/`](docs/adr/); stack ADRs in [`backend/docs/adr/`](backend/docs/adr/)
-- Diagrams (RAG flow, memory layers, architecture): [`docs/diagrams/`](docs/diagrams/)
-- Documentation hub: [`docs/README.md`](docs/README.md)
-- Getting started: [`docs/getting-started.md`](docs/getting-started.md); API integration: [`docs/api-quickstart.md`](docs/api-quickstart.md)
-- Data lifecycle and operations: [`docs/data-lifecycle.md`](docs/data-lifecycle.md), [`docs/operations-guide.md`](docs/operations-guide.md)
-- Development and benchmarking: [`docs/development-guide.md`](docs/development-guide.md)
-- Frontend architecture and testing/CI: [`frontend/docs/architecture.md`](frontend/docs/architecture.md), [`frontend/docs/testing.md`](frontend/docs/testing.md)
-- Backend subsystem docs: [`backend/docs/README.md`](backend/docs/README.md)
+- Architecture decisions (ADRs): product ADRs in [docs/adr/](docs/adr/); stack ADRs in [backend/docs/adr/](backend/docs/adr/)
+- Diagrams (RAG flow, memory layers, architecture): [docs/diagrams/](docs/diagrams/)
+- Documentation hub: [docs/README.md](docs/README.md)
+- Getting started: [docs/getting-started.md](docs/getting-started.md); API integration: [docs/api-quickstart.md](docs/api-quickstart.md)
+- Data lifecycle and operations: [docs/data-lifecycle.md](docs/data-lifecycle.md), [docs/operations-guide.md](docs/operations-guide.md)
+- Development and benchmarking: [docs/development-guide.md](docs/development-guide.md)
+- Frontend architecture and testing/CI: [frontend/docs/architecture.md](frontend/docs/architecture.md), [frontend/docs/testing.md](frontend/docs/testing.md)
+- Backend subsystem docs: [backend/docs/README.md](backend/docs/README.md)
 
 ## License
 

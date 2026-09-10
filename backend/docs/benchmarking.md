@@ -221,10 +221,12 @@ warm-cache/order bias. It records client-observed `chat_ttft`, `chat_total`,
 performance gate checks p95 TTFT, p95 total latency, and degraded-response rate;
 `--enforce-slo` makes it blocking.
 
-The 2026-09-09 main-generation diagnostic completed 20/20 requests with
-`z-ai/glm-5.3-flash`, but its 45% degraded rate, 4.17 s TTFT p95, and 6.15 s
-total p95 failed the project gate. This result is scoped to that synthetic run,
-its OpenRouter route and configuration; it is not a general conclusion about
+The post-cutoff-fix 2026-09-09 main-generation diagnostic completed 20/20
+requests with `z-ai/glm-5.3-flash` and had a 0% degraded rate. Its 22.93 s TTFT
+p95 and 25.17 s total p95 still failed the project gate. The earlier 45%
+degraded result was superseded because it predated removal of the 2.5-second
+hard generation cutoff. These numbers are scoped to the synthetic run, its
+OpenRouter route and configuration; they are not a general conclusion about
 the model. See the latest benchmark artifact linked above.
 
 ```bash
@@ -432,6 +434,11 @@ The ignored `benchmark-results/e2e-smoke_<timestamp>.json` artifact records
 dataset, harness, and full-stack implementation fingerprints. Summary and fact
 extraction are disabled only in this smoke environment so the run makes one
 answer-generation call; production defaults are unchanged.
+
+The browser writes this report before enforcing its final answer, citation,
+source-identity, health, queue, and latency assertions. A failed gate therefore
+retains the observed evidence and remains diagnosable instead of discarding the
+run artifact.
 
 ```bash
 make e2e-smoke

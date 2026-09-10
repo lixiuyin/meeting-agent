@@ -1,8 +1,13 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-09T03:39:00Z",
+  "captured_at": "2026-09-09T17:44:07.565Z",
   "publication_status": "current",
   "scope": "Latest public Meeting Agent benchmark verification",
+  "superseded_result": {
+    "captured_at": "2026-09-09T03:39:00Z",
+    "reason": "Generation-dependent latency and degradation results predated the removal of the 2.5-second hard generation cutoff.",
+    "repair_revision": "ca4d3e7f68baac0a181d29cfdc64e62d67920a73"
+  },
   "effective_runtime_roles": {
     "main_generation": {
       "binding": "openrouter",
@@ -42,7 +47,8 @@
       "command": "make eval-audit",
       "protocol_families": 9,
       "valid": true,
-      "execution_ready": true
+      "execution_ready": true,
+      "verified_at": "2026-09-09T17:44:05.863946Z"
     },
     "evidence_governance": {
       "valid": true,
@@ -52,8 +58,8 @@
       "authority_label_visibility": 1.0,
       "source_revision_fence_accuracy": 1.0,
       "explicit_temporal_scope_accuracy": 1.0,
-      "report": "backend/benchmark-results/evidence-governance_2026-09-09T02-35-30.244789_00-00.json",
-      "sha256": "c743291c56b7f7887220242c8b3edaca7c9e27d7f61fe307b251d2e776481c2b"
+      "report": "backend/benchmark-results/evidence-governance_2026-09-09T17-44-07.594359_00-00.json",
+      "sha256": "9cc95d27956c4aa55becd409b23c0db7519c5231c09a8a10627a22c7eb1122f0"
     },
     "rag_answer": {
       "valid": true,
@@ -63,17 +69,18 @@
       "judge_repeats": 3,
       "same_model_as_generator": false,
       "parse_failures": 0,
-      "judge_parse_retries": 1,
-      "faithfulness": 0.9966666666666667,
-      "answer_relevance": 1.0,
-      "context_precision": 0.9833333333333334,
+      "judge_parse_retries": 2,
+      "faithfulness": 0.8833333333333334,
+      "answer_relevance": 0.9949999999999999,
+      "context_precision": 0.9666666666666666,
       "context_recall": 1.0,
-      "correctness": 0.9966666666666667,
-      "citation_quality": 0.9316666666666666,
+      "correctness": 1.0,
+      "citation_quality": 0.9273333333333333,
       "source_identity_recall": 1.0,
       "corpus_isolation": 1.0,
-      "report": "backend/benchmark-results/rag-answer_2026-09-09T02-57-42.995070_00-00.json",
-      "sha256": "7e096d86944ec2d83735e4c66864086a888e041d5b02c7e940aab6cc0c5bc7dc"
+      "report": "backend/benchmark-results/rag-answer_2026-09-09T17-21-54.599177_00-00.json",
+      "sha256": "44313c821ac54bcb293dff6f1c5365a39a9427d422d23f043b9fc58a57e93141",
+      "runtime_observation": "Two judge requests received provider 504 responses and succeeded on retry."
     },
     "multi_turn": {
       "valid": true,
@@ -81,16 +88,16 @@
       "judge_model": "qwen/qwen3.8-flash",
       "judge_repeats": 1,
       "parse_failures": 0,
-      "judge_parse_retries": 1,
-      "faithfulness": 0.9916666666666667,
+      "judge_parse_retries": 0,
+      "faithfulness": 0.9958333333333332,
       "appropriateness": 1.0,
-      "naturalness": 0.9875,
+      "naturalness": 0.9833333333333334,
       "completeness": 1.0,
       "evidence_recall": 1.0,
       "session_continuity": 1.0,
       "corpus_isolation": 1.0,
-      "report": "backend/benchmark-results/multi-turn_2026-09-09T03-16-35.897400_00-00.json",
-      "sha256": "686298ca0c938bd632b8fbf150f88673ab4aedf770740143369dd5d7e87a3a52"
+      "report": "backend/benchmark-results/multi-turn_2026-09-09T17-34-21.624100_00-00.json",
+      "sha256": "7a6f5fdc4c034408de04669eb258ba32d832b53edb616e597235ff0a0ade5eb1"
     },
     "memory_pipeline": {
       "valid": true,
@@ -140,36 +147,42 @@
       "sha256": "542d5307a8e846e35a65219ab0a1d0d64ffb5497319c9fed45a21dc58c4f410a"
     },
     "e2e_smoke": {
-      "passed": true,
-      "upload_to_ready_ms": 940.558917,
-      "chat_ttft_ms": 1872.199999988079,
-      "chat_total_ms": 2721.899999976158,
+      "passed": false,
+      "functional_checks_passed": true,
+      "performance_gate_passed": false,
+      "upload_to_ready_ms": 4087.0421670000005,
+      "chat_ttft_ms": 15053.300000011921,
+      "chat_total_ms": 15372.200000017881,
       "answer_has_citation": true,
       "answer_has_expected_fact": true,
       "source_identity_ok": true,
       "dead_letter_jobs": 0,
-      "report": "backend/benchmark-results/e2e-smoke_2026-09-09T02-57-55Z.json",
-      "sha256": "ee29f0f809e8894f4ece6f3f610be6ab97686ba6ed05af50db8c92ff5be44e96"
+      "report": "backend/benchmark-results/e2e-smoke_2026-09-09T17-39-02Z.json",
+      "sha256": "2bf5846f1893624233de801ba78342af5bc929d66bd06b3cdb0bbcda8947e115",
+      "boundary": "The answer, citation, source identity, ingest trace, readiness, and queue checks passed; the browser test failed only the 3-second latency gate."
     },
     "current_chat_performance": {
       "model": "z-ai/glm-5.3-flash",
       "samples": 20,
       "all_requests_completed": true,
       "gate_passed": false,
-      "degraded_rate": 0.45,
-      "ttft_p95_ms": 4169.295543443879,
-      "total_p95_ms": 6152.038187197469,
-      "report": "backend/benchmark-results/chat_2026-09-09T03-38-33.268821_00-00.json",
-      "sha256": "d9ea3d24783bb7bf21513df7582a65bc86c37342ce02a913e3686f89a187e6ba"
+      "degraded_rate": 0.0,
+      "ttft_p95_ms": 22926.787048269765,
+      "total_p95_ms": 25169.020306604216,
+      "report": "backend/benchmark-results/chat_2026-09-09T16-59-24.164945_00-00.json",
+      "sha256": "fcb83aaa4bb9b20997f5b7889a18bd8f1a029a9f9bc89cc13e16d6bf37ac7888",
+      "boundary": "All 20 requests completed without degradation after the hard cutoff was removed, but the latency thresholds still failed."
     }
   },
   "quality_checks": {
     "backend_full_test_suite": "2410 passed, 2 skipped",
     "post_report_metadata_targeted_tests": "59 passed plus 57 passed",
+    "post_timeout_fix_targeted_tests": "98 passed",
     "ruff": "passed",
     "pyright": "0 errors, 0 warnings",
     "frontend_typescript": "passed",
-    "documentation": "90 Markdown files passed",
+    "frontend_format_and_lint": "passed",
+    "documentation": "80 Markdown files passed",
     "environment_layout": "passed"
   },
   "publication_boundary": {
@@ -181,7 +194,9 @@
     "controlled_head_to_head_model_comparison": false,
     "comparison_limitations": [
       "OpenRouter could route a model across provider endpoints.",
-      "The public quality datasets contain fewer than 30 cases and are not human-reviewed production holdouts."
+      "The public quality datasets contain fewer than 30 cases and are not human-reviewed production holdouts.",
+      "Generation-dependent suites were rerun after the cutoff repair; unaffected suites retain their latest earlier result, so this is a per-suite latest snapshot rather than one atomic all-suite run.",
+      "The E2E diagnostic harness change was uncommitted at capture time; the recorded harness and implementation fingerprints identify the executed inputs."
     ],
     "safe_claim": "Under the dated Meeting Agent workload, OpenRouter route, configuration, and project gates, the tested model route did or did not satisfy the project requirement.",
     "prohibited_overgeneralizations": [
@@ -204,10 +219,11 @@
     "release_ready": false,
     "blocking_or_limiting_evidence": [
       "The current main-generation Chat performance gate failed.",
+      "The isolated E2E functional checks passed, but its 3-second latency gate failed.",
       "The published quality datasets are synthetic and contain fewer than 30 cases.",
       "Multi-turn used one judge repeat in this diagnostic run.",
       "Vision was verified on one real screenshot rather than a representative corpus.",
-      "The embedding path still showed an intermittent 8-second timeout and BM25 fallback."
+      "Provider instability was observed: two judge requests required retries after 504 responses, and some query rewrite or resolution calls timed out and used production fallbacks."
     ]
   }
 }

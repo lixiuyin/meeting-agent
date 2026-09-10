@@ -3,6 +3,7 @@
 > This document is a single authoritative document for the Meeting Agent RAG subsystem, covering **Architecture Overview → Indexing (Chunking) → Retrieval (Retrieval) → Reranking (Rerank) → Post-processing → Configuration Reference → Optimization Direction**.
 >
 > Code location:
+>
 > - `backend/src/services/rag/` — RAG infrastructure (vector library, indexing, retrieval, reordering, query rewriting, funnel filtering, scope routing, etc.)
 > - `backend/src/services/chain/` — orchestration layer (routing, context assembly, LCEL generation, streaming events, trace)
 > - `backend/src/core/config.py` — configuration aggregation (YAML + env)
@@ -18,7 +19,7 @@
 4. [Retrieval process (Retrieval)](#4-retrieval-process-retrieval)
 5. [Rerank](#5-reranking-process-rerank)
 6. [Post-processing: Duplication removal & context assembly](#6-post-processing-duplication--contextual-assembly)
-7. [Query rewriting and adaptive top-k](#7-query-rewriting-and-adaptive-top-k)
+7. [Query routing, rewriting, and adaptive top-k](#7-query-routing-rewriting-and-adaptive-top-k)
 8. [Configuration Reference Table](#8-configuration-reference-table)
 9. [Scenario Configuration Template](#9-scenario-configuration-template)
 10. [Performance Characteristics](#10-performance-characteristics)
@@ -31,10 +32,10 @@
 
 The RAG pipeline is split into two layers:
 
-| Level | Position | Responsibilities |
-| --- | --- | --- |
-| **RAG Infrastructure** | `services/rag/` | Vector library singleton, indexing, retrieval, reordering, query rewriting |
-| **Chain Orchestration Layer** | `services/chain/` | Routing, context assembly, LCEL generation, streaming events, trace |
+| Level                         | Position          | Responsibilities                                                           |
+| ----------------------------- | ----------------- | -------------------------------------------------------------------------- |
+| **RAG Infrastructure**        | `services/rag/`   | Vector library singleton, indexing, retrieval, reordering, query rewriting |
+| **Chain Orchestration Layer** | `services/chain/` | Routing, context assembly, LCEL generation, streaming events, trace        |
 
 The two layers pass state through `PipelineContext` / `PipelineResult` (`chain/_context.py`). The Chain layer splits "Rewrite → Retrieval → Reranking → Deduplication → Context Assembly → Generation" into steps that can be traced independently in the form of `_steps_*`:
 
@@ -55,8 +56,13 @@ User Query
 [Routing] `_routing.py` determines `casual` / `rag` (the colloquial "retrieval" in the document is the `rag` in the code)
    │
    ▼
+[Answer-shape Route] rag/_query.py
+   - atomic_fact / bounded_synthesis / analytical_synthesis
+   - Only atomic facts are eligible for a local probe
+   │
+   ▼
 [Query Rewrite] rag/_query.py
-   - Short questions & no pronouns → Skip
+   - Context-free simple questions may skip rewrite
    - Otherwise call lightweight LLM (QUERY_REWRITE_MODEL) override
    │
    ▼
@@ -76,6 +82,8 @@ User Query
    │
    ▼
 [Rerank] rag/_reranker.py
+   - Atomic probes first pass the post-retrieval Evidence Filter
+   - Only validated atomic evidence may skip optional remote reranking
    - Cohere SDK / generic Cohere-compatible HTTP API / local BGE Cross-Encoder
    - scope-aware reranker score cutoff (`RERANKER_SCOPED_MIN_SCORE` / `RERANKER_UNSCOPED_MIN_SCORE`)
    - Small meeting-domain priors prefer decision logs/minutes for decisions and
@@ -137,11 +145,11 @@ User Query
 The supported per-request interface is `retrieval_profile`, not a bundle of
 manual thresholds:
 
-| Profile | Query rewrite | Multi-query | Reranker | Default result budget |
-| --- | --- | --- | --- | --- |
-| `fast` | off | off | off | at most 5 |
-| `balanced` | configured production defaults | configured default | configured default | configured default |
-| `thorough` | on | on | enabled when configured | at least 16 |
+| Profile    | Query rewrite                  | Multi-query        | Reranker                | Default result budget |
+| ---------- | ------------------------------ | ------------------ | ----------------------- | --------------------- |
+| `fast`     | off                            | off                | off                     | at most 5             |
+| `balanced` | configured production defaults | configured default | configured default      | configured default    |
+| `thorough` | on                             | on                 | enabled when configured | at least 16           |
 
 The frontend omits `top_k` by default so the chosen profile remains
 authoritative. `top_k` is retained only as a backwards-compatible expert API
@@ -170,18 +178,18 @@ src/core/config.py (pydantic-settings aggregation)
 
 ### 2.2 RAG key switch (`main.yaml` default value)
 
-| Switch                           | Default  | Main Effects                                             |
-| -------------------------------- | -------- | -------------------------------------------------------- |
-| `SEMANTIC_CHUNKING_ENABLED`      | false    | Enable structure-aware splitting                         |
-| `PARENT_CHILD_ENABLED`           | false    | Enable parent-child double-layer slicing (small-to-big)  |
-| `HYBRID_SEARCH_ENABLED`          | true     | Enable explicit vector + BM25 + RRF retrieval             |
-| `MULTI_QUERY_ENABLED`            | false    | Generate query variant multi-way retrieval               |
-| `QUERY_REWRITE_ENABLED`          | true     | LLM rewrite query                                        |
+| Switch                           | Default         | Main Effects                                             |
+| -------------------------------- | --------------- | -------------------------------------------------------- |
+| `SEMANTIC_CHUNKING_ENABLED`      | false           | Enable structure-aware splitting                         |
+| `PARENT_CHILD_ENABLED`           | false           | Enable parent-child double-layer slicing (small-to-big)  |
+| `HYBRID_SEARCH_ENABLED`          | true            | Enable explicit vector + BM25 + RRF retrieval            |
+| `MULTI_QUERY_ENABLED`            | false           | Generate query variant multi-way retrieval               |
+| `QUERY_REWRITE_ENABLED`          | true            | LLM rewrite query                                        |
 | `RERANKER_BINDING`               | `""` (disabled) | `cohere` / generic `http` / local `bge` / disabled       |
-| `DISTANCE_METRIC`                | l2       | `l2` / `cosine`                                          |
-| `RAG_RETRIEVER_PROVIDER`         | `hybrid` | `vector` / `hybrid` / `multimodal` / `hybrid_multimodal` |
-| `RAGANYTHING_ENABLED`            | false    | Enable multimodal retrieval of RAGAnything               |
-| `RAGANYTHING_FALLBACK_TO_NATIVE` | true     | Downgrade to vector/hybrid when RAGAnything fails         |
+| `DISTANCE_METRIC`                | l2              | `l2` / `cosine`                                          |
+| `RAG_RETRIEVER_PROVIDER`         | `hybrid`        | `vector` / `hybrid` / `multimodal` / `hybrid_multimodal` |
+| `RAGANYTHING_ENABLED`            | false           | Enable multimodal retrieval of RAGAnything               |
+| `RAGANYTHING_FALLBACK_TO_NATIVE` | true            | Downgrade to vector/hybrid when RAGAnything fails        |
 
 `main.yaml` enables hybrid retrieval, query rewriting, hierarchical funnel,
 and summary routing, but leaves reranking opt-in. `.env` or environment
@@ -254,15 +262,15 @@ Location: `rag/_chunkers.py`
 
 Regular `_TOPIC_BREAK_PATTERNS` identifies the natural topic boundaries of meeting minutes:
 
-| Type | Regular snippet | Example |
-| --- | --- | --- |
-| Markdown title | `^#{1,4}\s+` | `## Technical discussion` |
-| Ordered list | `^\d+[\.\)]\s+` | `1. Introduction`, `2) Solution` |
-| Bullet uppercase | `^[-*]\s+[A-Z]` | `- Action items` |
-| Horizontal line | `^-{3,}$`, `^={3,}$` | `---` / `===` |
-| Speaker tag | `^Speaker\s+\d` | `Speaker 1` |
-| Chinese section | `^[.*?]` | `[Meeting Minutes]` |
-| Chinese meeting header | `^(Meeting\|Discussion\|Summary\|Resolution\|Topic)[:]` | `Topic: Q2 Planning` |
+| Type                   | Regular snippet                                         | Example                          |
+| ---------------------- | ------------------------------------------------------- | -------------------------------- |
+| Markdown title         | `^#{1,4}\s+`                                            | `## Technical discussion`        |
+| Ordered list           | `^\d+[\.\)]\s+`                                         | `1. Introduction`, `2) Solution` |
+| Bullet uppercase       | `^[-*]\s+[A-Z]`                                         | `- Action items`                 |
+| Horizontal line        | `^-{3,}$`, `^={3,}$`                                    | `---` / `===`                    |
+| Speaker tag            | `^Speaker\s+\d`                                         | `Speaker 1`                      |
+| Chinese section        | `^[.*?]`                                                | `[Meeting Minutes]`              |
+| Chinese meeting header | `^(Meeting\|Discussion\|Summary\|Resolution\|Topic)[:]` | `Topic: Q2 Planning`             |
 
 Algorithm:
 
@@ -344,9 +352,11 @@ for doc, chunk_id in zip(docs, ids):
 ```
 
 Earnings:- **Repeated ingestion of the same file will not be re-embed** (saving API fees/GPU time).
+
 - **Only write to the changed chunk** to reduce write amplification.
 
 **Known limitations**:
+
 - `_dedup_existing_chunks` uses `(chunk_id, sha256(normalized_page_content)[:12])` to determine whether to skip; `chunk_id` already contains `meeting_id` + `file_id` (see `_chunk_id_prefix`), **The same text in different files will not share chunk id**.
 - The hash **does not contain** other metadata (if page number and title changes are not reflected in the text, the old vector may still be used); see §12 for optimization discussion.
 
@@ -391,6 +401,7 @@ add_bm25_chunk(
 SQLite triggers automatically synchronize inserts/deletions from the `bm25_index` table to the `chat_messages_fts`/`bm25_fts` FTS5 virtual table (see `core/database/bm25.py`).
 
 **Note**:
+
 - BM25 reuses `_SEPARATORS` and parent/child configuration, but ordinary flat paths and vector indexes are not used
   The semantics of `_split_by_structure` are rough; the parsed page/segment document is passed through `_add_docs_to_bm25()`
   Mirror the chunks it has generated.
@@ -457,6 +468,7 @@ if date_to:
 ```
 
 Key points:
+
 - Accepts the `file_ids` parameter and supports precise filtering by file.
 - Dates are stored as `YYYYMMDD` int to support `$gte / $lte` (Chroma does not support numeric comparisons for strings).
 - Single clauses are returned directly without the `$and` wrapper.
@@ -471,10 +483,10 @@ is_cosine = settings.DISTANCE_METRIC == "cosine"
 
 **Distance metric semantics**:
 
-| Metric | Score direction | Threshold meaning |
-| --- | --- | --- |
-| `l2` (default) | lower is better | `score > threshold` to be filtered |
-| `cosine` | The current implementation is based on distance score processing, the lower the better | `score > threshold` is filtered |
+| Metric         | Score direction                                                                        | Threshold meaning                  |
+| -------------- | -------------------------------------------------------------------------------------- | ---------------------------------- |
+| `l2` (default) | lower is better                                                                        | `score > threshold` to be filtered |
+| `cosine`       | The current implementation is based on distance score processing, the lower the better | `score > threshold` is filtered    |
 
 Filtering is skipped when `threshold=None` (hybrid fusion paths do this).
 
@@ -515,6 +527,7 @@ score(doc) = α / (k + rank_vec + 1) + (1-α) / (k + rank_bm25 + 1)
 ```
 
 Among them:
+
 - `k` comes from `RRF_K_PARAM`; `_adaptive_k()` will adapt when `fetch_k` is passed in:
   `fetch_k <= 10` use `max(base_k // 3, 10)`, `fetch_k <= 30` use
   `max(base_k // 2, 20)`, otherwise use `base_k`. funnel file-level merging is additionally controlled by `RAG_FUNNEL_RRF_K`.
@@ -592,6 +605,7 @@ def retrieve_sibling_chunks(docs, *, max_per_anchor=1, max_total=4):
 After the main retrieval is completed, multi-modal sibling chunks (tables, picture descriptions, OCR, etc.) on the same page/file as the hit chunks are pulled from the database. Switch controlled by `RAG_SIBLING_CORETRIEVE_ENABLED` (default `True`).
 
 Parameters:
+
 - `max_per_anchor`: Each anchor chunk can pull up to several brothers (`RAG_SIBLING_CORETRIEVE_PER_ANCHOR`, default 1)
 - `max_total`: The upper limit of the total number of brothers (`RAG_SIBLING_CORETRIEVE_MAX_TOTAL`, default 4)
 
@@ -610,17 +624,20 @@ Location: `rag/_retriever.py`
 Location: `chain/_steps_retrieve.py:_generate_query_variants` + `retrieve_documents`
 
 Trigger conditions:
+
 - `MULTI_QUERY_ENABLED=True`
 - **Non-simple query** (short questions are not worth multi-way expansion)
 - broad recall must also be turned on `RAG_BROAD_RECALL_MULTI_QUERY_ENABLED`; the switch is broad
   Mode-independent kill-switch, turned off by default to control cost and repetitive wide-fetch.
 
 process:1. Generate `MULTI_QUERY_COUNT=3` variants using the main LLM:
-   ```
-   "Generate {n} alternative phrasings of the following question for search purposes.
-    Each variant should capture the same intent but use different words or angles.
-    Return ONLY a JSON array of strings, no explanation."
-   ```
+
+```
+"Generate {n} alternative phrasings of the following question for search purposes.
+ Each variant should capture the same intent but use different words or angles.
+ Return ONLY a JSON array of strings, no explanation."
+```
+
 2. Original query + variants (usually 4 in total) are retrieved in parallel, each query is
    `max(effective_k // len(queries), 3) * fetch_multiplier` allocates budget; each variant can still go
    Hybrid + RRF.
@@ -664,7 +681,7 @@ Provides score aggregation of chunk → file → meeting, which is the core of f
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `aggregate_by_meeting()`     | Chunk scores are aggregated by meeting_id and return top-N meetings                                                           |
 | `aggregate_by_file_scored()` | Chunk scores are aggregated by file_id, returning `(file_id, score)` pairs; support title prior, chunk-count fairness factors |
-| `normalize_scores()`         | Normalize by per-document score provenance; legacy untagged L2 distance uses `1/(1+s)`                                      |
+| `normalize_scores()`         | Normalize by per-document score provenance; legacy untagged L2 distance uses `1/(1+s)`                                        |
 | `fetch_title_priors()`       | SQL queries the matching degree between the conference title/description and the query token, and returns boosting            |
 | `fetch_file_title_priors()`  | File-level title prior, including full-match bonus                                                                            |
 | `restrict_pool()`            | Filter document pool by meeting_ids / file_ids (immutable pattern)                                                            |
@@ -704,11 +721,13 @@ Location: `rag/_query_analysis.py`
 `analyze_query()` provides pure regex (no LLM calls) lightweight query analysis:
 
 **Speaker name extraction** — Three-layer strategy:
+
 1. Known speakers (conference metadata/speaker_mappings) → exact substring matching (word-boundary-aware, LRU cache compiled regular)
 2. English name → regular capital words (excluding question words such as `What/How/Why`)
 3. Chinese → 2-4 words CJK matching triggered by speaker-query pattern (excluding common words such as `meeting/discussion`)
 
 **Temporal hint detection** — Supports:
+
 - Absolute time: "first 2 minutes", "last 5 minutes", "first 3 minutes" (stored as `absolute_seconds` tuple)
 - Relative area: "early/middle/late/mid-late/first half/second half" etc. (mapped to `ratio_min/ratio_max`)
 - Chinese number parsing (`_parse_zh_number`)
@@ -731,6 +750,7 @@ When the user does not specify `file_ids` explicitly, the RAG pipeline needs to 
 ### 4B.1 Data types `_scope_types.py`
 
 `ScopeSelection` (frozen dataclass): The result of the strategy call, including:
+
 - `scope_file_ids` — ordered list of file IDs
 - `file_scores` — File-level relevance scores `[0, 1]`, used for downstream adaptive chunk allocation
 - `docs_by_file` — wide-fetch cache, grouped by file_id, for `fair_retrieve_per_file` reuse
@@ -769,6 +789,7 @@ All functions take Prometheus metrics (`SUMMARY_ROUTER_REQUEST_TOTAL`, `SUMMARY_
 File-level routing, based on per-file summary embeddings + BM25 + RRF:
 
 `route_files_by_summary(query, meeting_ids)`:
+
 1. Vector retrieval: find similar document summaries in summary vectorstore
 2. BM25 search (when `RAG_SUMMARY_ROUTER_HYBRID_ENABLED=True`): `fts5_search_file_summaries` keyword matching
 3. RRF fusion: `_rrf_fuse_file_lists()` merged with `RAG_SUMMARY_ROUTER_HYBRID_ALPHA` weight
@@ -777,6 +798,7 @@ File-level routing, based on per-file summary embeddings + BM25 + RRF:
 `route_files_with_scores()` — Same as above but retaining scores (for use by trace).
 
 Key configuration:
+
 - `RAG_SUMMARY_ROUTER_ENABLED` — master switch
 - `RAG_SUMMARY_ROUTER_TOP_FILES` — select up to several files
 - `RAG_SUMMARY_ROUTER_MIN_SCORE` — minimum normalized higher-is-better relevance threshold; raw vector distances are converted before filtering
@@ -866,6 +888,7 @@ return [{**doc, "score": float(score)} for score, doc in ranked[:top_n]]
 ```
 
 **Features**:
+
 - Cross-Encoder (not bi-encoder): does a forward for each `(query, doc)` pair, with higher accuracy than pure vector similarity.
 - Thread-safe loading of singleton model.
 - **Scores are logit (not normalized)**, range well beyond [0,1], and are **not directly comparable** to Cohere. Scoped/unscoped
@@ -891,11 +914,11 @@ backend-failure cases without adding duplicate top-level response fields.
 
 ### 5.4 Cooperation with the retrieval layer
 
-| Parameters | Default | Function |
-| --- | --- | --- |
-| `RAG_RERANK_FETCH_MULTIPLIER` | 6 | The vector library takes `top_k * 6` candidates and gives them to reranker |
-| `RERANKER_TOP_N` | 20 | The intermediate document pool after rerank; the final scoped result is cut to `ctx.top_k`, and the broad mode retains at least one piece of each file |
-| `RERANKER_UNSCOPED_MIN_SCORE` / `RERANKER_SCOPED_MIN_SCORE` | 0.05 / 0.10 | Broad / Scoped score lower limit (BGE needs to be calibrated) |
+| Parameters                                                  | Default     | Function                                                                                                                                               |
+| ----------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RAG_RERANK_FETCH_MULTIPLIER`                               | 6           | The vector library takes `top_k * 6` candidates and gives them to reranker                                                                             |
+| `RERANKER_TOP_N`                                            | 20          | The intermediate document pool after rerank; the final scoped result is cut to `ctx.top_k`, and the broad mode retains at least one piece of each file |
+| `RERANKER_UNSCOPED_MIN_SCORE` / `RERANKER_SCOPED_MIN_SCORE` | 0.05 / 0.10 | Broad / Scoped score lower limit (BGE needs to be calibrated)                                                                                          |
 
 Typical default effect: `top_k=8, multiplier=6 → up to fetch 48 → rerank intermediate pool 20 →
 Post-process and then cut to the final top-k`. When there are fewer than `max(top_k * 2, 12)` the reranker will be skipped because there are not enough candidates to filter.
@@ -927,6 +950,7 @@ ctx.docs = kept
 ```
 
 **Algorithm**:
+
 - Traverse in order of reranker output (high score first)
 - Generate character-level 4-gram sets for each document
 - If the n-gram overlap rate with the retained document is ≥ 0.85 → discard
@@ -963,9 +987,41 @@ Finally, it is assembled into prompt by `_steps_generate.py:build_context()`. Ea
 
 ---
 
-## 7. Query rewriting and adaptive top-k
+## 7. Query routing, rewriting, and adaptive top-k
 
-### 7.1 Query rewriting `rag/_query.py:rewrite_query`
+### 7.1 Conservative answer-shape routing and Evidence Filter
+
+`classify_query_route()` makes a deterministic, pre-retrieval decision with
+three outcomes:
+
+| Route                  | Meaning                                                                        | Pipeline consequence                                                         |
+| ---------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `atomic_fact`          | One person, date, number, boolean, version, status, or identifier is requested | Eligible for a low-cost BM25 probe, but not yet eligible for fast generation |
+| `bounded_synthesis`    | The answer combines a small number of facts, is ambiguous, or is a follow-up   | Use the normal resolver, retrieval, and reranking path                       |
+| `analytical_synthesis` | Explanation, comparison, cause, summary, or broad/multi-source analysis        | Preserve the full hierarchical retrieval and synthesis path                  |
+
+The classifier is an allow-list, not a general semantic intent model. Pronouns
+and contextual references, multiple requested answer shapes, complexity
+markers, and unknown forms fail closed to synthesis. This prevents short but
+analytical questions such as “GPT 的后训练是怎么做的？” from being mistaken
+for short facts merely because they contain few whitespace-separated tokens.
+
+After the atomic probe, `validate_fast_path_evidence()` performs an independent
+post-retrieval Evidence Filter. It requires non-empty positive-scored evidence,
+checks date/number answer shape where applicable, and tests whether the strong
+top results (at least 75% of the best score) are concentrated in one source.
+Missing source identity or competing strong sources promotes the request back
+to the normal path. An explicit single-file scope is the only cross-result
+exception because all candidates already share one user-selected source.
+
+Only a query that passes both gates may use the configured local retrieval mode,
+skip optional remote reranking, cap output tokens, and activate the streaming
+latency guard. The trace records the route and `fast_path_evidence` decision.
+The 2.5-second value is only an SLO: guarded streams separately enforce 10 s to
+first visible token, 15 s between visible tokens, and a 30 s total safety
+ceiling. Ordinary synthesis uses `LLM_GENERATION_TIMEOUT_S` (100 s by default).
+
+### 7.2 Query rewriting `rag/_query.py:rewrite_query`
 
 ```python
 async def rewrite_query(question: str) -> str:
@@ -989,21 +1045,16 @@ Rewrite the query to improve document retrieval quality.
 - Return ONLY the rewritten query, nothing else.
 ```
 
-**Skip rule `_is_simple_query`**:
-
-```python
-_REWRITE_MAX_TOKENS = 6 # 6 words or less are considered simple
-_ANAPHORA_PATTERN = re.compile(r"\b(it|that|this|they|them|these|those|the above|the previous|the last)\b", re.IGNORECASE)
-
-def _is_simple_query(question: str) -> bool:
-    return len(question.split()) <= 6 and not _ANAPHORA_PATTERN.search(question)
-```
-
-Long questions or pronouns (may require context resolution) → rewrite; short keyword search → use directly.
+**Skip rule `_is_simple_query`** is stricter than raw length. It requires at
+most six whitespace-separated words and `_is_context_free_query()`: no English
+or Chinese anaphora, no summary/comparison/causal markers, and no long CJK
+paragraph (more than 24 ideographs). A query may therefore skip the rewrite LLM
+without qualifying for `atomic_fact`; rewrite avoidance and fast generation are
+separate decisions.
 
 **Single case rewrite LLM**: `_get_rewrite_llm()` uses a separate lightweight model (`QUERY_REWRITE_MODEL`, such as `gpt-4o-mini`) to avoid occupying the quota of the main LLM for low-complexity tasks such as rewrite.
 
-### 7.2 Adaptive top-k `determine_adaptive_top_k`
+### 7.3 Adaptive top-k `determine_adaptive_top_k`
 
 ```python
 _COMPLEXITY_KEYWORDS = {"how many", "compare", "analyze", "list all", "summary of",
@@ -1014,67 +1065,75 @@ _COMPLEXITY_KEYWORDS = {"how many", "compare", "analyze", "list all", "summary o
 }
 _SIMPLE_QUESTION_MIN_CHARS = 30
 
-def determine_adaptive_top_k(question: str, user_requested_k: int | None) -> int:
+def determine_adaptive_top_k(question: str, user_requested_k: int | None,
+                             *, is_broad_recall: bool = False) -> int:
     if user_requested_k is not None:
-        return user_requested_k
+        return min(user_requested_k, 50)
+    if is_broad_recall and is_summary_intent(question):
+        return min(max(TOP_K, SUMMARY_INTENT_TOP_K), 50)
+    if is_broad_recall:
+        return min(max(TOP_K, 8), 50)
     q = question.lower().strip()
     if len(q) < 30 and not any(kw in q for kw in _COMPLEXITY_KEYWORDS):
-        return 3 # Simple fact questions and answers
-    return 8 # Enumeration/comparison/analysis
+        return 3
+    return min(TOP_K, 50)
 ```
 
-When the user explicitly passes `top_k`, it always takes precedence; otherwise, it is determined by heuristic rules.
+An explicit `top_k` takes precedence but is hard-capped at 50. Broad recall has
+an eight-result floor; summary intent uses `SUMMARY_INTENT_TOP_K` (12 by
+default). This result budget is independent of the larger internal pools used
+for funneling, RRF, filtering, coverage, and reranking.
 
 ---
 
 ## 8. Configuration reference table
 
-| Parameters (YAML key) | Default value | Type | Description |
-| --- | --- | --- | --- |
-| **Slice** | | | |
-| `rag.chunk_size` | 1024 | int | Maximum number of characters for flat slices |
-| `rag.chunk_overlap` | 128 | int | Number of overlapping characters in adjacent chunks |
-| `rag.child_chunk_size` | 256 | int | parent-child mode sub-chunk size |
-| `rag.child_chunk_overlap` | 32 | int | Child chunk overlap |
-| `rag.parent_child_enabled` | false | bool | Enable parent-child double-layer slicing |
-| `rag.semantic_chunking_enabled` | false | bool | Enable structure-aware slicing |
-| **Search** | | | |
-| `rag.distance_metric` | l2 | str | `l2` / `cosine` |
-| `rag.top_k` | 8 | int | Default number of blocks that end up in LLM; user/intent policy can be further tuned |
-| `rag.score_threshold` | 1.5 | float | Vector distance/similarity threshold (different meanings by measure) |
-| `rag.hybrid_search_enabled` | true | bool | Enable explicit vector + BM25 + RRF retrieval; compatible hot changes do not require reindexing |
-| `rag.hybrid_alpha` | 0.5 | float | RRF vector weight (1-α for BM25) |
-| `rag.rerank_fetch_multiplier` | 6 | int | Vector library overfetch multiple |
-| `rag.multi_query_enabled` | false | bool | Enable multi-query expansion |
-| `rag.multi_query_count` | 3 | int | Number of query variants generated |
-| `rag.query_rewrite_enabled` | true | bool | Enable LLM query rewriting |
-| `rag.query_rewrite_model` | `""` | str | Rewrite dedicated lightweight model |
-| `rag.retriever_provider` | `hybrid` | str | `vector` / `hybrid` / `multimodal` / `hybrid_multimodal` |
-| `rag.raganything_enabled` | false | bool | Enable multi-modal retrieval of RAGAnything |
-| `rag.raganything_fallback_to_native` | true | bool | Fallback to vector/hybrid when RAGAnything fails |
-| `rag.raganything_working_dir` | `""` | str | RAGAnything storage directory (if empty, use `data/raganything/`) |
-| `rag.raganything_index_timeout_seconds` | 120.0 | float | Index timeout |
-| `rag.raganything_query_timeout_seconds` | 30.0 | float | Query timeout |
-| `rag.raganything_llm_timeout_seconds` | 90.0 | float | LLM call timeout |
-| `rag.index_tables` | true | bool | Index table content |
-| `rag.index_image_captions` | true | bool | Index image description |
-| `rag.image_ocr_min_length` | 15 | int | Minimum length of OCR text (anything shorter than this will not be indexed) |
-| `rag.content_type_rerank_enabled` | true | bool | Rerank by content type |
-| `rag.sibling_coretrieve_enabled` | true | bool | Enable sibling chunk collaborative retrieval |
-| `rag.sibling_coretrieve_per_anchor` | 1 | int | Number of siblings pulled per anchor |
-| `rag.sibling_coretrieve_max_total` | 4 | int | The upper limit of the total number of siblings |
-| `rag.memory_context_max_tokens` | 800 | int | Memory context token budget |
-| `rag.entity_context_max_tokens` | 600 | int | Entity context token budget |
-| `rag.session_context_max_tokens` | 800 | int | Session context token budget |
-| `rag.context_load_timeout_s` | 8.0 | float | Context load timeout (seconds) |
-| `rag.skill_match_timeout_s` | 15.0 | float | Skill match timeout (seconds) |
-| **Rearrange** | | | |
-| `rag.reranker_binding` | `cohere` | str | `cohere` / `bge` / `""`(disabled) |
-| `rag.reranker_model` | `cohere/rerank-4-pro` | str | model name |
-| `rag.reranker_api_key` | `""` | str (secret) | read from env |
-| `rag.reranker_base_url` | `https://openrouter.ai/api/v1` | str | HTTP compatible endpoint; if empty, use the official SDK |
-| `rag.reranker_top_n` | 20 | int | rerank intermediate document pool; the final result is also subject to scope and `ctx.top_k` |
-| `rag.reranker_min_score` | 0.15 | float | rerank minimum score (needs to be recalibrated under BGE) |
+| Parameters (YAML key)                   | Default value                  | Type         | Description                                                                                     |
+| --------------------------------------- | ------------------------------ | ------------ | ----------------------------------------------------------------------------------------------- |
+| **Slice**                               |                                |              |                                                                                                 |
+| `rag.chunk_size`                        | 1024                           | int          | Maximum number of characters for flat slices                                                    |
+| `rag.chunk_overlap`                     | 128                            | int          | Number of overlapping characters in adjacent chunks                                             |
+| `rag.child_chunk_size`                  | 256                            | int          | parent-child mode sub-chunk size                                                                |
+| `rag.child_chunk_overlap`               | 32                             | int          | Child chunk overlap                                                                             |
+| `rag.parent_child_enabled`              | false                          | bool         | Enable parent-child double-layer slicing                                                        |
+| `rag.semantic_chunking_enabled`         | false                          | bool         | Enable structure-aware slicing                                                                  |
+| **Search**                              |                                |              |                                                                                                 |
+| `rag.distance_metric`                   | l2                             | str          | `l2` / `cosine`                                                                                 |
+| `rag.top_k`                             | 8                              | int          | Default number of blocks that end up in LLM; user/intent policy can be further tuned            |
+| `rag.score_threshold`                   | 1.5                            | float        | Vector distance/similarity threshold (different meanings by measure)                            |
+| `rag.hybrid_search_enabled`             | true                           | bool         | Enable explicit vector + BM25 + RRF retrieval; compatible hot changes do not require reindexing |
+| `rag.hybrid_alpha`                      | 0.5                            | float        | RRF vector weight (1-α for BM25)                                                                |
+| `rag.rerank_fetch_multiplier`           | 6                              | int          | Vector library overfetch multiple                                                               |
+| `rag.multi_query_enabled`               | false                          | bool         | Enable multi-query expansion                                                                    |
+| `rag.multi_query_count`                 | 3                              | int          | Number of query variants generated                                                              |
+| `rag.query_rewrite_enabled`             | true                           | bool         | Enable LLM query rewriting                                                                      |
+| `rag.query_rewrite_model`               | `""`                           | str          | Rewrite dedicated lightweight model                                                             |
+| `rag.retriever_provider`                | `hybrid`                       | str          | `vector` / `hybrid` / `multimodal` / `hybrid_multimodal`                                        |
+| `rag.raganything_enabled`               | false                          | bool         | Enable multi-modal retrieval of RAGAnything                                                     |
+| `rag.raganything_fallback_to_native`    | true                           | bool         | Fallback to vector/hybrid when RAGAnything fails                                                |
+| `rag.raganything_working_dir`           | `""`                           | str          | RAGAnything storage directory (if empty, use `data/raganything/`)                               |
+| `rag.raganything_index_timeout_seconds` | 120.0                          | float        | Index timeout                                                                                   |
+| `rag.raganything_query_timeout_seconds` | 30.0                           | float        | Query timeout                                                                                   |
+| `rag.raganything_llm_timeout_seconds`   | 90.0                           | float        | LLM call timeout                                                                                |
+| `rag.index_tables`                      | true                           | bool         | Index table content                                                                             |
+| `rag.index_image_captions`              | true                           | bool         | Index image description                                                                         |
+| `rag.image_ocr_min_length`              | 15                             | int          | Minimum length of OCR text (anything shorter than this will not be indexed)                     |
+| `rag.content_type_rerank_enabled`       | true                           | bool         | Rerank by content type                                                                          |
+| `rag.sibling_coretrieve_enabled`        | true                           | bool         | Enable sibling chunk collaborative retrieval                                                    |
+| `rag.sibling_coretrieve_per_anchor`     | 1                              | int          | Number of siblings pulled per anchor                                                            |
+| `rag.sibling_coretrieve_max_total`      | 4                              | int          | The upper limit of the total number of siblings                                                 |
+| `rag.memory_context_max_tokens`         | 800                            | int          | Memory context token budget                                                                     |
+| `rag.entity_context_max_tokens`         | 600                            | int          | Entity context token budget                                                                     |
+| `rag.session_context_max_tokens`        | 800                            | int          | Session context token budget                                                                    |
+| `rag.context_load_timeout_s`            | 8.0                            | float        | Context load timeout (seconds)                                                                  |
+| `rag.skill_match_timeout_s`             | 15.0                           | float        | Skill match timeout (seconds)                                                                   |
+| **Rearrange**                           |                                |              |                                                                                                 |
+| `rag.reranker_binding`                  | `cohere`                       | str          | `cohere` / `bge` / `""`(disabled)                                                               |
+| `rag.reranker_model`                    | `cohere/rerank-4-pro`          | str          | model name                                                                                      |
+| `rag.reranker_api_key`                  | `""`                           | str (secret) | read from env                                                                                   |
+| `rag.reranker_base_url`                 | `https://openrouter.ai/api/v1` | str          | HTTP compatible endpoint; if empty, use the official SDK                                        |
+| `rag.reranker_top_n`                    | 20                             | int          | rerank intermediate document pool; the final result is also subject to scope and `ctx.top_k`    |
+| `rag.reranker_min_score`                | 0.15                           | float        | rerank minimum score (needs to be recalibrated under BGE)                                       |
 
 ---
 
@@ -1141,13 +1200,14 @@ Features: Fully functional, highest recall and accuracy; high cost, large delay,
 
 ## 10. Performance Characteristics
 
-| Configuration | Indexing time | Query latency | Embedding cost | Rerank cost |
-| --- | --- | --- | --- | --- |
-| Minimalist | Fast | Fastest | Low | 0 |
-| Balanced (+ Cohere) | Fast | Medium | Low | Medium (API call) |
-| High precision (all enabled) | Slow (parent-child ≈ 2×) | Slow (Hybrid + RRF + Multi-Query) | High | High (BGE local GPU or Cohere) |
+| Configuration                | Indexing time            | Query latency                     | Embedding cost | Rerank cost                    |
+| ---------------------------- | ------------------------ | --------------------------------- | -------------- | ------------------------------ |
+| Minimalist                   | Fast                     | Fastest                           | Low            | 0                              |
+| Balanced (+ Cohere)          | Fast                     | Medium                            | Low            | Medium (API call)              |
+| High precision (all enabled) | Slow (parent-child ≈ 2×) | Slow (Hybrid + RRF + Multi-Query) | High           | High (BGE local GPU or Cohere) |
 
 **Typical bottlenecks**:
+
 - **Index**: embedding is much slower than chunking. Parent-child doubling the amount of embedding is the biggest amplifier.
 - **Query**: Multi-query will multiply the retrieval time by 4; rerank (especially BGE CPU inference) is the main source of delay before the first token.
 - **LLM generation**: When top_k is small, the amount of tokens entering LLM after rerank is linearly related to the generation speed.
@@ -1292,10 +1352,12 @@ Sorted by **Impact × Cost**; each item is marked with the current code location
    - Low implementation cost: new step `_steps_hyde.py`, after rewrite and before retrieve.
 
 3. **Intent classification calibration**
-   - `QueryPlan` already distinguishes factual, summary, comparison, and
-     exhaustive intents while the outer route distinguishes casual from
-     retrieval. The remaining work is multilingual benchmark calibration and an
-     explicit unknown/ambiguous outcome, not another overlapping classifier.
+   - The outer route distinguishes casual from retrieval, `QueryPlan`
+     distinguishes factual/summary/comparison/exhaustive retrieval, and
+     `QueryRouteDecision` independently controls atomic-fact fast-path
+     eligibility. Keep these responsibilities separate. Future work is broader
+     multilingual calibration and learned confidence evaluation; it must not
+     bypass the deterministic post-retrieval Evidence Filter.
 
 ### 12.5 Context Assembly
 
@@ -1347,6 +1409,10 @@ Sorted by **Impact × Cost**; each item is marked with the current code location
 ## 13. One sentence summary
 
 Currently RAG has covered most of the key modules required at the industrial level -
-**Structure awareness + parent-child chunking, adaptive top-k, Hybrid + RRF, Cohere/BGE dual reranker, Query Rewrite, Multi-Query, Dedup, Trace**, and is very attentive to engineering details such as "best-effort degradation, singleton concurrency safety, deterministic upsert, per-file vector cleaning" and other engineering details.
+**Structure awareness + parent-child chunking, hierarchical routing/funnel,
+answer-shape routing + Evidence Filter, adaptive top-k, Hybrid + RRF,
+Cohere/BGE dual reranker, Query Rewrite, Multi-Query, Dedup, and Trace**, with
+explicit engineering boundaries for best-effort degradation, singleton
+concurrency safety, deterministic upsert, and per-file index replacement.
 
 The focus of the next round of optimization should shift from **"adding additional functions"** to **"making the default switch truly on, making indicators quantifiable, and making rerank and hybrid dynamically adaptive"** - combining benchmarks to capture the optimal configuration, and then using CI to cover quality degradation.

@@ -153,7 +153,7 @@ Authoritative source: `backend/src/core/database/_migration_definitions.py` (imp
 - If an existing database is connected to Alembic for the first time: `alembic stamp` is required to align the baseline, see the operation and maintenance documentation.
 - **`schema_version` is frozen at v52** as the legacy compatibility baseline.
 - All changes after v52 use one source of truth: **Alembic revisions only**.
-- As verified on 2026-09-09, the single Alembic head is
+- As verified on 2026-09-10, the single Alembic head is
   **`20260908_000003`** (`idempotency_lifecycle`). Run `uv run alembic heads`
   rather than copying this value into operational automation.
 - Fresh test/bootstrap schemas may include the cumulative current schema, but

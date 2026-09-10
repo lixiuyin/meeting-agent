@@ -95,7 +95,7 @@ interface SmokeMetrics {
       session_id: string;
       sources: StreamObservation["sourceItems"];
       spans: StreamObservation["spans"];
-      terminal_status: "success";
+      terminal_status: "success" | "degraded" | "timeout" | "error";
       trace_id: string;
     };
     ingest_trace: IngestTrace;
@@ -335,18 +335,8 @@ test("upload -> ready -> cited chat -> clean queue", async ({ page, request }, t
       .toBeTruthy();
 
     const observation = await page.evaluate(() => window.__meetingAgentStreamObservation);
-    expect(observation).toBeTruthy();
-    expect(observation?.errors).toEqual([]);
-    expect(observation?.ttftMs).toBeGreaterThan(0);
-    expect(observation?.totalMs).toBeGreaterThanOrEqual(observation?.ttftMs ?? Infinity);
-    expect(observation?.ttftMs).toBeLessThanOrEqual(CHAT_SLO_TARGET_MS);
-    expect(observation?.totalMs).toBeLessThanOrEqual(CHAT_SLO_TARGET_MS);
-    expect(observation?.answer).toMatch(/ORBIT-742/i);
-    expect(observation?.answer).toMatch(/\[\d+\]/);
-    expect(observation?.traceId).toBeTruthy();
-    expect(observation?.sessionId).toBeTruthy();
-    expect(observation?.spanCount).toBeGreaterThan(0);
-    expect(observation?.sourceItems.length).toBeGreaterThan(0);
+    const answerHasExpectedFact = /ORBIT-742/i.test(observation?.answer ?? "");
+    const answerHasCitation = /\[\d+\]/.test(observation?.answer ?? "");
     const sourceIdentityOk =
       observation?.sourceItems.some(
         (source) =>
@@ -354,22 +344,31 @@ test("upload -> ready -> cited chat -> clean queue", async ({ page, request }, t
           source.file_id === fileId &&
           source.file_name === "sample.txt",
       ) ?? false;
-    expect(sourceIdentityOk).toBeTruthy();
+    const chatTerminalStatus = observation?.errors.length
+      ? "error"
+      : /timed out/i.test(observation?.answer ?? "") ||
+          observation?.spans.some((span) => span.status === "timeout")
+        ? "timeout"
+        : observation?.spans.some((span) => span.status === "degraded")
+          ? "degraded"
+          : "success";
 
     const readyResponse = await request.get("/api/v1/health/ready");
-    expect(readyResponse.ok()).toBeTruthy();
-    const readyPayload = (await readyResponse.json()) as {
-      checks?: Record<string, string>;
-    };
+    const readyPayload = readyResponse.ok()
+      ? ((await readyResponse.json()) as { checks?: Record<string, string> })
+      : {};
     const requiredChecks = ["startup", "database", "fts5", "job_queue", "storage"];
-    const readinessChecksOk = requiredChecks.every((name) => readyPayload.checks?.[name] === "ok");
-    expect(readinessChecksOk).toBeTruthy();
+    const readinessChecksOk =
+      readyResponse.ok() && requiredChecks.every((name) => readyPayload.checks?.[name] === "ok");
 
     const jobsResponse = await request.get("/api/v1/health/jobs");
-    expect(jobsResponse.ok()).toBeTruthy();
-    const jobsPayload = (await jobsResponse.json()) as { counts?: Record<string, number> };
-    const deadLetterJobs = jobsPayload.counts?.dead_letter ?? 0;
-    expect(deadLetterJobs).toBe(0);
+    const jobsPayload = jobsResponse.ok()
+      ? ((await jobsResponse.json()) as { counts?: Record<string, number> })
+      : {};
+    const deadLetterJobs = jobsResponse.ok() ? (jobsPayload.counts?.dead_letter ?? 0) : -1;
+    const chatLatencySloOk =
+      (observation?.ttftMs ?? Infinity) <= CHAT_SLO_TARGET_MS &&
+      (observation?.totalMs ?? Infinity) <= CHAT_SLO_TARGET_MS;
 
     const metrics: SmokeMetrics = {
       schema_version: 1,
@@ -385,11 +384,9 @@ test("upload -> ready -> cited chat -> clean queue", async ({ page, request }, t
         chat_total: observation?.totalMs ?? 0,
       },
       assertions: {
-        answer_has_citation: /\[\d+\]/.test(observation?.answer ?? ""),
-        answer_has_expected_fact: /ORBIT-742/i.test(observation?.answer ?? ""),
-        chat_latency_slo_ok:
-          (observation?.ttftMs ?? Infinity) <= CHAT_SLO_TARGET_MS &&
-          (observation?.totalMs ?? Infinity) <= CHAT_SLO_TARGET_MS,
+        answer_has_citation: answerHasCitation,
+        answer_has_expected_fact: answerHasExpectedFact,
+        chat_latency_slo_ok: chatLatencySloOk,
         dead_letter_jobs: deadLetterJobs,
         ingest_required_spans_ok: ingestRequiredSpansOk,
         ingest_terminal_success: ingestTerminalSuccess,
@@ -408,7 +405,7 @@ test("upload -> ready -> cited chat -> clean queue", async ({ page, request }, t
           session_id: observation?.sessionId ?? "",
           sources: observation?.sourceItems ?? [],
           spans: observation?.spans ?? [],
-          terminal_status: "success",
+          terminal_status: chatTerminalStatus,
           trace_id: observation?.traceId ?? "",
         },
         ingest_trace: ingestTrace,
@@ -428,6 +425,25 @@ test("upload -> ready -> cited chat -> clean queue", async ({ page, request }, t
       await mkdir(dirname(outputPath), { recursive: true });
       await writeFile(outputPath, `${metricsJson}\n`, "utf8");
     }
+
+    // Persist all functional and trace evidence before enforcing the latency
+    // and quality gates so a failure remains diagnosable instead of discarding
+    // the run.
+    expect(observation).toBeTruthy();
+    expect(observation?.errors).toEqual([]);
+    expect(observation?.ttftMs).toBeGreaterThan(0);
+    expect(observation?.totalMs).toBeGreaterThanOrEqual(observation?.ttftMs ?? Infinity);
+    expect(answerHasExpectedFact).toBeTruthy();
+    expect(answerHasCitation).toBeTruthy();
+    expect(observation?.traceId).toBeTruthy();
+    expect(observation?.sessionId).toBeTruthy();
+    expect(observation?.spanCount).toBeGreaterThan(0);
+    expect(observation?.sourceItems.length).toBeGreaterThan(0);
+    expect(sourceIdentityOk).toBeTruthy();
+    expect(readinessChecksOk).toBeTruthy();
+    expect(deadLetterJobs).toBe(0);
+    expect(observation?.ttftMs).toBeLessThanOrEqual(CHAT_SLO_TARGET_MS);
+    expect(observation?.totalMs).toBeLessThanOrEqual(CHAT_SLO_TARGET_MS);
   } finally {
     await request.delete(`/api/v1/meetings/${meetingId}`);
   }

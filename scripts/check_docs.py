@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate local links, Mermaid fences, and English/Chinese README parity."""
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ DOC_ROOTS = (
     ROOT / "deploy" / "helm" / "meeting-agent" / "README.md",
 )
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+CODE_WRAPPED_LINK_RE = re.compile(r"`!?\[[^\]]*\]\([^)]+\)`")
 METHOD_PATH_ROW_RE = re.compile(
     r"^\|\s*`(GET|POST|PUT|PATCH|DELETE)`\s*\|\s*`([^`]+)`", re.MULTILINE
 )
@@ -72,6 +72,12 @@ def markdown_files() -> list[Path]:
 def validate_file(path: Path) -> list[str]:
     errors: list[str] = []
     text = path.read_text(encoding="utf-8")
+    for match in CODE_WRAPPED_LINK_RE.finditer(text):
+        line_number = text.count("\n", 0, match.start()) + 1
+        errors.append(
+            f"{path.relative_to(ROOT)}:{line_number}: Markdown link is wrapped "
+            "in code ticks and will not be clickable"
+        )
     in_mermaid = False
     mermaid_lines: list[str] = []
     for line_number, line in enumerate(text.splitlines(), 1):

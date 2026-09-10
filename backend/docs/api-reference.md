@@ -7,7 +7,7 @@
 >
 > Code location: `backend/src/api/routers/`, response schema: `backend/src/models/schemas/`.
 
-**Contract reconciliation:** 2026-09-09. The current-source OpenAPI document
+**Contract reconciliation:** 2026-09-10. The current-source OpenAPI document
 exposed 83 paths and 96 operations. Generate `/openapi.json` for exact schemas;
 the tables below are a navigational reference, not a generated-contract
 replacement.
@@ -115,17 +115,17 @@ Traverse all files under meeting:
 
 Route prefix: `/chat`, code: `api/routers/chat.py`.
 
-| Method | Path | Behavior |
-|---|---|---|
-| `POST` | `/chat` | Synchronous Q&A (RAG + memory) |
-| `POST` | `/chat/stream` | Start/attach to durable SSE chat execution |
-| `GET` | `/chat/runs/{run_id}` | Read persisted run state and terminal metadata |
-| `GET` | `/chat/run-lookup` | Resolve a run from its idempotent client/run key |
-| `GET` | `/chat/runs/{run_id}/events` | Replay persisted run events after a sequence cursor |
-| `POST` | `/chat/run-cancel` | Cancel by idempotent run key |
-| `POST` | `/chat/runs/{run_id}/cancel` | Cancel by server run ID while retaining persisted history |
+| Method | Path                           | Behavior                                                             |
+| ------ | ------------------------------ | -------------------------------------------------------------------- |
+| `POST` | `/chat`                        | Synchronous Q&A (RAG + memory)                                       |
+| `POST` | `/chat/stream`                 | Start/attach to durable SSE chat execution                           |
+| `GET`  | `/chat/runs/{run_id}`          | Read persisted run state and terminal metadata                       |
+| `GET`  | `/chat/run-lookup`             | Resolve a run from its idempotent client/run key                     |
+| `GET`  | `/chat/runs/{run_id}/events`   | Replay persisted run events after a sequence cursor                  |
+| `POST` | `/chat/run-cancel`             | Cancel by idempotent run key                                         |
+| `POST` | `/chat/runs/{run_id}/cancel`   | Cancel by server run ID while retaining persisted history            |
 | `POST` | `/chat/runs/{run_id}/withdraw` | Cancel and withdraw the associated turn according to lifecycle rules |
-| `POST` | `/chat/search` | Retrieve/rerank only; do not generate |
+| `POST` | `/chat/search`                 | Retrieve/rerank only; do not generate                                |
 
 ### 3.1 `POST /chat`
 
@@ -199,67 +199,67 @@ Only run retrieval and reranking, return the document list, and do not call the 
 
 Route prefix: `/sessions`, code: `api/routers/sessions.py`.
 
-| Method   | Path                       | Behavior                                       |
-| -------- | -------------------------- | ---------------------------------------------- |
-| `GET`    | `/sessions`                | List user sessions                             |
-| `GET`    | `/sessions/{id}/messages`  | All session messages                           |
+| Method   | Path                                  | Behavior                                                            |
+| -------- | ------------------------------------- | ------------------------------------------------------------------- |
+| `GET`    | `/sessions`                           | List user sessions                                                  |
+| `GET`    | `/sessions/{id}/messages`             | All session messages                                                |
 | `GET`    | `/sessions/{id}/continuation-preview` | Validate and preview latest/saved-scope/saved-snapshot continuation |
-| `POST`   | `/sessions/{id}/branches`  | Create a branch at a persisted message boundary |
-| `DELETE` | `/sessions/{id}`           | Delete sessions (and messages, summaries)      |
-| `POST`   | `/sessions/batch-delete`    | Delete up to 100 sessions in one transaction   |
-| `POST`   | `/sessions/{id}/summarize` | Generate/regenerate summary                    |
-| `GET`    | `/sessions/{id}/summary`   | Read summary                                   |
-| `GET`    | `/sessions/{id}/cite`      | citation/summary context                       |
-| `GET`    | `/sessions/summaries`      | List of all summaries (paginated)              |
-| `POST`   | `/sessions/search`         | Cross-session search (FTS5 + digest semantics) |
+| `POST`   | `/sessions/{id}/branches`             | Create a branch at a persisted message boundary                     |
+| `DELETE` | `/sessions/{id}`                      | Delete sessions (and messages, summaries)                           |
+| `POST`   | `/sessions/batch-delete`              | Delete up to 100 sessions in one transaction                        |
+| `POST`   | `/sessions/{id}/summarize`            | Generate/regenerate summary                                         |
+| `GET`    | `/sessions/{id}/summary`              | Read summary                                                        |
+| `GET`    | `/sessions/{id}/cite`                 | citation/summary context                                            |
+| `GET`    | `/sessions/summaries`                 | List of all summaries (paginated)                                   |
+| `POST`   | `/sessions/search`                    | Cross-session search (FTS5 + digest semantics)                      |
 
 ## 5. Memory
 
 Routing prefix: `/memory`, code: `api/routers/memory.py`. See [`memory-and-kg.md`](./memory-and-kg.md) for details.
 
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/memory/projects` | List the project directory |
-| `PUT` | `/memory/projects` | Create/update a revision-checked project definition |
-| `GET` | `/memory/projects/materials` | List materials available for project assignment |
-| `POST` | `/memory/review/query` | Page through Meeting Review candidates using a stable snapshot |
-| `POST` | `/memory/facts/query` | Deterministic typed/bitemporal decision, task, and project-fact query |
-| `POST` | `/memory/facts/changes` | Compare fact snapshots across business/system time |
-| `GET` | `/memory` | List memories with library/type/lifecycle/project/paging filters |
-| `POST` | `/memory` | Create a memory |
-| `PUT` | `/memory` | Revision-checked edit or lifecycle transition |
-| `DELETE` | `/memory` | Hard-delete one memory and queue derived-vector cleanup |
-| `POST` | `/memory/resolve-conflict` | Select a revisioned winner and atomically supersede alternatives |
-| `POST` | `/memory/batch` | Batch import |
-| `POST` | `/memory/batch-delete` | Delete up to 100 memories atomically |
-| `GET` | `/memory/export` | Cursor-paginated JSON export |
-| `GET` | `/memory/versions` | Read immutable revisions for a logical memory key |
-| `POST` | `/memory/search` | Semantic search |
-| `POST` | `/memory/retry-index` | Retry indexing for a pending/failed memory revision |
-| `POST` | `/memory/decay` | Trigger decay + merge |
-| `POST` | `/memory/feedback` | Record explicit usefulness feedback for one fact |
-| `GET` | `/memory/entities` | List entities |
-| `POST` | `/memory/entities/batch-delete` | Delete up to 100 entities |
-| `GET` | `/memory/entities/{name}` | Entity details + relationships |
-| `DELETE` | `/memory/entities/{name}` | Delete an entity |
-| `POST` | `/memory/entities/merge` | Merge entities |
+| Method   | Path                            | Behavior                                                              |
+| -------- | ------------------------------- | --------------------------------------------------------------------- |
+| `GET`    | `/memory/projects`              | List the project directory                                            |
+| `PUT`    | `/memory/projects`              | Create/update a revision-checked project definition                   |
+| `GET`    | `/memory/projects/materials`    | List materials available for project assignment                       |
+| `POST`   | `/memory/review/query`          | Page through Meeting Review candidates using a stable snapshot        |
+| `POST`   | `/memory/facts/query`           | Deterministic typed/bitemporal decision, task, and project-fact query |
+| `POST`   | `/memory/facts/changes`         | Compare fact snapshots across business/system time                    |
+| `GET`    | `/memory`                       | List memories with library/type/lifecycle/project/paging filters      |
+| `POST`   | `/memory`                       | Create a memory                                                       |
+| `PUT`    | `/memory`                       | Revision-checked edit or lifecycle transition                         |
+| `DELETE` | `/memory`                       | Hard-delete one memory and queue derived-vector cleanup               |
+| `POST`   | `/memory/resolve-conflict`      | Select a revisioned winner and atomically supersede alternatives      |
+| `POST`   | `/memory/batch`                 | Batch import                                                          |
+| `POST`   | `/memory/batch-delete`          | Delete up to 100 memories atomically                                  |
+| `GET`    | `/memory/export`                | Cursor-paginated JSON export                                          |
+| `GET`    | `/memory/versions`              | Read immutable revisions for a logical memory key                     |
+| `POST`   | `/memory/search`                | Semantic search                                                       |
+| `POST`   | `/memory/retry-index`           | Retry indexing for a pending/failed memory revision                   |
+| `POST`   | `/memory/decay`                 | Trigger decay + merge                                                 |
+| `POST`   | `/memory/feedback`              | Record explicit usefulness feedback for one fact                      |
+| `GET`    | `/memory/entities`              | List entities                                                         |
+| `POST`   | `/memory/entities/batch-delete` | Delete up to 100 entities                                             |
+| `GET`    | `/memory/entities/{name}`       | Entity details + relationships                                        |
+| `DELETE` | `/memory/entities/{name}`       | Delete an entity                                                      |
+| `POST`   | `/memory/entities/merge`        | Merge entities                                                        |
 
 ## 6. Settings
 
 Route prefix: `/settings`, code: `api/routers/settings/` (`__init__.py` + `_rebuild.py`).
 
-| Method   | Path                           | Behavior                                       |
-| -------- | ------------------------------ | ---------------------------------------------- |
-| `GET`    | `/settings`                    | Read current settings, masked secrets, and `activation_policy` field groups |
-| `PUT`    | `/settings`                    | Update settings (memory only)                  |
-| `GET`    | `/settings/bindings`           | List all optional providers                    |
-| `GET`    | `/settings/rebuild-status`      | Inspect the guarded vector/multimodal rebuild task state |
-| `POST`   | `/settings/rebuild-vectors`    | Guarded shadow rebuild with generation verification and rollback |
-| `POST`   | `/settings/rebuild-multimodal` | Multimodal index backfill (RAGAnything)        |
-| `POST`   | `/settings/reload-config`      | Reload YAML configuration from disk            |
-| `DELETE` | `/settings/account`            | Start GDPR erasure; returns `202` + deletion batch status |
-| `GET` | `/settings/account/deletions/{batch_id}` | Inspect pending/completed/failed external cleanup |
-| `POST` | `/settings/account/deletions/{batch_id}/retry` | Requeue and retry dead-letter cleanup jobs |
+| Method   | Path                                           | Behavior                                                                    |
+| -------- | ---------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET`    | `/settings`                                    | Read current settings, masked secrets, and `activation_policy` field groups |
+| `PUT`    | `/settings`                                    | Update settings (memory only)                                               |
+| `GET`    | `/settings/bindings`                           | List all optional providers                                                 |
+| `GET`    | `/settings/rebuild-status`                     | Inspect the guarded vector/multimodal rebuild task state                    |
+| `POST`   | `/settings/rebuild-vectors`                    | Guarded shadow rebuild with generation verification and rollback            |
+| `POST`   | `/settings/rebuild-multimodal`                 | Multimodal index backfill (RAGAnything)                                     |
+| `POST`   | `/settings/reload-config`                      | Reload YAML configuration from disk                                         |
+| `DELETE` | `/settings/account`                            | Start GDPR erasure; returns `202` + deletion batch status                   |
+| `GET`    | `/settings/account/deletions/{batch_id}`       | Inspect pending/completed/failed external cleanup                           |
+| `POST`   | `/settings/account/deletions/{batch_id}/retry` | Requeue and retry dead-letter cleanup jobs                                  |
 
 ### 6.1 PUT semantics
 
@@ -280,12 +280,12 @@ Route prefix: `/settings`, code: `api/routers/settings/` (`__init__.py` + `_rebu
 
 Route prefix: `/skills`, code: `api/routers/skills.py`.
 
-| Method | Path | Behavior |
-|---|---|---|
-| `POST` | `/skills` | Register custom skill (201) |
-| `GET` | `/skills` | List registered skills (name, description, examples) |
+| Method | Path             | Behavior                                                     |
+| ------ | ---------------- | ------------------------------------------------------------ |
+| `POST` | `/skills`        | Register custom skill (201)                                  |
+| `GET`  | `/skills`        | List registered skills (name, description, examples)         |
 | `POST` | `/skills/invoke` | Manually call the skill (without relying on intent matching) |
-| `POST` | `/skills/match` | Test intent matching (debug) |
+| `POST` | `/skills/match`  | Test intent matching (debug)                                 |
 
 ### 7.1 Invoke request
 
@@ -312,19 +312,19 @@ Response:
 
 ## 8. Health & System
 
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/health` | DB connectivity + lightweight checks |
-| `GET` | `/health/live` | Liveness probe |
-| `GET` | `/health/ready` | Five local readiness checks: startup, DB, FTS5, durable queue, storage |
-| `GET` | `/health/jobs` | Durable queue counts, dead-letter status, and idempotency lifecycle/recovery counts |
-| `GET` | `/health/capabilities` | Report configured provider-capability availability/degradation |
-| `GET` | `/health/traffic` | Traffic controller status |
-| `GET` | `/health/index-consistency` | Index consistency check |
-| `POST` | `/health/reset-memory-cb` | Reset memory vector circuit breaker (operation and maintenance) |
-| `POST` | `/ws/token` | Issue a short-lived WebSocket authentication token |
-| `GET` | `/metrics` | Prometheus metrics (**not** under `/api/v1`; requires API Key) |
-| `WS` | `/ws` | Real-time events (progress, complete) |
+| Method | Path                        | Behavior                                                                            |
+| ------ | --------------------------- | ----------------------------------------------------------------------------------- |
+| `GET`  | `/health`                   | DB connectivity + lightweight checks                                                |
+| `GET`  | `/health/live`              | Liveness probe                                                                      |
+| `GET`  | `/health/ready`             | Five local readiness checks: startup, DB, FTS5, durable queue, storage              |
+| `GET`  | `/health/jobs`              | Durable queue counts, dead-letter status, and idempotency lifecycle/recovery counts |
+| `GET`  | `/health/capabilities`      | Report configured provider-capability availability/degradation                      |
+| `GET`  | `/health/traffic`           | Traffic controller status                                                           |
+| `GET`  | `/health/index-consistency` | Index consistency check                                                             |
+| `POST` | `/health/reset-memory-cb`   | Reset memory vector circuit breaker (operation and maintenance)                     |
+| `POST` | `/ws/token`                 | Issue a short-lived WebSocket authentication token                                  |
+| `GET`  | `/metrics`                  | Prometheus metrics (**not** under `/api/v1`; requires API Key)                      |
+| `WS`   | `/ws`                       | Real-time events (progress, complete)                                               |
 
 ### 8.1 WebSocket events
 
@@ -341,7 +341,9 @@ How to subscribe:
 
 ```javascript
 // First obtain POST /api/v1/ws/token with X-API-Key.
-const ws = new WebSocket(`ws://host:7008/api/v1/ws?token=${encodeURIComponent(token)}`);
+const ws = new WebSocket(
+  `ws://host:7008/api/v1/ws?token=${encodeURIComponent(token)}`,
+);
 ws.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   // ...
@@ -377,17 +379,17 @@ Field semantics:
 
 Common status codes (each router declares the following codes in OpenAPI, which can be verified by schemathesis contract testing):
 
-| Status | Semantics |
-|---|---|
-| 400 | Request parameter error (including multipart stream damage, etc.) |
-| 401 | Missing/wrong `X-API-Key` |
-| 403 | Authentication passed but insufficient permissions |
-| 404 | Resource does not exist |
-| 409 | Concurrency violation (for example, a vector rebuild already running) |
-| 413 | File limit exceeded |
-| 422 | Pydantic verification failed |
-| 429 | Rate limit exceeded (slowapi; use the same `ErrorResponse` envelope and return `Retry-After`) |
-| 500 | Server internal error (the message is redacted in production) |
+| Status | Semantics                                                                                     |
+| ------ | --------------------------------------------------------------------------------------------- |
+| 400    | Request parameter error (including multipart stream damage, etc.)                             |
+| 401    | Missing/wrong `X-API-Key`                                                                     |
+| 403    | Authentication passed but insufficient permissions                                            |
+| 404    | Resource does not exist                                                                       |
+| 409    | Concurrency violation (for example, a vector rebuild already running)                         |
+| 413    | File limit exceeded                                                                           |
+| 422    | Pydantic verification failed                                                                  |
+| 429    | Rate limit exceeded (slowapi; use the same `ErrorResponse` envelope and return `Retry-After`) |
+| 500    | Server internal error (the message is redacted in production)                                 |
 
 > All 5xx responses **do not leak** internal stack information - detailed errors are only in the server log (including `request_id`).
 > The `datetime` field in all responses uses ISO 8601 with time zone (`UTCDatetime` type, the naive value is automatically filled with UTC during serialization, and the output is in the form of `"2026-05-09T14:28:17Z"`).
@@ -403,7 +405,7 @@ To avoid duplicated maintenance, all response models are centralized under `src/
 - `sessions.py`
 - `settings.py`
 
-When adding a new field, be sure to synchronously update the type definition corresponding to domain client** under the front-end `src/api/` (or regenerate `frontend/src/api/generated.d.ts` from OpenAPI through `scripts/generate-types.sh`).
+When adding a new field, be sure to synchronously update the type definition corresponding to domain client\*\* under the front-end `src/api/` (or regenerate `frontend/src/api/generated.d.ts` from OpenAPI through `scripts/generate-types.sh`).
 
 ## 11. Client example
 
@@ -454,7 +456,7 @@ const { answer, sources } = await sendChat({
 
 ## 12. Version and backward compatibility
 
-- Currently, there is only `/api/v1/`**, and no parallel version is available.
+- Currently, there is only `/api/v1/`\*\*, and no parallel version is available.
 - Newly added fields are considered backward compatible
 - Field removal or semantic changes require the introduction of `/api/v2/`
 - Backward-incompatible front-end changes require simultaneous upgrade of `frontend/src/api/client.ts`

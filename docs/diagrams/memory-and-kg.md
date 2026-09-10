@@ -1,6 +1,6 @@
 # Memory and Knowledge-Graph Architecture
 
-**Verified against implementation:** 2026-09-09.
+**Verified against implementation:** 2026-09-10.
 
 Memory is a governed data subsystem, not an unqualified vector cache. SQLite
 is authoritative for identity, revisions, evidence, lifecycle, business time,
@@ -79,10 +79,10 @@ stateDiagram-v2
 Each logical key has an append-only `memory_fact_versions` history. Two time
 axes have different meanings:
 
-| Coordinate | Fields | Meaning |
-|---|---|---|
-| Business validity | `valid_from`, `valid_to` | when the assertion is true in the represented world |
-| System knowledge | `recorded_at`, `recorded_to` | when this system knew that revision |
+| Coordinate        | Fields                       | Meaning                                             |
+| ----------------- | ---------------------------- | --------------------------------------------------- |
+| Business validity | `valid_from`, `valid_to`     | when the assertion is true in the represented world |
+| System knowledge  | `recorded_at`, `recorded_to` | when this system knew that revision                 |
 
 `valid_at` and `known_at` queries select one coherent historical snapshot.
 Current-only profiles, entity projections, session summaries, web search, and
@@ -110,11 +110,11 @@ freshness(t) = freshness(0) × exp(-MEMORY_DECAY_RATE_PER_DAY × days_elapsed)
 
 The lifecycle distinguishes three operations that must not be conflated:
 
-| Operation | SQL fact/version ledger | Semantic vector |
-|---|---|---|
-| Capacity or low-value stale recall | set `archived_at`; retain business/history data | remove from active index through durable cleanup |
-| TTL expiry | delete the expired current memory row | immediate best effort plus `pending_vector_deletions` retry/dead-letter |
-| Explicit memory/account deletion | privacy-oriented hard deletion according to the API workflow | tracked cleanup, including batch status for account erasure |
+| Operation                          | SQL fact/version ledger                                      | Semantic vector                                                         |
+| ---------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Capacity or low-value stale recall | set `archived_at`; retain business/history data              | remove from active index through durable cleanup                        |
+| TTL expiry                         | delete the expired current memory row                        | immediate best effort plus `pending_vector_deletions` retry/dead-letter |
+| Explicit memory/account deletion   | privacy-oriented hard deletion according to the API workflow | tracked cleanup, including batch status for account erasure             |
 
 Recall activity changes access metadata, not truth status or usefulness.
 Usefulness changes only through explicit feedback.
@@ -145,19 +145,19 @@ visual badge.
 
 ## Implementation map
 
-| Concern | Implementation |
-|---|---|
-| UI composition | `frontend/src/pages/MemoryPage.tsx`, `frontend/src/components/memory/` |
-| UI data/actions | `frontend/src/hooks/useMemoryActions.ts`, `frontend/src/api/client-memory.ts` |
-| REST contract | `backend/src/api/routers/memory.py`, `backend/src/models/schemas/memory.py` |
-| Chat context loading | `backend/src/services/chain/_steps_context.py` |
-| Durable extraction | `backend/src/services/chain/_steps_generate.py`, `_extraction.py`, `backend/src/services/jobs.py` |
-| Fact CRUD/search/lifecycle | `backend/src/services/memory/_service/` |
-| Evidence admission | `backend/src/services/memory/evidence_admission.py` |
-| Session history/summaries | `backend/src/services/memory/_history.py`, `_summary_service.py`, `_summary_vectorstore.py` |
-| Entity graph | `backend/src/services/knowledge_graph/` |
-| Structured persistence | `backend/src/core/database/memories.py`, `knowledge_graph.py`, `memory_lifecycle.py` |
-| Semantic indexes | `backend/src/services/memory/_vectorstore.py`, `_summary_vectorstore.py`, `backend/src/services/knowledge_graph/_vectorstore.py` |
+| Concern                    | Implementation                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| UI composition             | `frontend/src/pages/MemoryPage.tsx`, `frontend/src/components/memory/`                                                           |
+| UI data/actions            | `frontend/src/hooks/useMemoryActions.ts`, `frontend/src/api/client-memory.ts`                                                    |
+| REST contract              | `backend/src/api/routers/memory.py`, `backend/src/models/schemas/memory.py`                                                      |
+| Chat context loading       | `backend/src/services/chain/_steps_context.py`                                                                                   |
+| Durable extraction         | `backend/src/services/chain/_steps_generate.py`, `_extraction.py`, `backend/src/services/jobs.py`                                |
+| Fact CRUD/search/lifecycle | `backend/src/services/memory/_service/`                                                                                          |
+| Evidence admission         | `backend/src/services/memory/evidence_admission.py`                                                                              |
+| Session history/summaries  | `backend/src/services/memory/_history.py`, `_summary_service.py`, `_summary_vectorstore.py`                                      |
+| Entity graph               | `backend/src/services/knowledge_graph/`                                                                                          |
+| Structured persistence     | `backend/src/core/database/memories.py`, `knowledge_graph.py`, `memory_lifecycle.py`                                             |
+| Semantic indexes           | `backend/src/services/memory/_vectorstore.py`, `_summary_vectorstore.py`, `backend/src/services/knowledge_graph/_vectorstore.py` |
 
 For detailed invariants and API behavior, see
 [`../../backend/docs/memory-and-kg.md`](../../backend/docs/memory-and-kg.md) and

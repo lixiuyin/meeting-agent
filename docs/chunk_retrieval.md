@@ -32,6 +32,7 @@ FileArtefact
        └─ SQLite bm25_index + FTS5 (when hybrid is enabled)
 
 question
+  ├─ answer-shape route: atomic fact / bounded synthesis / analytical synthesis
   ├─ history-aware query rewrite + query analysis
   ├─ meeting/file summary routing (Broad Recall)
   ├─ vector / BM25 / RAGAnything retrieval
@@ -39,11 +40,20 @@ question
   ├─ speaker/time/content-type filter
   ├─ sibling co-retrieval
   ├─ pre-rerank dedup
-  ├─ Cohere/BGE rerank
+  ├─ atomic-fact Evidence Filter (shape + score concentration + source identity)
+  ├─ Cohere/BGE rerank, or a traceable skip only for validated atomic evidence
   └─ near-duplicate + low-information suppression
        ▼
 final ctx.docs → context budget/truncation → LLM prompt
 ```
+
+Query length alone never selects the fast generation path. A conservative
+allow-list in `rag/_query.py` identifies one-answer factual shapes; contextual,
+multi-answer, explanatory, comparative, and unknown requests stay on a
+synthesis route. The post-retrieval Evidence Filter can still reject an atomic
+probe when evidence is missing, weak, has the wrong date/number shape, lacks a
+source identity, or is split across strong competing sources. Rejected probes
+are promoted to the normal hierarchical retrieval and reranking path.
 
 There are two confusing "top-k"s in the system:
 
@@ -76,12 +86,12 @@ Chunks are written to the index separately; it does not replace the main entry.
 
 ### 2.2 Processor and FileArtefact
 
-| File Types | Processor | Main Products |
-|---|---|---|
-| `video`, `audio` | `AVFileProcessor` | ASR transcript, `start/end/text/speaker` segments, optional keyframes |
-| `pdf`, `ppt`, `doc`, `xls`, `csv` | `DocumentFileProcessor` | `ParsedDocument`, page text, table and image assets |
-| `image` | `ImageFileProcessor` | caption/OCR, structured page/picture information |
-| `txt` and other plain text | `TextFileProcessor` | `text` |
+| File Types                        | Processor               | Main Products                                                         |
+| --------------------------------- | ----------------------- | --------------------------------------------------------------------- |
+| `video`, `audio`                  | `AVFileProcessor`       | ASR transcript, `start/end/text/speaker` segments, optional keyframes |
+| `pdf`, `ppt`, `doc`, `xls`, `csv` | `DocumentFileProcessor` | `ParsedDocument`, page text, table and image assets                   |
+| `image`                           | `ImageFileProcessor`    | caption/OCR, structured page/picture information                      |
+| `txt` and other plain text        | `TextFileProcessor`     | `text`                                                                |
 
 `FileArtefact` key fields:
 
@@ -206,7 +216,7 @@ segment chunk metadata example:
 - vector upsert: call embedding provider (segment path reusable precomputed embedding), through
   `vectorstore_write_lock()` writes to Chroma;
 - unchanged dedup: Calculate the first 12 digits of the normalized text SHA-256 for documents with the same ID. If the text is unchanged, skip it.
- re-embedding;
+  re-embedding;
 - BM25: always mirror the same chunk granularity into SQLite FTS5 `bm25_index`. This keeps keyword fallback immediately available and makes `HYBRID_SEARCH_ENABLED` a retrieval-only switch;
 - Delete: `delete_meeting_chunks()` delete Chroma, BM25, summary vectors and `index_state` by meeting/file
   Related records.
@@ -281,13 +291,13 @@ Scoped vector retrieval disables the distance threshold so explicitly selected m
 
 Valid values for `rag_mode`: `vector`, `hybrid`, `multimodal`, `hybrid_multimodal`, `auto`; legacy `native` is accepted as an alias for `vector`.
 
-| Pattern             | Actual Behavior                                                                                                 |
-| ------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `vector`            | Vector retrieval; BM25 is used only as a failure fallback |
-| `hybrid`            | Force vector + BM25 parallel retrieval, then RRF                                                                |
-| `multimodal`        | Call RAGAnything when enabled and applicable; otherwise use the vector fallback                                 |
-| `hybrid_multimodal` | Vector and RAGAnything RRF; fall back to hybrid/vector when unavailable                                          |
-| `auto`              | Select `hybrid_multimodal` when RAGAnything is enabled, otherwise select `hybrid`                               |
+| Pattern             | Actual Behavior                                                                   |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `vector`            | Vector retrieval; BM25 is used only as a failure fallback                         |
+| `hybrid`            | Force vector + BM25 parallel retrieval, then RRF                                  |
+| `multimodal`        | Call RAGAnything when enabled and applicable; otherwise use the vector fallback   |
+| `hybrid_multimodal` | Vector and RAGAnything RRF; fall back to hybrid/vector when unavailable           |
+| `auto`              | Select `hybrid_multimodal` when RAGAnything is enabled, otherwise select `hybrid` |
 
 `RAG_RETRIEVER_PROVIDER` is the default provider when the request does not specify `rag_mode`. Unknown values log a warning and fall back to `vector`.
 
@@ -636,54 +646,54 @@ When any of the external providers fails, you should continue along the fallback
 
 Actual defaults are based on `backend/src/core/config.py` and YAML; the following table lists the fields that directly affect Chunk/Retrieval.
 
-| Configuration | Default/Scope | Role |
-| -------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------- |
-| `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | 384 / 64 | Active token budget for ordinary text, page, vector, and BM25 chunks |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 1024 / 128 | Legacy compatibility values; `CHUNK_SIZE` also remains the character budget for native audio-segment grouping and structural pre-blocking |
-| `PARENT_CHILD_ENABLED` | false | enable parent-child |
-| `CHILD_CHUNK_SIZE_TOKENS` / `CHILD_CHUNK_OVERLAP_TOKENS` | 160 / 24 | Active child token budget when parent-child indexing is enabled |
-| `CHILD_CHUNK_SIZE` / `CHILD_CHUNK_OVERLAP` | 256 / 32 | Legacy compatibility fallback |
-| `SEMANTIC_CHUNKING_ENABLED` | false | Regular structure-aware pre-blocking |
-| `NON_TEXT_CHUNKING_STRATEGY` | `native`/`text` | Non-text entry override strategy |
-| `AUDIO_SEMANTIC_BOUNDARY_ENABLED` | false | ASR segment semantic boundary |
-| `AUDIO_SEMANTIC_BOUNDARY_THRESHOLD` | 0.5 | Adjacent segment similarity threshold |
-| `AUDIO_SEMANTIC_MIN_SEGMENTS` / `AUDIO_SEMANTIC_MAX_SEGMENTS` | 2 / 20 | segment grouping constraints |
-| `AUDIO_SPEAKER_IN_CONTENT` | true | Whether the speaker writes chunk content |
-| `AUDIO_SPLIT_ON_SPEAKER_CHANGE` | true | speaker switches whether to chunk |
-| `HYBRID_SEARCH_ENABLED` | true | Whether the explicit hybrid strategy is available; hot-changeable with a compatible provider and does not require reindexing |
-| `HYBRID_ALPHA` | 0.5 | Vector/BM25 RRF weight |
-| `HYBRID_MULTIMODAL_ALPHA` | 0.5 | Vector/RAGAnything weight |
-| `TOP_K` / `SCORE_THRESHOLD` | 8 / 1.5 | Default top-k and unscoped vector threshold |
-| `RRF_K_PARAM` | 60 | vector/BM25 RRF base k |
-| `UNSCOPED_DIVERSITY_ENABLED` | true | Enable meeting diversity cap without explicit scope |
-| `UNSCOPED_MAX_PER_MEETING` / `UNSCOPED_FETCH_MULTIPLIER` | 5 / 4 | Single meeting cap with unscoped over-fetch |
-| `RAG_RERANK_FETCH_MULTIPLIER` | 6 | scoped rerank over-fetch |
-| `RERANKER_BINDING` | empty (disabled) | `cohere`/generic `http`/local `bge`/empty; enabling it also requires a viable model and credential/endpoint |
-| `RERANKER_TOP_N` | 20 | rerank the intermediate document pool; Broad will also amplify according to the candidate size |
-| `RERANKER_UNSCOPED_MIN_SCORE` / `RERANKER_SCOPED_MIN_SCORE` | 0.05 / 0.10 | Broad / Scoped lowest score |
-| `RAG_FUNNEL_FETCH_MULTIPLIER` | 10 | wide fetch base multiple |
-| `RAG_FUNNEL_TOP_MEETINGS` / `RAG_FUNNEL_TOP_FILES` | 12 / 12 | funnel candidate limit |
-| `RAG_FUNNEL_AGGREGATION` / `RAG_FUNNEL_AGG_TOP_K` | `top_k_mean` / 3 | file score aggregation |
-| `RAG_FUNNEL_EVIDENCE_MODE` | `ratio` | evidence floor interpretation method |
-| `RAG_FUNNEL_RRF_K` | 60 | router/funnel file-level RRF |
-| `RAG_FILE_SCOPING_MODE` | `router_and_funnel` | Broad file selection strategy |
-| `RAG_MEETING_SUMMARY_ROUTER_ENABLED` | true | meeting summary pre-routing |
-| `RAG_MEETING_SUMMARY_ROUTER_EXPLORATION_RATIO` | 0.2 | Reserve a share of unscoped file selection for global exploration outside meeting-summary priors |
-| `RAG_SUMMARY_ROUTER_ENABLED` | true | file summary pre-routing |
-| `RAG_BROAD_RECALL_SCOPE_CAP` | 10 | Final Broad file scope upper limit |
-| `RAG_MIN_CHUNKS_PER_FILE` | 3 | Fair Retrieval Minimum file budget |
-| `RAG_FAIR_ADAPTIVE_CHUNKS` | true | Whether to allocate by file score/size |
-| `RAG_FAIR_CONCURRENCY` | 8 | Fair Retrieval concurrency number |
-| `RAG_ANCHOR_ENABLED` / `RAG_ANCHOR_TTL_MINUTES` | true / 30 | session anchor |
-| `MULTI_QUERY_ENABLED` / `MULTI_QUERY_COUNT` | false / 3 | query variants |
-| `RAG_BROAD_RECALL_MULTI_QUERY_ENABLED` | false | Broad whether to allow multi-query |
-| `RAG_PRE_RERANK_DEDUP_ENABLED` / `RAG_PRE_RERANK_DEDUP_THRESHOLD` | true / 0.92 | Adaptive n-gram deduplication before rerank |
-| `RAG_SIBLING_CORETRIEVE_ENABLED` | true | Extend retrieval with page/table/image siblings |
-| `RAG_SIBLING_CORETRIEVE_PER_ANCHOR` / `RAG_SIBLING_CORETRIEVE_MAX_TOTAL` | 1 / 4 | Maximum siblings per anchor and in total |
-| `RAG_CONTENT_TYPE_RERANK_ENABLED` | true | table/figure/image bias |
-| `RAG_INDEX_TABLES` / `RAG_INDEX_IMAGE_CAPTIONS` | true / true | Page derived chunk |
-| `RAGANYTHING_ENABLED` | false | Multimodal external search branch |
-| `RAGANYTHING_FALLBACK_TO_NATIVE` | true | Multimodal failure fallback |
+| Configuration                                                            | Default/Scope       | Role                                                                                                                                      |
+| ------------------------------------------------------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS`                             | 384 / 64            | Active token budget for ordinary text, page, vector, and BM25 chunks                                                                      |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP`                                           | 1024 / 128          | Legacy compatibility values; `CHUNK_SIZE` also remains the character budget for native audio-segment grouping and structural pre-blocking |
+| `PARENT_CHILD_ENABLED`                                                   | false               | enable parent-child                                                                                                                       |
+| `CHILD_CHUNK_SIZE_TOKENS` / `CHILD_CHUNK_OVERLAP_TOKENS`                 | 160 / 24            | Active child token budget when parent-child indexing is enabled                                                                           |
+| `CHILD_CHUNK_SIZE` / `CHILD_CHUNK_OVERLAP`                               | 256 / 32            | Legacy compatibility fallback                                                                                                             |
+| `SEMANTIC_CHUNKING_ENABLED`                                              | false               | Regular structure-aware pre-blocking                                                                                                      |
+| `NON_TEXT_CHUNKING_STRATEGY`                                             | `native`/`text`     | Non-text entry override strategy                                                                                                          |
+| `AUDIO_SEMANTIC_BOUNDARY_ENABLED`                                        | false               | ASR segment semantic boundary                                                                                                             |
+| `AUDIO_SEMANTIC_BOUNDARY_THRESHOLD`                                      | 0.5                 | Adjacent segment similarity threshold                                                                                                     |
+| `AUDIO_SEMANTIC_MIN_SEGMENTS` / `AUDIO_SEMANTIC_MAX_SEGMENTS`            | 2 / 20              | segment grouping constraints                                                                                                              |
+| `AUDIO_SPEAKER_IN_CONTENT`                                               | true                | Whether the speaker writes chunk content                                                                                                  |
+| `AUDIO_SPLIT_ON_SPEAKER_CHANGE`                                          | true                | speaker switches whether to chunk                                                                                                         |
+| `HYBRID_SEARCH_ENABLED`                                                  | true                | Whether the explicit hybrid strategy is available; hot-changeable with a compatible provider and does not require reindexing              |
+| `HYBRID_ALPHA`                                                           | 0.5                 | Vector/BM25 RRF weight                                                                                                                    |
+| `HYBRID_MULTIMODAL_ALPHA`                                                | 0.5                 | Vector/RAGAnything weight                                                                                                                 |
+| `TOP_K` / `SCORE_THRESHOLD`                                              | 8 / 1.5             | Default top-k and unscoped vector threshold                                                                                               |
+| `RRF_K_PARAM`                                                            | 60                  | vector/BM25 RRF base k                                                                                                                    |
+| `UNSCOPED_DIVERSITY_ENABLED`                                             | true                | Enable meeting diversity cap without explicit scope                                                                                       |
+| `UNSCOPED_MAX_PER_MEETING` / `UNSCOPED_FETCH_MULTIPLIER`                 | 5 / 4               | Single meeting cap with unscoped over-fetch                                                                                               |
+| `RAG_RERANK_FETCH_MULTIPLIER`                                            | 6                   | scoped rerank over-fetch                                                                                                                  |
+| `RERANKER_BINDING`                                                       | empty (disabled)    | `cohere`/generic `http`/local `bge`/empty; enabling it also requires a viable model and credential/endpoint                               |
+| `RERANKER_TOP_N`                                                         | 20                  | rerank the intermediate document pool; Broad will also amplify according to the candidate size                                            |
+| `RERANKER_UNSCOPED_MIN_SCORE` / `RERANKER_SCOPED_MIN_SCORE`              | 0.05 / 0.10         | Broad / Scoped lowest score                                                                                                               |
+| `RAG_FUNNEL_FETCH_MULTIPLIER`                                            | 10                  | wide fetch base multiple                                                                                                                  |
+| `RAG_FUNNEL_TOP_MEETINGS` / `RAG_FUNNEL_TOP_FILES`                       | 12 / 12             | funnel candidate limit                                                                                                                    |
+| `RAG_FUNNEL_AGGREGATION` / `RAG_FUNNEL_AGG_TOP_K`                        | `top_k_mean` / 3    | file score aggregation                                                                                                                    |
+| `RAG_FUNNEL_EVIDENCE_MODE`                                               | `ratio`             | evidence floor interpretation method                                                                                                      |
+| `RAG_FUNNEL_RRF_K`                                                       | 60                  | router/funnel file-level RRF                                                                                                              |
+| `RAG_FILE_SCOPING_MODE`                                                  | `router_and_funnel` | Broad file selection strategy                                                                                                             |
+| `RAG_MEETING_SUMMARY_ROUTER_ENABLED`                                     | true                | meeting summary pre-routing                                                                                                               |
+| `RAG_MEETING_SUMMARY_ROUTER_EXPLORATION_RATIO`                           | 0.2                 | Reserve a share of unscoped file selection for global exploration outside meeting-summary priors                                          |
+| `RAG_SUMMARY_ROUTER_ENABLED`                                             | true                | file summary pre-routing                                                                                                                  |
+| `RAG_BROAD_RECALL_SCOPE_CAP`                                             | 10                  | Final Broad file scope upper limit                                                                                                        |
+| `RAG_MIN_CHUNKS_PER_FILE`                                                | 3                   | Fair Retrieval Minimum file budget                                                                                                        |
+| `RAG_FAIR_ADAPTIVE_CHUNKS`                                               | true                | Whether to allocate by file score/size                                                                                                    |
+| `RAG_FAIR_CONCURRENCY`                                                   | 8                   | Fair Retrieval concurrency number                                                                                                         |
+| `RAG_ANCHOR_ENABLED` / `RAG_ANCHOR_TTL_MINUTES`                          | true / 30           | session anchor                                                                                                                            |
+| `MULTI_QUERY_ENABLED` / `MULTI_QUERY_COUNT`                              | false / 3           | query variants                                                                                                                            |
+| `RAG_BROAD_RECALL_MULTI_QUERY_ENABLED`                                   | false               | Broad whether to allow multi-query                                                                                                        |
+| `RAG_PRE_RERANK_DEDUP_ENABLED` / `RAG_PRE_RERANK_DEDUP_THRESHOLD`        | true / 0.92         | Adaptive n-gram deduplication before rerank                                                                                               |
+| `RAG_SIBLING_CORETRIEVE_ENABLED`                                         | true                | Extend retrieval with page/table/image siblings                                                                                           |
+| `RAG_SIBLING_CORETRIEVE_PER_ANCHOR` / `RAG_SIBLING_CORETRIEVE_MAX_TOTAL` | 1 / 4               | Maximum siblings per anchor and in total                                                                                                  |
+| `RAG_CONTENT_TYPE_RERANK_ENABLED`                                        | true                | table/figure/image bias                                                                                                                   |
+| `RAG_INDEX_TABLES` / `RAG_INDEX_IMAGE_CAPTIONS`                          | true / true         | Page derived chunk                                                                                                                        |
+| `RAGANYTHING_ENABLED`                                                    | false               | Multimodal external search branch                                                                                                         |
+| `RAGANYTHING_FALLBACK_TO_NATIVE`                                         | true                | Multimodal failure fallback                                                                                                               |
 
 After modifying chunk size, overlap, embedding model/dimension or vector distance metric, it is usually necessary to
 `POST /api/v1/settings/rebuild-vectors`; modifying parser/ASR/OCR products requires file/meeting reprocess.
@@ -692,50 +702,50 @@ After modifying chunk size, overlap, embedding model/dimension or vector distanc
 
 ### Chunk/index
 
-| Documentation | Responsibility |
-|---|---|
-| `backend/src/services/processor/_pipeline.py` | Processor parsing, FileArtefact to index entry distribution |
-| `backend/src/services/processor/_processors/_types.py` | FileArtefact type |
-| `backend/src/services/rag/_indexer.py` | flat, parent-child, page, segment main entrance |
-| `backend/src/services/rag/_chunkers.py` | Structure-aware text chunking |
-| `backend/src/services/rag/_indexer_extract.py` | Page, table, image metadata |
-| `backend/src/services/rag/_indexer_store.py` | chunk ID, unchanged dedup, Chroma/BM25 writing and deletion |
-| `backend/src/services/rag/_vector.py` | parent backcheck and score direction |
-| `backend/src/services/rag/_vectorstore.py` | Chroma singleton, dimension, write lock |
-| `backend/src/services/rag/_bm25.py` | FTS5/BM25 retrieval |
-| `backend/src/services/rag/_bm25_maintenance.py` | BM25 drift/rebuild |
+| Documentation                                          | Responsibility                                              |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| `backend/src/services/processor/_pipeline.py`          | Processor parsing, FileArtefact to index entry distribution |
+| `backend/src/services/processor/_processors/_types.py` | FileArtefact type                                           |
+| `backend/src/services/rag/_indexer.py`                 | flat, parent-child, page, segment main entrance             |
+| `backend/src/services/rag/_chunkers.py`                | Structure-aware text chunking                               |
+| `backend/src/services/rag/_indexer_extract.py`         | Page, table, image metadata                                 |
+| `backend/src/services/rag/_indexer_store.py`           | chunk ID, unchanged dedup, Chroma/BM25 writing and deletion |
+| `backend/src/services/rag/_vector.py`                  | parent backcheck and score direction                        |
+| `backend/src/services/rag/_vectorstore.py`             | Chroma singleton, dimension, write lock                     |
+| `backend/src/services/rag/_bm25.py`                    | FTS5/BM25 retrieval                                         |
+| `backend/src/services/rag/_bm25_maintenance.py`        | BM25 drift/rebuild                                          |
 
 ### Retrieval/scoping
 
-| Documentation | Responsibility |
-|---|---|
-| `backend/src/services/rag/_retriever.py` | retrieve, provider strategy, vector/BM25/multimodal |
-| `backend/src/services/rag/_filters.py` | provider resolution, Chroma filter, scope filter |
-| `backend/src/services/rag/_strategies.py` | Four strategy protocol/selector |
-| `backend/src/services/rag/_rrf.py` | vector/BM25, multimodal and summary RRF |
-| `backend/src/services/rag/_summary_router.py` | file summary vector/BM25 router |
-| `backend/src/services/rag/_meeting_summary_vectorstore.py` | meeting summary vector store |
-| `backend/src/services/rag/_funnel.py` | chunk→file aggregation, score normalize, title prior |
-| `backend/src/services/rag/_funnel_narrow.py` | wide fetch, evidence floor, router/funnel merge |
-| `backend/src/services/rag/_scoping_strategies.py` | Four file scoping strategies |
-| `backend/src/services/rag/_fair_retriever.py` | per-file retrieval, concurrency and chunk dedup |
-| `backend/src/services/rag/_query.py` | rewrite, simple/summary intent, adaptive top-k |
-| `backend/src/services/rag/_query_analysis.py` | speaker/temporal query analysis |
-| `backend/src/services/rag/_reranker.py` | Cohere/BGE provider layer |
-| `backend/src/services/rag/_raganything.py` | RAGAnything bridge |
+| Documentation                                              | Responsibility                                       |
+| ---------------------------------------------------------- | ---------------------------------------------------- |
+| `backend/src/services/rag/_retriever.py`                   | retrieve, provider strategy, vector/BM25/multimodal  |
+| `backend/src/services/rag/_filters.py`                     | provider resolution, Chroma filter, scope filter     |
+| `backend/src/services/rag/_strategies.py`                  | Four strategy protocol/selector                      |
+| `backend/src/services/rag/_rrf.py`                         | vector/BM25, multimodal and summary RRF              |
+| `backend/src/services/rag/_summary_router.py`              | file summary vector/BM25 router                      |
+| `backend/src/services/rag/_meeting_summary_vectorstore.py` | meeting summary vector store                         |
+| `backend/src/services/rag/_funnel.py`                      | chunk→file aggregation, score normalize, title prior |
+| `backend/src/services/rag/_funnel_narrow.py`               | wide fetch, evidence floor, router/funnel merge      |
+| `backend/src/services/rag/_scoping_strategies.py`          | Four file scoping strategies                         |
+| `backend/src/services/rag/_fair_retriever.py`              | per-file retrieval, concurrency and chunk dedup      |
+| `backend/src/services/rag/_query.py`                       | rewrite, simple/summary intent, adaptive top-k       |
+| `backend/src/services/rag/_query_analysis.py`              | speaker/temporal query analysis                      |
+| `backend/src/services/rag/_reranker.py`                    | Cohere/BGE provider layer                            |
+| `backend/src/services/rag/_raganything.py`                 | RAGAnything bridge                                   |
 
 ### Chain/post-processing
 
-| Documentation | Responsibility |
-|---|---|
-| `backend/src/services/chain/_steps_retrieve.py` | retrieve_documents general arrangement, filter, sibling, anchor |
-| `backend/src/services/chain/_retrieve_broad.py` | Broad/Scoped retrieval, multi-query merge |
-| `backend/src/services/chain/_retrieve_routing.py` | known speakers, adaptive per-file budget |
-| `backend/src/services/chain/_retrieve_post.py` | pre-dedup, rerank, near-duplicate suppression |
-| `backend/src/services/chain/_retrieve_filters.py` | speaker, temporal, content-type bias |
-| `backend/src/services/chain/_retrieve_utils.py` | n-gram, low-info, multi-query dedup |
-| `backend/src/services/chain/_api.py` | Synchronize pipeline and retrieval branch sequence |
-| `backend/src/services/chain/_api_stream.py` | Streaming pipeline retrieval branch |
+| Documentation                                     | Responsibility                                                  |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `backend/src/services/chain/_steps_retrieve.py`   | retrieve_documents general arrangement, filter, sibling, anchor |
+| `backend/src/services/chain/_retrieve_broad.py`   | Broad/Scoped retrieval, multi-query merge                       |
+| `backend/src/services/chain/_retrieve_routing.py` | known speakers, adaptive per-file budget                        |
+| `backend/src/services/chain/_retrieve_post.py`    | pre-dedup, rerank, near-duplicate suppression                   |
+| `backend/src/services/chain/_retrieve_filters.py` | speaker, temporal, content-type bias                            |
+| `backend/src/services/chain/_retrieve_utils.py`   | n-gram, low-info, multi-query dedup                             |
+| `backend/src/services/chain/_api.py`              | Synchronize pipeline and retrieval branch sequence              |
+| `backend/src/services/chain/_api_stream.py`       | Streaming pipeline retrieval branch                             |
 
 ## 13. Change and Verification Checklist
 

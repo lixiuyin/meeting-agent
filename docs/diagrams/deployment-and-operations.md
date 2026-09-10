@@ -5,7 +5,7 @@ paths that keep SQLite, Chroma, uploaded assets, and background tasks
 consistent. It intentionally distinguishes the local Docker Compose topology
 from the single-backend-replica Helm topology.
 
-**Verified against implementation:** 2026-09-09.
+**Verified against implementation:** 2026-09-10.
 
 ## Deployment topology
 

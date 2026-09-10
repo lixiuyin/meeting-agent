@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **Conservative query routing and evidence validation**: requests are
+  classified as `atomic_fact`, `bounded_synthesis`, or
+  `analytical_synthesis`; only an atomic probe with concentrated,
+  answer-shaped, source-identifiable evidence may use the low-latency path.
+  Weak or cross-source evidence is promoted to normal hierarchical retrieval
+  and reranking, with the decision recorded in the pipeline trace.
+- **README interface tour**: the bilingual README now shows a 31-frame GIF that
+  includes every supplied Chat screen and long-answer continuation, plus a
+  static chat fallback and restored clickable video thumbnails.
 - **Demo videos**: README now embeds four YouTube walkthroughs (Full Demo,
   Invoke Skills, Step by Step, Memory & Knowledge Graph) as a clickable
   thumbnail grid linking to <https://www.youtube.com/@lixiuyin>.
@@ -46,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single current score source.
 
 ### Fixed
+
+- **Generation timeout semantics**: removed the erroneous 2.5-second hard
+  generation cutoff. The 2.5-second value remains an observability SLO;
+  validated atomic streams use independent 10-second first-token, 15-second
+  stall, and 30-second total safety budgets, while synthesis uses the ordinary
+  configured generation timeout.
+- **Full-stack performance evidence capture**: the browser acceptance flow now
+  writes its structured report before SLO assertions, so functional evidence
+  and measured latency survive a deliberate performance-gate failure.
+- **Documentation parity and rendering**: restored clickable README badges,
+  documentation links, and YouTube thumbnails; synchronized compact endpoint
+  indexes; and made the docs checker reject Markdown links wrapped in code
+  ticks.
 - **Implementation-grounded ingestion documentation**: corrected the
   transcriber module path, replaced the obsolete four-provider/local routing
   description with the actual three-provider quality-gated cascade, documented
@@ -102,60 +125,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without rebuilding it. Helm now enforces the documented single-backend
   architecture instead of advertising unsupported HPA/PDB behavior.
 - **Citation alignment across all source kinds**: chunks, file summaries,
-  and meeting summaries now share a single ``[N]`` index. The markdown
-  summary blocks surface ``[N]`` in their headings (matching the index in
-  ``[Meeting Content]``), and the system prompt is rewritten as seven
-  mechanical sub-rules so every substantive bullet ends with ``[N]`` —
+  and meeting summaries now share a single `[N]` index. The markdown
+  summary blocks surface `[N]` in their headings (matching the index in
+  `[Meeting Content]`), and the system prompt is rewritten as seven
+  mechanical sub-rules so every substantive bullet ends with `[N]` —
   fixes intermittent missing citations and "everything cites [1]"
   behavior in multi-meeting answers.
 - **Frontend citation jumps**: meeting / file summary citations seed the
-  SummaryModal with ``source.content`` so the modal always shows the
+  SummaryModal with `source.content` so the modal always shows the
   text the LLM cited, even when the cached summary endpoint is empty
   or missing the per-file entry. Image-derived chunks without an image
   URL now fall back to the file viewer instead of silently no-op'ing.
-- **Async / sync embedder boundary**: ``_QueryCachedEmbeddings`` refuses
+- **Async / sync embedder boundary**: `_QueryCachedEmbeddings` refuses
   sync calls inside a coroutine; wrapped the remaining offenders in
-  ``asyncio.to_thread`` (KG entity store, alias resolution, batch memory
+  `asyncio.to_thread` (KG entity store, alias resolution, batch memory
   import, contradiction-resolution memory upsert, lifespan startup vector
   syncs).
-- **Knowledge graph startup**: ``sync_missing_entity_vectors`` and
-  ``MemoryService.sync_missing_vectors`` used ``row.get(...)`` on
-  ``sqlite3.Row`` (which only supports subscript access), aborting the
+- **Knowledge graph startup**: `sync_missing_entity_vectors` and
+  `MemoryService.sync_missing_vectors` used `row.get(...)` on
+  `sqlite3.Row` (which only supports subscript access), aborting the
   whole startup vector backfill on the first row. Switched to subscript
   access with explicit NULL handling.
 - **Schemathesis contract suite**: brought 19 unique failures + 4 errors
   down — datetime fields now serialize with timezone via a project-wide
-  ``UTCDatetime = Annotated[datetime, AfterValidator(_ensure_utc)]``;
+  `UTCDatetime = Annotated[datetime, AfterValidator(_ensure_utc)]`;
   every router declares the common 400/401/403/404/409/429/500
   responses; rate-limit 429s wrap slowapi's payload in the
-  ``ErrorResponse`` envelope; ``POST /ws/token`` typed ``request`` as
-  ``Request`` so slowapi can extract the IP; ``POST /meetings/upload``
-  catches ``RuntimeError: Stream consumed`` from malformed multipart
-  bodies and returns 400; schemathesis ``--request-timeout`` raised to
+  `ErrorResponse` envelope; `POST /ws/token` typed `request` as
+  `Request` so slowapi can extract the IP; `POST /meetings/upload`
+  catches `RuntimeError: Stream consumed` from malformed multipart
+  bodies and returns 400; schemathesis `--request-timeout` raised to
   60s for the chat endpoint.
-- **CI pipeline**: Backup/Restore Integrity persists ``DATA_DIR`` /
-  ``DB_PATH`` via ``$GITHUB_ENV`` so later steps see them. Frontend
-  Dockerfile uses ``npm ci --legacy-peer-deps`` to tolerate
-  ``eslint@10`` vs ``eslint-plugin-jsx-a11y@6.10.2``.
-  ``scripts/generate-types.sh`` runs prettier on the generated types
+- **CI pipeline**: Backup/Restore Integrity persists `DATA_DIR` /
+  `DB_PATH` via `$GITHUB_ENV` so later steps see them. Frontend
+  Dockerfile uses `npm ci --legacy-peer-deps` to tolerate
+  `eslint@10` vs `eslint-plugin-jsx-a11y@6.10.2`.
+  `scripts/generate-types.sh` runs prettier on the generated types
   so the contract-openapi-types diff check stays clean.
-  ``frontend/package-lock.json`` patched via ``npm audit fix``
+  `frontend/package-lock.json` patched via `npm audit fix`
   (axios / fast-uri / postcss high-severity advisories).
-  Bandit configured with ``[tool.bandit] skips=["B608"]`` for the
+  Bandit configured with `[tool.bandit] skips=["B608"]` for the
   parameterized-SQL false positives; MD5 / SHA1 fingerprints marked
-  ``usedforsecurity=False``; remaining 0.0.0.0 sentinels annotated
-  with ``# nosec B104``.
-- **Backend tests**: resolver L1 cache wraps ``cachetools.TTLCache`` in a
-  ``threading.RLock`` subclass so concurrent writes don't race during
-  eviction. ``tests/ingestion/test_ingest_trace.py`` stubs
-  ``_convert_pptx_to_pdf`` so the multimodal-indexing branch can run
-  without LibreOffice. ``tests/benchmark/conftest.py`` detects the live
+  `usedforsecurity=False`; remaining 0.0.0.0 sentinels annotated
+  with `# nosec B104`.
+- **Backend tests**: resolver L1 cache wraps `cachetools.TTLCache` in a
+  `threading.RLock` subclass so concurrent writes don't race during
+  eviction. `tests/ingestion/test_ingest_trace.py` stubs
+  `_convert_pptx_to_pdf` so the multimodal-indexing branch can run
+  without LibreOffice. `tests/benchmark/conftest.py` detects the live
   Chroma collection's embedding dimension instead of hard-coding 384.
-- **Test history pruned**: removed the >100 MB ``materials/Agent/agent.mp4``
-  and ``materials/Jobs/jobs.mp4`` from this branch's history; the
+- **Test history pruned**: removed the >100 MB `materials/Agent/agent.mp4`
+  and `materials/Jobs/jobs.mp4` from this branch's history; the
   directory is now ignored.
 
 ### Changed
+
 - **Documentation**: added [`docs/README.md`](docs/README.md) as the repo-level doc index; RAG and memory overview diagrams live under [`docs/diagrams/`](docs/diagrams/) (cross-linked from [`backend/docs/README.md`](backend/docs/README.md) and [`backend/docs/architecture.md`](backend/docs/architecture.md)); root [`README.md`](README.md) now lists both `docs/adr/` and `backend/docs/adr/` for ADRs; stub pages [`docs/rag-pipeline.md`](docs/rag-pipeline.md) and [`docs/memory-and-kg.md`](docs/memory-and-kg.md) redirect to the diagram folder for old links
 - **Architecture refactor**: split oversized modules into cohesive packages
   - `src/services/chain.py` → `src/services/chain/` package (`_api.py`, `_context.py`, `_routing.py`, `_steps_retrieve.py`, `_steps_context.py`, `_steps_generate.py`, `_steps_session.py`, `_formatting.py`)
@@ -169,6 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit `error` state
 
 ### Added
+
 - **Knowledge Graph**: entity/relation extraction, CRUD API (`GET/DELETE /memory/entities/{name}`, `POST /memory/entities/merge`), and semantic integration with memory service
 - **Session summaries**: episodic cross-session memory with `POST /sessions/{id}/summarize`, `GET /sessions/summaries`, `GET /sessions/{id}/summary`, and `POST /sessions/search`
 - **Memory batch operations**: `POST /memory/batch` (bulk import) and `GET /memory/export`
@@ -195,6 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph, RAG decomposition, memory clustering, and parser cascade
 
 ### Fixed
+
 - Vector store directory standardized to `data/vectordb/` (was `data/chroma/`)
 - Parser deadlines now start at `PARSE_TIMEOUT_SECONDS=300`, add
   `PARSE_TIMEOUT_PER_MB_SECONDS=2` per MiB, and cap at
@@ -204,6 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-04-02
 
 ### Added
+
 - Meeting file upload (video/PDF/PPT) with background processing
 - AssemblyAI-based audio transcription (was Whisper at launch, migrated in Unreleased)
 - PDF and PPT text extraction

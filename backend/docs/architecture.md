@@ -2,7 +2,7 @@
 
 Meeting Agent is a meeting-record and document knowledge assistant. This document is the entry point for `backend/docs/`; subsystem documents are indexed and cross-referenced here.
 
-**Verified against implementation:** 2026-09-09.
+**Verified against implementation:** 2026-09-10.
 
 ## 1. Product scope
 
@@ -112,47 +112,47 @@ See [`chain-pipeline.md`](./chain-pipeline.md) and [`rag.md`](./rag.md).
 
 ## 4. Cross-cutting concerns
 
-| Concern            | Implementation                               | Behavior                                                         |
-| ------------------ | -------------------------------------------- | ---------------------------------------------------------------- |
+| Concern            | Implementation                               | Behavior                                                                                |
+| ------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Configuration      | `core/config.py`, `config/main.yaml`, `.env` | YAML defaults < `.env` < OS environment; request/job snapshots prevent mid-flight drift |
-| Authentication     | `core/security.py`                           | `X-API-Key` and `hmac.compare_digest`                            |
-| Rate limiting      | `api/middleware.py` with slowapi             | Default and route-specific limits; trusted forwarded IP handling |
-| Request tracing    | `RequestIdMiddleware` and `core/trace.py`    | `X-Request-ID`, nested spans, and pipeline events                |
-| Audit              | `core/audit.py`                              | Structured records for sensitive changes                         |
-| Errors             | `core/exceptions.py` and global handlers     | Unified public errors and internal `exc_info` logging            |
-| Logging            | Python logging and `LOG_FORMAT=json`         | Lazy formatting and redaction                                    |
-| Concurrency safety | Locking + configuration-keyed singletons     | Old request snapshots cannot publish clients reused by newer settings |
-| Blocking calls     | `asyncio.to_thread()`                        | Synchronous I/O and CPU-heavy work leave the event loop          |
-| Traffic governance | `services/traffic_control.py`                | Semaphore, token bucket, circuit breaker                         |
-| Durable work       | `services/jobs.py`, `durable_jobs`           | Lease, retry, dedupe, cancellation, dead-letter                  |
+| Authentication     | `core/security.py`                           | `X-API-Key` and `hmac.compare_digest`                                                   |
+| Rate limiting      | `api/middleware.py` with slowapi             | Default and route-specific limits; trusted forwarded IP handling                        |
+| Request tracing    | `RequestIdMiddleware` and `core/trace.py`    | `X-Request-ID`, nested spans, and pipeline events                                       |
+| Audit              | `core/audit.py`                              | Structured records for sensitive changes                                                |
+| Errors             | `core/exceptions.py` and global handlers     | Unified public errors and internal `exc_info` logging                                   |
+| Logging            | Python logging and `LOG_FORMAT=json`         | Lazy formatting and redaction                                                           |
+| Concurrency safety | Locking + configuration-keyed singletons     | Old request snapshots cannot publish clients reused by newer settings                   |
+| Blocking calls     | `asyncio.to_thread()`                        | Synchronous I/O and CPU-heavy work leave the event loop                                 |
+| Traffic governance | `services/traffic_control.py`                | Semaphore, token bucket, circuit breaker                                                |
+| Durable work       | `services/jobs.py`, `durable_jobs`           | Lease, retry, dedupe, cancellation, dead-letter                                         |
 
 ## 5. Subsystem index
 
-| Document | Scope |
-|---|---|
-| [`architecture.md`](./architecture.md) | This overview |
-| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | Startup, shutdown, and runtime maintenance |
-| [`configuration.md`](./configuration.md) | Settings and environment variables |
-| [`security-and-tenancy.md`](./security-and-tenancy.md) | Authentication, ownership, tokens, and HTTP security |
-| [`observability.md`](./observability.md) | Logs, traces, metrics, and health probes |
-| [`api-reference.md`](./api-reference.md) | REST routes and schemas |
-| [`../../frontend/docs/architecture.md`](../../frontend/docs/architecture.md) | React routes, API client, SSE/WS, viewers, and security |
-| [`testing.md`](./testing.md) | Test layers, CI, gates, and regression strategy |
-| [`database.md`](./database.md) | SQLite, Alembic, legacy migrations, tables, repositories |
-| [`ingest-pipeline.md`](./ingest-pipeline.md) | Upload, parsing, and persistence |
-| [`rag.md`](./rag.md) | Retrieval, reranking, and generation |
-| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` orchestration and stream events |
-| [`llm-and-traffic.md`](./llm-and-traffic.md) | LLM/embedding providers and traffic governance |
-| [`memory-and-kg.md`](./memory-and-kg.md) | Memory and knowledge graph |
-| [`../../docs/diagrams/rag-pipeline.md`](../../docs/diagrams/rag-pipeline.md) | RAG query diagram |
-| [`../../docs/diagrams/memory-and-kg.md`](../../docs/diagrams/memory-and-kg.md) | Memory layers and decay formulas |
-| [`mcp-server.md`](./mcp-server.md) | MCP Server tools |
-| [`cli.md`](./cli.md) | CLI commands and exports |
-| [`SKILLS.md`](./SKILLS.md) | Markdown Skill system and intent matching |
-| [`benchmarking.md`](./benchmarking.md) | Benchmark runner |
-| [`operations/alembic.md`](./operations/alembic.md) | Alembic migration and stamping |
-| [`operations/backup.md`](./operations/backup.md) / [`restore.md`](./operations/restore.md) | Backup and recovery |
-| [`operations/runbooks/`](./operations/runbooks/) | Incident runbooks |
+| Document                                                                                   | Scope                                                    |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| [`architecture.md`](./architecture.md)                                                     | This overview                                            |
+| [`lifespan-and-operations.md`](./lifespan-and-operations.md)                               | Startup, shutdown, and runtime maintenance               |
+| [`configuration.md`](./configuration.md)                                                   | Settings and environment variables                       |
+| [`security-and-tenancy.md`](./security-and-tenancy.md)                                     | Authentication, ownership, tokens, and HTTP security     |
+| [`observability.md`](./observability.md)                                                   | Logs, traces, metrics, and health probes                 |
+| [`api-reference.md`](./api-reference.md)                                                   | REST routes and schemas                                  |
+| [`../../frontend/docs/architecture.md`](../../frontend/docs/architecture.md)               | React routes, API client, SSE/WS, viewers, and security  |
+| [`testing.md`](./testing.md)                                                               | Test layers, CI, gates, and regression strategy          |
+| [`database.md`](./database.md)                                                             | SQLite, Alembic, legacy migrations, tables, repositories |
+| [`ingest-pipeline.md`](./ingest-pipeline.md)                                               | Upload, parsing, and persistence                         |
+| [`rag.md`](./rag.md)                                                                       | Retrieval, reranking, and generation                     |
+| [`chain-pipeline.md`](./chain-pipeline.md)                                                 | `ask()` orchestration and stream events                  |
+| [`llm-and-traffic.md`](./llm-and-traffic.md)                                               | LLM/embedding providers and traffic governance           |
+| [`memory-and-kg.md`](./memory-and-kg.md)                                                   | Memory and knowledge graph                               |
+| [`../../docs/diagrams/rag-pipeline.md`](../../docs/diagrams/rag-pipeline.md)               | RAG query diagram                                        |
+| [`../../docs/diagrams/memory-and-kg.md`](../../docs/diagrams/memory-and-kg.md)             | Memory layers and decay formulas                         |
+| [`mcp-server.md`](./mcp-server.md)                                                         | MCP Server tools                                         |
+| [`cli.md`](./cli.md)                                                                       | CLI commands and exports                                 |
+| [`SKILLS.md`](./SKILLS.md)                                                                 | Markdown Skill system and intent matching                |
+| [`benchmarking.md`](./benchmarking.md)                                                     | Benchmark runner                                         |
+| [`operations/alembic.md`](./operations/alembic.md)                                         | Alembic migration and stamping                           |
+| [`operations/backup.md`](./operations/backup.md) / [`restore.md`](./operations/restore.md) | Backup and recovery                                      |
+| [`operations/runbooks/`](./operations/runbooks/)                                           | Incident runbooks                                        |
 
 ## 6. Frontend/backend boundary
 

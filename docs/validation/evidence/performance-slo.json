@@ -3,20 +3,26 @@
   "gate": "performance_slo_passed",
   "passed": false,
   "reviewer": "automated-local-audit",
-  "generated_at": "2026-09-08T16:44:00Z",
-  "expires_at": "2026-09-15T16:44:00Z",
+  "generated_at": "2026-09-09T17:39:37.767Z",
+  "expires_at": "2026-09-16T17:39:37.767Z",
   "implementation_fingerprints": {
     "dataset_fingerprint_sha256": "77836c65be280b0cf781b0c40b4c691d9ed386f67a06273a74d4634762349007",
-    "harness_fingerprint_sha256": "d4a40672fa771ee55dc1e23c70f66a78a2bf6b992d06faf08c9dc211b2ad5751",
-    "implementation_fingerprint_sha256": "d68c74c77885144e6a39539996e6828353403b8564aae333a1b3c00d319c32e1"
+    "harness_fingerprint_sha256": "4a80d83e198e8672f0ce194e9ea00e79ba5a01930ff7cfde224464d0033e35af",
+    "implementation_fingerprint_sha256": "95bd6632c1f2fbc6a286b8d90954804c782bdf16846c107c46849a4653f6ade9"
   },
   "details": {
     "history_complete": false,
-    "chat_slo_passed": true,
+    "chat_slo_passed": false,
     "target_ms": 3000,
-    "latest_authenticated_e2e_ttft_ms": 2600.6,
-    "latest_authenticated_e2e_total_ms": 2632.9,
+    "latest_isolated_e2e_functional_checks_passed": true,
+    "latest_isolated_e2e_upload_to_ready_ms": 4087.0421670000005,
+    "latest_isolated_e2e_ttft_ms": 15053.300000011921,
+    "latest_isolated_e2e_total_ms": 15372.200000017881,
+    "main_chat_samples": 20,
+    "main_chat_degraded_rate": 0.0,
+    "main_chat_ttft_p95_ms": 22926.787048269765,
+    "main_chat_total_p95_ms": 25169.020306604216,
     "required_history_days": 30,
-    "note": "The latest authenticated full-stack sample passed, but one run is not a complete 30-day SLO window."
+    "note": "The post-cutoff-fix E2E functional checks passed, but both the isolated sample and the 20-request Chat diagnostic failed the declared latency gates; no 30-day SLO window exists."
   }
 }

@@ -1,5 +1,6 @@
 {
   "release_ready": false,
+  "assessment_note": "The post-cutoff-fix performance evidence is current and failing. Other required gate artifacts predate the current implementation, so the manifest remains fail-closed.",
   "implementation_fingerprints": {
     "dataset_fingerprint_sha256": "77836c65be280b0cf781b0c40b4c691d9ed386f67a06273a74d4634762349007",
     "harness_fingerprint_sha256": "d4a40672fa771ee55dc1e23c70f66a78a2bf6b992d06faf08c9dc211b2ad5751",
@@ -22,7 +23,7 @@
     },
     "performance_slo_passed": {
       "path": "docs/validation/evidence/performance-slo.json",
-      "sha256": "d596f7a747b6bca148d4b4ea4d23d14801268eccf27f2d4b677a98f9c182aa3e"
+      "sha256": "24f91a6ae3665e4a5918786f30ee599d664cbcf6025c4e3e0722d7c3f33837bf"
     },
     "security_review_passed": {
       "path": "docs/validation/evidence/security-review.json",

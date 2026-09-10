@@ -1,6 +1,6 @@
 # Non-text file chunk-routing switch
 
-> **Maintained implementation note (verified 2026-09-09).** This document
+> **Maintained implementation note (verified 2026-09-10).** This document
 > explains the trade-offs behind `rag.non_text_chunking_strategy`. The active
 > configuration contract is documented in
 > [`backend/docs/configuration.md`](../../../../docs/configuration.md), and the

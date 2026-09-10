@@ -3,7 +3,7 @@
 > While retaining **`_migrations.py` legacy tuple migration**, this repository introduces **Alembic** as a reviewable and repeatable schema evolution method.
 > Startup path: `backend/src/api/lifespan/` → `run_alembic_upgrade()` → `alembic upgrade head`.
 > Baseline revision: `20260414_000001` (file `backend/alembic/versions/20260414_000001_baseline_schema.py`).
-> Verified current head on 2026-09-09: `20260908_000003`.
+> Verified current head on 2026-09-10: `20260908_000003`.
 
 ## 1. Current mechanism description
 

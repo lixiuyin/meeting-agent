@@ -88,6 +88,10 @@ class PipelineContext:
     docs: list[dict] = field(default_factory=list)
     scope_file_ids: list[int] = field(default_factory=list) # The file scope determined in the routing stage
     query_analysis: QueryAnalysis | None = None # Speaker name + time analysis
+    query_route_decision: QueryRouteDecision | None = None # atomic/bounded/analytical
+    fast_path_auto_selected: bool = False
+    fast_path_evidence_decision: FastEvidenceDecision | None = None
+    fast_path_promotion_reason: str | None = None
     memory_context: str = ""
     session_context: str = ""
     entity_context: str = ""
@@ -101,6 +105,8 @@ class PipelineContext:
 
     # output
     answer: str = ""
+    degraded: bool = False
+    degradation_reason: str | None = None
     failed_extraction_count: int = 0
 
     # Skill matching results (parallel with retrieve, consumed before generate)
@@ -377,16 +383,16 @@ For LangChain `astream` generator **`await aclose()`** (timeout 3s) in `finally`
 
 ### 6.1 Event type (`StreamBus` / `StreamEvent`)
 
-| `type` | payload | meaning |
-|---|---|---|
-| `step` | `step`, `status` (`start`/`done`) and optional metadata | Pipeline stages (such as `accepted`, `session`, `pipeline`, `generate`) |
-| `token` | **`content`**: string fragment | LLM streaming increment (front-end `useChatStream` reads `event.content`) |
-| `sources` | `items`: list of sources | Retrieve references |
-| `trace` | `trace`:dict | full `TraceContext.to_dict()` |
-| `web_results` | `items` | Web results |
-| `heartbeat` | no extra fields | keep alive |
-| `error` | `message`, optional `code` / `detail` / `exception_type` | User-readable error |
-| `done` | `session_id` | End normally; then `bus.close()` |
+| `type`        | payload                                                  | meaning                                                                   |
+| ------------- | -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `step`        | `step`, `status` (`start`/`done`) and optional metadata  | Pipeline stages (such as `accepted`, `session`, `pipeline`, `generate`)   |
+| `token`       | **`content`**: string fragment                           | LLM streaming increment (front-end `useChatStream` reads `event.content`) |
+| `sources`     | `items`: list of sources                                 | Retrieve references                                                       |
+| `trace`       | `trace`:dict                                             | full `TraceContext.to_dict()`                                             |
+| `web_results` | `items`                                                  | Web results                                                               |
+| `heartbeat`   | no extra fields                                          | keep alive                                                                |
+| `error`       | `message`, optional `code` / `detail` / `exception_type` | User-readable error                                                       |
+| `done`        | `session_id`                                             | End normally; then `bus.close()`                                          |
 
 All events are automatically appended with **`seq`** (monotonically increasing sequence number, used for causal ordering) and optional **`parent_step`** (parent step name, used for causal chain tracking).
 
@@ -403,23 +409,23 @@ The front end can be consumed with `fetch` + `ReadableStream` or a custom parser
 
 ## 7. Error handling strategy
 
-| Scene | Behavior |
-|---|---|
-| `classify_intent` failed | Treated as retrieval, continue with the complete process |
-| `_is_trivially_short` hit | Same as casual short-circuit: skip RAG, return to preset copy (extra processing in streaming path) |
-| `rewrite` / `resolver` failed | Skip, use original query |
-| `retrieve` returns 0 documents | Continue generating, LLM replies "No relevant information found" |
-| `rerank` fails | fallback to unreranked results |
-| `load_memories` failed | Empty context + log (isolated by `_best_effort`) |
-| `load_session_context` failed | Empty context + log (isolated by `_best_effort`) |
-| `load_entity_context` failed | Empty context + log (isolated by `_best_effort`) |
-| `perform_web_search` failed | Empty context + log (isolated by `_best_effort`) |
-| `load_history` failed | Empty context + log (isolated by `_best_effort`) |
-| `generate_answer` throws an error | throws up → the router layer returns 500 (the streaming path sends error event + done event) |
-| `save_messages` failed (session deleted) | log + skip (`sqlite3.IntegrityError` FK violation defense) |
-| `schedule_fact_extraction` failed | request fails before claiming background work was accepted |
-| Streaming LLM call failed | Automatically downgraded to non-streaming call (protected by `is_fallback_circuit_open()` circuit breaker, retried up to 2 times) |
-| `skill_task` failed | log + continue on normal RAG path |
+| Scene                                    | Behavior                                                                                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `classify_intent` failed                 | Treated as retrieval, continue with the complete process                                                                          |
+| `_is_trivially_short` hit                | Same as casual short-circuit: skip RAG, return to preset copy (extra processing in streaming path)                                |
+| `rewrite` / `resolver` failed            | Skip, use original query                                                                                                          |
+| `retrieve` returns 0 documents           | Continue generating, LLM replies "No relevant information found"                                                                  |
+| `rerank` fails                           | fallback to unreranked results                                                                                                    |
+| `load_memories` failed                   | Empty context + log (isolated by `_best_effort`)                                                                                  |
+| `load_session_context` failed            | Empty context + log (isolated by `_best_effort`)                                                                                  |
+| `load_entity_context` failed             | Empty context + log (isolated by `_best_effort`)                                                                                  |
+| `perform_web_search` failed              | Empty context + log (isolated by `_best_effort`)                                                                                  |
+| `load_history` failed                    | Empty context + log (isolated by `_best_effort`)                                                                                  |
+| `generate_answer` throws an error        | throws up → the router layer returns 500 (the streaming path sends error event + done event)                                      |
+| `save_messages` failed (session deleted) | log + skip (`sqlite3.IntegrityError` FK violation defense)                                                                        |
+| `schedule_fact_extraction` failed        | request fails before claiming background work was accepted                                                                        |
+| Streaming LLM call failed                | Automatically downgraded to non-streaming call (protected by `is_fallback_circuit_open()` circuit breaker, retried up to 2 times) |
+| `skill_task` failed                      | log + continue on normal RAG path                                                                                                 |
 
 ## 8. Extensibility points
 

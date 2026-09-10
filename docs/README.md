@@ -5,26 +5,26 @@ use, integrate, operate, develop, and evaluate Meeting Agent. Backend
 implementation notes live in [`backend/docs/`](../backend/docs/README.md), and
 frontend implementation notes live in [`frontend/docs/`](../frontend/docs/README.md).
 
-**Last implementation reconciliation:** 2026-09-09. The maintained documents
+**Last implementation reconciliation:** 2026-09-10. The maintained documents
 below were checked against the router registry/OpenAPI output, `Settings`, the
 canonical file-kind/parser registries, Alembic head, the React route tree, and
 Compose/Nginx/Helm configuration.
 
 ## Choose a path
 
-| You want to… | Start here | Then read |
-|---|---|---|
-| Run the application locally | [`getting-started.md`](getting-started.md) | [`configuration.md`](../backend/docs/configuration.md), [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md) |
-| Use the web UI end to end | [`getting-started.md`](getting-started.md#first-workflow) | [`frontend/docs/architecture.md`](../frontend/docs/architecture.md), [`data-lifecycle.md`](data-lifecycle.md) |
-| Integrate with REST, SSE, or WebSocket | [`api-quickstart.md`](api-quickstart.md) | [`api-reference.md`](../backend/docs/api-reference.md) |
-| Connect an MCP client | [`api-quickstart.md`](api-quickstart.md#mcp) | [`mcp-server.md`](../backend/docs/mcp-server.md) |
-| Understand the architecture | [`diagrams/architecture.md`](diagrams/architecture.md) | [`architecture.md`](../backend/docs/architecture.md), [`chain-pipeline.md`](../backend/docs/chain-pipeline.md) |
-| Understand Memory from the UI | [`frontend/docs/architecture.md`](../frontend/docs/architecture.md#memory-workspace) | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md), [`diagrams/memory-and-kg.md`](diagrams/memory-and-kg.md) |
-| Tune retrieval quality | [`chunk_retrieval.md`](chunk_retrieval.md) | [`rag.md`](../backend/docs/rag.md) |
-| Operate a deployment | [`operations-guide.md`](operations-guide.md) | [`lifespan-and-operations.md`](../backend/docs/lifespan-and-operations.md), [`observability.md`](../backend/docs/observability.md), [`operations/`](../backend/docs/operations/) |
-| Change the code safely | [`development-guide.md`](development-guide.md) | [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`architecture.md`](../backend/docs/architecture.md) |
-| Run or extend benchmarks | [`development-guide.md#benchmarking`](development-guide.md#benchmarking) | [`benchmark/`](benchmark/), [`benchmarking.md`](../backend/docs/benchmarking.md) |
-| Interpret or publish benchmark results | [`benchmarking.md#publishing-benchmark-and-model-results`](../backend/docs/benchmarking.md#publishing-benchmark-and-model-results) | [`validation/latest-benchmark.json`](validation/latest-benchmark.json) |
+| You want to…                           | Start here                                                                                                                         | Then read                                                                                                                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run the application locally            | [`getting-started.md`](getting-started.md)                                                                                         | [`configuration.md`](../backend/docs/configuration.md), [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md)                                                               |
+| Use the web UI end to end              | [`getting-started.md`](getting-started.md#first-workflow)                                                                          | [`frontend/docs/architecture.md`](../frontend/docs/architecture.md), [`data-lifecycle.md`](data-lifecycle.md)                                                                    |
+| Integrate with REST, SSE, or WebSocket | [`api-quickstart.md`](api-quickstart.md)                                                                                           | [`api-reference.md`](../backend/docs/api-reference.md)                                                                                                                           |
+| Connect an MCP client                  | [`api-quickstart.md`](api-quickstart.md#mcp)                                                                                       | [`mcp-server.md`](../backend/docs/mcp-server.md)                                                                                                                                 |
+| Understand the architecture            | [`diagrams/architecture.md`](diagrams/architecture.md)                                                                             | [`architecture.md`](../backend/docs/architecture.md), [`chain-pipeline.md`](../backend/docs/chain-pipeline.md)                                                                   |
+| Understand Memory from the UI          | [`frontend/docs/architecture.md`](../frontend/docs/architecture.md#memory-workspace)                                               | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md), [`diagrams/memory-and-kg.md`](diagrams/memory-and-kg.md)                                                                 |
+| Tune retrieval quality                 | [`chunk_retrieval.md`](chunk_retrieval.md)                                                                                         | [`rag.md`](../backend/docs/rag.md)                                                                                                                                               |
+| Operate a deployment                   | [`operations-guide.md`](operations-guide.md)                                                                                       | [`lifespan-and-operations.md`](../backend/docs/lifespan-and-operations.md), [`observability.md`](../backend/docs/observability.md), [`operations/`](../backend/docs/operations/) |
+| Change the code safely                 | [`development-guide.md`](development-guide.md)                                                                                     | [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`architecture.md`](../backend/docs/architecture.md)                                                                                    |
+| Run or extend benchmarks               | [`development-guide.md#benchmarking`](development-guide.md#benchmarking)                                                           | [`benchmark/`](benchmark/), [`benchmarking.md`](../backend/docs/benchmarking.md)                                                                                                 |
+| Interpret or publish benchmark results | [`benchmarking.md#publishing-benchmark-and-model-results`](../backend/docs/benchmarking.md#publishing-benchmark-and-model-results) | [`validation/latest-benchmark.json`](validation/latest-benchmark.json)                                                                                                           |
 
 ## Product surface
 
@@ -34,22 +34,24 @@ citable context. The main lifecycle is:
 ```text
 upload → validate → parse/transcribe → normalize → chunk → embed/index
                                                         ↓
-question → scope → retrieve → rerank → assemble context → answer + citations
+question → classify → route/funnel → retrieve → evidence gate/rerank
+                                                        ↓
+                              assemble context → answer + citations
                                                         ↓
                                       session history + memory + entities
 ```
 
-| Capability | Supported surface | Primary reference |
-|---|---|---|
-| Meetings and files | Create, upload, inspect, reprocess, export, delete | [`api-reference.md`](../backend/docs/api-reference.md), [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md) |
-| Input modalities | Registered audio/video, PDF/Office, text/data, and image families; the complete extension matrix and processor boundary are maintained in the ingest guide | [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md#45-support-formats-and-old-office) |
-| Retrieval | Vector, BM25/FTS5, RRF, scope routing, funnel retrieval, reranking | [`rag.md`](../backend/docs/rag.md), [`chunk_retrieval.md`](chunk_retrieval.md) |
-| Grounded answers | Source citations, page/slide/timestamp metadata, optional web results | [`chain-pipeline.md`](../backend/docs/chain-pipeline.md) |
-| Conversation continuity | Sessions, summaries, cross-session search | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md) |
-| Long-term context | Facts, TTL/decay, profiles, entities, relations, alias merging, and a bounded virtualized review workspace | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md), [`frontend/docs/architecture.md`](../frontend/docs/architecture.md), [`data-lifecycle.md`](data-lifecycle.md) |
-| Skills | Register, match, list, and invoke custom Markdown skills | [`SKILLS.md`](../backend/docs/SKILLS.md) |
-| Integrations | REST, SSE, WebSocket notifications, MCP stdio/HTTP | [`api-quickstart.md`](api-quickstart.md), [`mcp-server.md`](../backend/docs/mcp-server.md) |
-| Operations | Health probes, metrics, backup/restore, migrations, retention, runbooks | [`operations-guide.md`](operations-guide.md), [`operations/`](../backend/docs/operations/) |
+| Capability              | Supported surface                                                                                                                                          | Primary reference                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Meetings and files      | Create, upload, inspect, reprocess, export, delete                                                                                                         | [`api-reference.md`](../backend/docs/api-reference.md), [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md)                                                    |
+| Input modalities        | Registered audio/video, PDF/Office, text/data, and image families; the complete extension matrix and processor boundary are maintained in the ingest guide | [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md#45-support-formats-and-old-office)                                                                          |
+| Retrieval               | Answer-shape routing, Evidence Filter, vector + BM25/FTS5, RRF, summary routers, funnel scoping, fair allocation, anchors, and optional reranking          | [`rag.md`](../backend/docs/rag.md), [`chunk_retrieval.md`](chunk_retrieval.md)                                                                                        |
+| Grounded answers        | Source citations, page/slide/timestamp metadata, optional web results                                                                                      | [`chain-pipeline.md`](../backend/docs/chain-pipeline.md)                                                                                                              |
+| Conversation continuity | Sessions, summaries, cross-session search                                                                                                                  | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md)                                                                                                                |
+| Long-term context       | Facts, TTL/decay, profiles, entities, relations, alias merging, and a bounded virtualized review workspace                                                 | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md), [`frontend/docs/architecture.md`](../frontend/docs/architecture.md), [`data-lifecycle.md`](data-lifecycle.md) |
+| Skills                  | Register, match, list, and invoke custom Markdown skills                                                                                                   | [`SKILLS.md`](../backend/docs/SKILLS.md)                                                                                                                              |
+| Integrations            | REST, SSE, WebSocket notifications, MCP stdio/HTTP                                                                                                         | [`api-quickstart.md`](api-quickstart.md), [`mcp-server.md`](../backend/docs/mcp-server.md)                                                                            |
+| Operations              | Health probes, metrics, backup/restore, migrations, retention, runbooks                                                                                    | [`operations-guide.md`](operations-guide.md), [`operations/`](../backend/docs/operations/)                                                                            |
 
 ## Documentation map
 
@@ -123,23 +125,23 @@ certification.
 The backend documents are the authoritative source for implementation-level
 behavior and are maintained in English:
 
-| Area | Reference |
-|---|---|
+| Area                       | Reference                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Architecture and lifecycle | [`architecture.md`](../backend/docs/architecture.md), [`lifespan-and-operations.md`](../backend/docs/lifespan-and-operations.md) |
-| Frontend | [`frontend/docs/README.md`](../frontend/docs/README.md), [`frontend/docs/architecture.md`](../frontend/docs/architecture.md) |
-| Backend quality | [`testing.md`](../backend/docs/testing.md) |
-| Security and tenancy | [`security-and-tenancy.md`](../backend/docs/security-and-tenancy.md) |
-| Observability | [`observability.md`](../backend/docs/observability.md) |
-| Configuration | [`configuration.md`](../backend/docs/configuration.md) |
-| Ingestion | [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md) |
-| RAG and chain | [`rag.md`](../backend/docs/rag.md), [`chain-pipeline.md`](../backend/docs/chain-pipeline.md) |
-| Memory and KG | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md) |
-| Database and migrations | [`database.md`](../backend/docs/database.md), [`operations/alembic.md`](../backend/docs/operations/alembic.md) |
-| API and MCP | [`api-reference.md`](../backend/docs/api-reference.md), [`mcp-server.md`](../backend/docs/mcp-server.md) |
-| CLI and skills | [`cli.md`](../backend/docs/cli.md), [`SKILLS.md`](../backend/docs/SKILLS.md) |
-| LLM/provider traffic | [`llm-and-traffic.md`](../backend/docs/llm-and-traffic.md) |
-| Benchmarking | [`benchmarking.md`](../backend/docs/benchmarking.md) |
-| Operations | [`operations/`](../backend/docs/operations/) |
+| Frontend                   | [`frontend/docs/README.md`](../frontend/docs/README.md), [`frontend/docs/architecture.md`](../frontend/docs/architecture.md)     |
+| Backend quality            | [`testing.md`](../backend/docs/testing.md)                                                                                       |
+| Security and tenancy       | [`security-and-tenancy.md`](../backend/docs/security-and-tenancy.md)                                                             |
+| Observability              | [`observability.md`](../backend/docs/observability.md)                                                                           |
+| Configuration              | [`configuration.md`](../backend/docs/configuration.md)                                                                           |
+| Ingestion                  | [`ingest-pipeline.md`](../backend/docs/ingest-pipeline.md)                                                                       |
+| RAG and chain              | [`rag.md`](../backend/docs/rag.md), [`chain-pipeline.md`](../backend/docs/chain-pipeline.md)                                     |
+| Memory and KG              | [`memory-and-kg.md`](../backend/docs/memory-and-kg.md)                                                                           |
+| Database and migrations    | [`database.md`](../backend/docs/database.md), [`operations/alembic.md`](../backend/docs/operations/alembic.md)                   |
+| API and MCP                | [`api-reference.md`](../backend/docs/api-reference.md), [`mcp-server.md`](../backend/docs/mcp-server.md)                         |
+| CLI and skills             | [`cli.md`](../backend/docs/cli.md), [`SKILLS.md`](../backend/docs/SKILLS.md)                                                     |
+| LLM/provider traffic       | [`llm-and-traffic.md`](../backend/docs/llm-and-traffic.md)                                                                       |
+| Benchmarking               | [`benchmarking.md`](../backend/docs/benchmarking.md)                                                                             |
+| Operations                 | [`operations/`](../backend/docs/operations/)                                                                                     |
 
 ## Source of truth and maintenance
 

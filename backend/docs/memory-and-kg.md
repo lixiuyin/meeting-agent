@@ -1,6 +1,6 @@
 # Memory system & knowledge graph
 
-**Verified against backend and frontend implementation:** 2026-09-09.
+**Verified against backend and frontend implementation:** 2026-09-10.
 
 The subsystem is not a single vector search. SQLite owns the fact ledger,
 projects, lifecycle, business/system time, provenance, audit data, sessions,
@@ -19,6 +19,7 @@ protocols and the currently published evidence are documented in
 > Implementation details of long-term memory (facts/preferences/goals) and knowledge graph (entities + relationships).
 >
 > Code location:
+>
 > - `backend/src/services/memory/` — memory services (extraction, decay, merge, profiling, search, history, session summary)
 > - `_entry.py` — top-level entry (`MemoryEntry` dataclass, unified memory entry structure)
 > - `_service/` — core service layer (CRUD, search, extraction, merge, decay synchronization, portrait)
@@ -109,12 +110,12 @@ Code: `services/memory/_service/_extraction.py`.
 Clients select one stable `memory_mode` instead of coordinating individual
 thresholds:
 
-| Mode | Recall | Extraction | Knowledge graph | Intended use |
-| --- | --- | --- | --- | --- |
-| `off` | disabled, including past-session summaries | disabled | disabled | no long-term personalization |
-| `focused` | up to 3 items, single-hop | precise | disabled | low latency and low noise |
-| `balanced` | configured production defaults | balanced | configured default | normal use |
-| `deep` | up to 8 items, multi-hop | aggressive | enabled | complex cross-session reasoning |
+| Mode       | Recall                                     | Extraction | Knowledge graph    | Intended use                    |
+| ---------- | ------------------------------------------ | ---------- | ------------------ | ------------------------------- |
+| `off`      | disabled, including past-session summaries | disabled   | disabled           | no long-term personalization    |
+| `focused`  | up to 3 items, single-hop                  | precise    | disabled           | low latency and low noise       |
+| `balanced` | configured production defaults             | balanced   | configured default | normal use                      |
+| `deep`     | up to 8 items, multi-hop                   | aggressive | enabled            | complex cross-session reasoning |
 
 The selected mode is captured in the immutable request snapshot and copied
 into the durable extraction job. A restarted worker therefore replays the
@@ -133,7 +134,7 @@ second layer.
 
 ### 4.1 Extraction timing
 
-- **Schedule_fact_extraction(ctx)` is called by `services/chain/_steps_generate.py` after each round of dialogue**
+- **Schedule_fact_extraction(ctx)`is called by`services/chain/\_steps_generate.py` after each round of dialogue**
 - The extraction is persisted as a restart-safe durable job and does not block the response return
 - `memory_mode=off` does not enqueue an extraction job
 - Write `ctx.failed_extraction_count` on failure and do not throw it to the caller
@@ -261,15 +262,15 @@ an absolute date are deliberately not guessed.
 
 The Memory page maps the storage and governance model into these views:
 
-| View | What it exposes | Main contract |
-|---|---|---|
-| Projects | Project directory, aliases, linked materials, preparation shortcuts | project revisions prevent silent concurrent overwrite |
-| Memories | Personal/project facts and reference knowledge; CRUD, import/export, decay, feedback, lifecycle and vector state | virtualized records scroll inside the bounded card; filters remain visible |
+| View              | What it exposes                                                                                                                         | Main contract                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Projects          | Project directory, aliases, linked materials, preparation shortcuts                                                                     | project revisions prevent silent concurrent overwrite                       |
+| Memories          | Personal/project facts and reference knowledge; CRUD, import/export, decay, feedback, lifecycle and vector state                        | virtualized records scroll inside the bounded card; filters remain visible  |
 | Decisions & tasks | Deterministic decision/action/project-fact lists with project, assignee, status, due date, material, `valid_at`, and `known_at` filters | SQL query and stable paging, not semantic top-k pretending to be exhaustive |
-| State changes | Before/after bitemporal comparison | compares authoritative fact revisions |
-| Meeting review | Evidence-backed candidates, conflicts, source links, confirm/retract/edit actions | snapshot paging and expected revision protect review consistency |
-| Entities | Entity search, relations, batch delete, and alias merge | SQLite graph is authoritative; vectors accelerate lookup |
-| Past Sessions | Session summaries and cross-session context | episodic summaries remain separate from typed facts |
+| State changes     | Before/after bitemporal comparison                                                                                                      | compares authoritative fact revisions                                       |
+| Meeting review    | Evidence-backed candidates, conflicts, source links, confirm/retract/edit actions                                                       | snapshot paging and expected revision protect review consistency            |
+| Entities          | Entity search, relations, batch delete, and alias merge                                                                                 | SQLite graph is authoritative; vectors accelerate lookup                    |
+| Past Sessions     | Session summaries and cross-session context                                                                                             | episodic summaries remain separate from typed facts                         |
 
 Fact cards display type, lifecycle state, project, task owner/deadline,
 business/system-time validity, source scope, evidence, and vector health. Each
@@ -455,12 +456,12 @@ re-read under the shared vector lock before replacement.
 
 ### 8.5 Key submodules
 
-| Modules | Responsibilities |
-|---|---|
+| Modules               | Responsibilities                                                                                                                                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `_summary_service.py` | Cross-session memory service: manages the life cycle of session summary, starts backfilling, and generates periodic summary when idle (located in `services/memory/_summary_service.py`, not in the `_service/` subdirectory) |
-| `_history.py` | `SQLiteChatMessageHistory` (LangChain compatible): persist the conversation history to SQLite for reading by chain pipeline |
-| `_extractor.py` | Low-level fact extractor: encapsulates LLM calls and JSON parsing for use by `_service/_extraction.py` |
-| `_entry.py` | Top-level entry: export `MemoryEntry` dataclass to unify the structure of memory entries |
+| `_history.py`         | `SQLiteChatMessageHistory` (LangChain compatible): persist the conversation history to SQLite for reading by chain pipeline                                                                                                   |
+| `_extractor.py`       | Low-level fact extractor: encapsulates LLM calls and JSON parsing for use by `_service/_extraction.py`                                                                                                                        |
+| `_entry.py`           | Top-level entry: export `MemoryEntry` dataclass to unify the structure of memory entries                                                                                                                                      |
 
 ## 9. Knowledge graph
 
@@ -503,13 +504,13 @@ await _store_relations(relations)
 
 ### 9.4 Query path
 
-| API | Behavior |
-|---|---|
-| `GET /api/v1/memory/entities` | List all entities (paginated) |
-| `POST /api/v1/memory/entities/batch-delete` | Delete up to 100 entities in one transaction |
-| `GET /api/v1/memory/entities/{name}` | Return entities + all incoming and outgoing relationships + related memories |
-| `DELETE /api/v1/memory/entities/{name}` | Delete entities, relationships and vectors |
-| `POST /api/v1/memory/entities/merge` | Merge multiple synonymous entities into one main entity |
+| API                                         | Behavior                                                                     |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET /api/v1/memory/entities`               | List all entities (paginated)                                                |
+| `POST /api/v1/memory/entities/batch-delete` | Delete up to 100 entities in one transaction                                 |
+| `GET /api/v1/memory/entities/{name}`        | Return entities + all incoming and outgoing relationships + related memories |
+| `DELETE /api/v1/memory/entities/{name}`     | Delete entities, relationships and vectors                                   |
+| `POST /api/v1/memory/entities/merge`        | Merge multiple synonymous entities into one main entity                      |
 
 ### 9.5 Injection into RAG
 
@@ -539,33 +540,33 @@ Each segment has a token budget, which is truncated in descending order of simil
 
 ## 11. API Overview
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/v1/memory` | List (supports filtering and sorting) |
-| `POST` | `/api/v1/memory` | Create |
-| `PUT` | `/api/v1/memory` | Update |
-| `DELETE` | `/api/v1/memory` | Delete |
-| `POST` | `/api/v1/memory/batch` | Batch import |
-| `POST` | `/api/v1/memory/batch-delete` | Delete up to 100 memories in one transaction |
-| `GET` | `/api/v1/memory/export` | Cursor-paginated JSON export |
-| `POST` | `/api/v1/memory/search` | Semantic search |
-| `POST` | `/api/v1/memory/decay` | Manual decay + merge |
-| `GET` | `/api/v1/memory/entities` | List entities |
-| `POST` | `/api/v1/memory/entities/batch-delete` | Batch-delete entities |
-| `GET` | `/api/v1/memory/entities/{name}` | Entity details |
-| `DELETE` | `/api/v1/memory/entities/{name}` | Delete entity |
-| `POST` | `/api/v1/memory/entities/merge` | Merge entities |
+| Method   | Path                                   | Description                                  |
+| -------- | -------------------------------------- | -------------------------------------------- |
+| `GET`    | `/api/v1/memory`                       | List (supports filtering and sorting)        |
+| `POST`   | `/api/v1/memory`                       | Create                                       |
+| `PUT`    | `/api/v1/memory`                       | Update                                       |
+| `DELETE` | `/api/v1/memory`                       | Delete                                       |
+| `POST`   | `/api/v1/memory/batch`                 | Batch import                                 |
+| `POST`   | `/api/v1/memory/batch-delete`          | Delete up to 100 memories in one transaction |
+| `GET`    | `/api/v1/memory/export`                | Cursor-paginated JSON export                 |
+| `POST`   | `/api/v1/memory/search`                | Semantic search                              |
+| `POST`   | `/api/v1/memory/decay`                 | Manual decay + merge                         |
+| `GET`    | `/api/v1/memory/entities`              | List entities                                |
+| `POST`   | `/api/v1/memory/entities/batch-delete` | Batch-delete entities                        |
+| `GET`    | `/api/v1/memory/entities/{name}`       | Entity details                               |
+| `DELETE` | `/api/v1/memory/entities/{name}`       | Delete entity                                |
+| `POST`   | `/api/v1/memory/entities/merge`        | Merge entities                               |
 
 ## 12. Tuning and troubleshooting
 
-| Symptoms | Tuning directions |
-|---|---|
-| Too much noise in memory retrieval | `MEMORY_EXTRACTION_MODE=precise` or lower `MAX_FACTS_PER_TURN` |
-| Memory is not updated | Confirm `MEMORY_AUTO_EXTRACT=True`; inspect the `fact_extraction` durable job state, dead-letter count, and worker logs |
-| Old preferences never disappear | Increase `decay_rate` / Decrease `TTL_DAYS` / Manual `DELETE` |
-| Entity explosion | Decrease `aggressive` → `balanced`; increase entity deduplication threshold |
-| Chroma entity dimensions do not match | Apply embedding changes through a controlled restart, then monitor reconciliation/reprocessing |
-| Cross-session history cannot be recalled | Confirm `SESSION_SUMMARY_ENABLED=True`; check if `session_summaries` has data |
+| Symptoms                                 | Tuning directions                                                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Too much noise in memory retrieval       | `MEMORY_EXTRACTION_MODE=precise` or lower `MAX_FACTS_PER_TURN`                                                          |
+| Memory is not updated                    | Confirm `MEMORY_AUTO_EXTRACT=True`; inspect the `fact_extraction` durable job state, dead-letter count, and worker logs |
+| Old preferences never disappear          | Increase `decay_rate` / Decrease `TTL_DAYS` / Manual `DELETE`                                                           |
+| Entity explosion                         | Decrease `aggressive` → `balanced`; increase entity deduplication threshold                                             |
+| Chroma entity dimensions do not match    | Apply embedding changes through a controlled restart, then monitor reconciliation/reprocessing                          |
+| Cross-session history cannot be recalled | Confirm `SESSION_SUMMARY_ENABLED=True`; check if `session_summaries` has data                                           |
 
 ## 13. Extension direction
 

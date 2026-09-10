@@ -5,7 +5,7 @@ current router registry, service packages, storage layout, container ports, and
 optional provider integrations. The editable Mermaid source is
 [`architecture.mmd`](./architecture.mmd).
 
-**Verified against implementation:** 2026-09-09.
+**Verified against implementation:** 2026-09-10.
 
 ```mermaid
 flowchart TB
@@ -54,14 +54,14 @@ flowchart TB
 
 ## Runtime boundaries
 
-| Boundary | Implementation contract |
-|---|---|
-| Browser → frontend | The production frontend serves the SPA on container port `8080` and proxies `/api/` to the backend; Compose publishes it on host port `8307`. Development Vite also serves on host port `8307` and proxies to `localhost:7008`. |
-| Frontend → backend | REST and SSE use `/api/v1`; the browser WebSocket uses `/api/v1/ws`. The frontend injects the configured backend API key through the Nginx template; short-lived file and WebSocket tokens are separate mechanisms. |
-| MCP → HTTP API | `backend/src/mcp.py` is a thin FastMCP adapter. The default transport is trusted stdio; HTTP/SSE is loopback-only and requires a downstream API key. Its six tools call the canonical HTTP API rather than importing domain or persistence services. The MCP listener itself has no inbound authentication and must not be published directly. |
-| Backend → storage | SQLite at `data/meetings.db` is authoritative for relational state and FTS5/BM25 metadata. Chroma at `data/vectordb` stores semantic collections. Original files and derived assets remain under `data/uploads`. |
-| Backend → providers | LLM, embeddings, document parsing, vision, and web search are selected through configuration bindings; ASR currently supports AssemblyAI only. Most provider concurrency and circuit-breaking state is process-local. |
-| Request → durable work | Upload processing, file/meeting summaries, speaker rename/re-index, and fact extraction are committed to `durable_jobs` before the producer returns. Embedded workers claim leases inside the single backend process. Vector-generation rebuilds use a separate guarded maintenance task and are not durable jobs. |
+| Boundary               | Implementation contract                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser → frontend     | The production frontend serves the SPA on container port `8080` and proxies `/api/` to the backend; Compose publishes it on host port `8307`. Development Vite also serves on host port `8307` and proxies to `localhost:7008`.                                                                                                                |
+| Frontend → backend     | REST and SSE use `/api/v1`; the browser WebSocket uses `/api/v1/ws`. The frontend injects the configured backend API key through the Nginx template; short-lived file and WebSocket tokens are separate mechanisms.                                                                                                                            |
+| MCP → HTTP API         | `backend/src/mcp.py` is a thin FastMCP adapter. The default transport is trusted stdio; HTTP/SSE is loopback-only and requires a downstream API key. Its six tools call the canonical HTTP API rather than importing domain or persistence services. The MCP listener itself has no inbound authentication and must not be published directly. |
+| Backend → storage      | SQLite at `data/meetings.db` is authoritative for relational state and FTS5/BM25 metadata. Chroma at `data/vectordb` stores semantic collections. Original files and derived assets remain under `data/uploads`.                                                                                                                               |
+| Backend → providers    | LLM, embeddings, document parsing, vision, and web search are selected through configuration bindings; ASR currently supports AssemblyAI only. Most provider concurrency and circuit-breaking state is process-local.                                                                                                                          |
+| Request → durable work | Upload processing, file/meeting summaries, speaker rename/re-index, and fact extraction are committed to `durable_jobs` before the producer returns. Embedded workers claim leases inside the single backend process. Vector-generation rebuilds use a separate guarded maintenance task and are not durable jobs.                             |
 
 ## Request and data flows
 

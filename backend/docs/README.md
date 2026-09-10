@@ -4,7 +4,7 @@
 
 English diagrams, including Mermaid flowcharts, are in [`docs/diagrams/`](../../docs/diagrams/). The repository-wide index is [`docs/README.md`](../../docs/README.md).
 
-**Last implementation reconciliation:** 2026-09-09. Current behavior is
+**Last implementation reconciliation:** 2026-09-10. Current behavior is
 defined by source and generated OpenAPI. The current reconciliation also
 covers every `Settings` field plus the file-kind, parser-route, MCP-tool, and
 Alembic registries; dated repository audit records are historical evidence
@@ -26,61 +26,61 @@ If you are running the project for the first time, start with [`docs/getting-sta
 
 ### Overview
 
-| Document | Scope |
-|---|---|
-| [`architecture.md`](./architecture.md) | System architecture, layers, data flow, and cross-cutting concerns |
-| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | FastAPI lifespan, critical/best-effort paths, operations, and recovery |
-| [`configuration.md`](./configuration.md) | Configuration precedence, complete settings reference, and deployment templates |
-| [`security-and-tenancy.md`](./security-and-tenancy.md) | API keys, principals, ownership, short-lived tokens, idempotency payloads, and HTTP security |
-| [`observability.md`](./observability.md) | Logs, request IDs, pipeline traces, Prometheus metrics, probes, and troubleshooting |
+| Document                                                     | Scope                                                                                        |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| [`architecture.md`](./architecture.md)                       | System architecture, layers, data flow, and cross-cutting concerns                           |
+| [`lifespan-and-operations.md`](./lifespan-and-operations.md) | FastAPI lifespan, critical/best-effort paths, operations, and recovery                       |
+| [`configuration.md`](./configuration.md)                     | Configuration precedence, complete settings reference, and deployment templates              |
+| [`security-and-tenancy.md`](./security-and-tenancy.md)       | API keys, principals, ownership, short-lived tokens, idempotency payloads, and HTTP security |
+| [`observability.md`](./observability.md)                     | Logs, request IDs, pipeline traces, Prometheus metrics, probes, and troubleshooting          |
 
 ### Business pipelines
 
-| Document | Scope |
-|---|---|
-| [`ingest-pipeline.md`](./ingest-pipeline.md) | Upload → parse/transcribe → index end-to-end flow |
-| [`rag.md`](./rag.md) | RAG architecture, chunking, retrieval, reranking, post-processing, and tuning |
-| [`chain-pipeline.md`](./chain-pipeline.md) | `ask()` / `ask_stream()` orchestration, parallel context loading, and stream events |
-| [`memory-and-kg.md`](./memory-and-kg.md) | Memory, decay, merging, profiles, and knowledge graph |
-| [`SKILLS.md`](./SKILLS.md) | Skill loading, intent matching, and chain integration |
+| Document                                     | Scope                                                                               |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`ingest-pipeline.md`](./ingest-pipeline.md) | Upload → parse/transcribe → index end-to-end flow                                   |
+| [`rag.md`](./rag.md)                         | RAG architecture, chunking, retrieval, reranking, post-processing, and tuning       |
+| [`chain-pipeline.md`](./chain-pipeline.md)   | `ask()` / `ask_stream()` orchestration, parallel context loading, and stream events |
+| [`memory-and-kg.md`](./memory-and-kg.md)     | Memory, decay, merging, profiles, and knowledge graph                               |
+| [`SKILLS.md`](./SKILLS.md)                   | Skill loading, intent matching, and chain integration                               |
 
 ### Infrastructure
 
-| Document | Scope |
-|---|---|
-| [`database.md`](./database.md) | SQLite read/write separation, **Alembic + legacy migrations**, `_MIGRATIONS` summary, tables, and repositories |
-| [`llm-and-traffic.md`](./llm-and-traffic.md) | Provider registry, caching, concurrency, rate limiting, and circuit breaking |
-| [`observability.md`](./observability.md) | Logs, traces, metrics, health probes, and incident diagnosis |
+| Document                                     | Scope                                                                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`database.md`](./database.md)               | SQLite read/write separation, **Alembic + legacy migrations**, `_MIGRATIONS` summary, tables, and repositories |
+| [`llm-and-traffic.md`](./llm-and-traffic.md) | Provider registry, caching, concurrency, rate limiting, and circuit breaking                                   |
+| [`observability.md`](./observability.md)     | Logs, traces, metrics, health probes, and incident diagnosis                                                   |
 
 ### Operations and practice
 
-| Document | Scope |
-|---|---|
-| [`operations/alembic.md`](./operations/alembic.md) | Alembic and `init_db`, stamping, `upgrade head`, and team conventions |
-| [`operations/backup.md`](./operations/backup.md) | Backup strategy and script entry points |
-| [`operations/restore.md`](./operations/restore.md) | Recovery procedure |
-| [`operations/retention.md`](./operations/retention.md) | Data retention and cleanup |
-| [`operations/sla.md`](./operations/sla.md) / [`operations/slo.md`](./operations/slo.md) | SLA and SLO definitions |
-| [`operations/runbooks/`](./operations/runbooks/) | AssemblyAI timeouts, 429 storms, Chroma dimension mismatches, breaker incidents, and more |
+| Document                                                                                | Scope                                                                                     |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`operations/alembic.md`](./operations/alembic.md)                                      | Alembic and `init_db`, stamping, `upgrade head`, and team conventions                     |
+| [`operations/backup.md`](./operations/backup.md)                                        | Backup strategy and script entry points                                                   |
+| [`operations/restore.md`](./operations/restore.md)                                      | Recovery procedure                                                                        |
+| [`operations/retention.md`](./operations/retention.md)                                  | Data retention and cleanup                                                                |
+| [`operations/sla.md`](./operations/sla.md) / [`operations/slo.md`](./operations/slo.md) | SLA and SLO definitions                                                                   |
+| [`operations/runbooks/`](./operations/runbooks/)                                        | AssemblyAI timeouts, 429 storms, Chroma dimension mismatches, breaker incidents, and more |
 
 ### Integrations
 
-| Document | Scope |
-|---|---|
-| [`api-reference.md`](./api-reference.md) | REST routes, request/response schemas, and error semantics |
-| [`mcp-server.md`](./mcp-server.md) | MCP tools, transports, debugging, and extension |
-| [`cli.md`](./cli.md) | CLI commands, interactive setup, export, and troubleshooting |
+| Document                                 | Scope                                                        |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| [`api-reference.md`](./api-reference.md) | REST routes, request/response schemas, and error semantics   |
+| [`mcp-server.md`](./mcp-server.md)       | MCP tools, transports, debugging, and extension              |
+| [`cli.md`](./cli.md)                     | CLI commands, interactive setup, export, and troubleshooting |
 
 ### Backend quality
 
-| Document | Scope |
-|---|---|
+| Document                     | Scope                                                                |
+| ---------------------------- | -------------------------------------------------------------------- |
 | [`testing.md`](./testing.md) | Backend tests, CI, coverage, security gates, and regression strategy |
 
 ### Performance
 
-| Document | Scope |
-|---|---|
+| Document                               | Scope                                                                               |
+| -------------------------------------- | ----------------------------------------------------------------------------------- |
 | [`benchmarking.md`](./benchmarking.md) | Benchmark tools, commands, metric interpretation, and public model-claim boundaries |
 
 ## Maintenance rules

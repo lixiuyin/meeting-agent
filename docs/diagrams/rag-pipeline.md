@@ -1,6 +1,6 @@
 # RAG Pipeline Architecture
 
-**Verified against implementation:** 2026-09-09. This diagram separates
+**Verified against implementation:** 2026-09-10. This diagram separates
 request-scoped orchestration from durable post-response extraction and keeps
 web fallback after local retrieval confidence is known.
 
@@ -17,7 +17,8 @@ flowchart TD
     Casual --> Save1["save_messages"]
     Save1 --> Ret1(["Return PipelineResult"])
 
-    Classify -->|question / retrieval| Skill{"Skill matching<br/>_skill_matching.py"}
+    Classify -->|question / retrieval| AnswerRoute{"classify_query_route<br/>atomic fact · bounded synthesis<br/>analytical synthesis"}
+    AnswerRoute --> Skill{"Skill matching<br/>_skill_matching.py"}
     Skill -->|matched| SkillDef["Load Skill definition + prompt"]
     Skill -->|no match| Session
 
@@ -70,10 +71,13 @@ flowchart TD
 
         Filters["Post-retrieval filters<br/>_retrieve_filters.py<br/>speaker · temporal · content-type bias"]
         Filters --> PreDedup["pre_rerank_dedup<br/>_retrieve_post.py"]
-        PreDedup --> Rerank
+        PreDedup --> EvidenceGate{"atomic candidate?<br/>validate_fast_path_evidence<br/>shape · score · source concentration"}
+        EvidenceGate -->|not atomic / promoted| Rerank
+        EvidenceGate -->|safe atomic evidence| SkipRerank["skip optional remote reranker<br/>trace reason: chat_latency_guard"]
 
         Rerank["rerank_documents<br/>_retrieve_post.py<br/>Cohere / BGE cross-encoder"]
         Rerank --> Dedup["suppress_near_duplicates<br/>4-gram overlap ≥ 0.85 filtered"]
+        SkipRerank --> Dedup
         Dedup --> Docs["ctx.docs"]
     end
 
@@ -110,7 +114,7 @@ flowchart TD
         Format --> Budget["Enforce total token budget<br/>drop lowest-ranked docs if over"]
         Budget --> Combined["ctx.combined_context"]
 
-        Combined --> Generate["generate_answer<br/>LCEL: prompt → llm → StrOutputParser<br/>optional fast-path latency guard"]
+        Combined --> Generate["generate_answer<br/>LCEL: prompt → llm → StrOutputParser<br/>validated fast path: 10s TTFT · 15s stall · 30s total<br/>ordinary synthesis: configured generation timeout"]
         Generate --> CacheCheck{"Anthropic<br/>prompt caching?"}
         CacheCheck -->|yes| Cached["Apply cache_control<br/>to system message<br/>_anthropic_cache.py"]
         CacheCheck -->|no| MMCheck
@@ -145,6 +149,8 @@ flowchart TD
     style Parallel fill:#FF9800,color:#fff
     style Strategy fill:#9C27B0,color:#fff
     style Classify fill:#FF9800,color:#fff
+    style AnswerRoute fill:#FF9800,color:#fff
+    style EvidenceGate fill:#FF9800,color:#fff
     style Skill fill:#FF9800,color:#fff
     style Scope fill:#9C27B0,color:#fff
     style CacheCheck fill:#FF9800,color:#fff
