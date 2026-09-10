@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import axe from "axe-core";
 import { installReadOnlyApiMock } from "./fixtures/mock-api";
 
@@ -7,6 +7,38 @@ const viewports = [
   { name: "mobile", width: 390, height: 844 },
   { name: "desktop", width: 1440, height: 1000 },
 ] as const;
+
+async function waitForSettledUi(page: Page, route: string) {
+  if (route === "/") {
+    // The application shell is ready before asynchronous chat restoration has
+    // swapped its loading view for the home screen.
+    await expect(page.getByRole("button", { name: "New Chat" })).toBeVisible();
+  }
+  await expect
+    .poll(
+      () =>
+        page.locator("#main-content").evaluate((root) => {
+          const candidates = root.querySelectorAll<HTMLElement>(
+            "button, input, textarea, select, h1, h2, h3, p, .ant-select-placeholder",
+          );
+          return [...candidates].every((candidate) => {
+            let ancestor = candidate.parentElement;
+            while (ancestor && ancestor !== root) {
+              // Framer keeps opacity transitions for reduced-motion users.
+              // Axe must inspect the resting colors, not an effective color
+              // blended through a partially transparent parent.
+              if (ancestor.style.opacity && Number(getComputedStyle(ancestor).opacity) < 0.99) {
+                return false;
+              }
+              ancestor = ancestor.parentElement;
+            }
+            return true;
+          });
+        }),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+}
 
 test("all primary routes meet WCAG A/AA in light and dark themes", async ({ page }) => {
   test.setTimeout(120_000);
@@ -27,10 +59,7 @@ test("all primary routes meet WCAG A/AA in light and dark themes", async ({ page
       for (const route of routes) {
         await page.goto(route);
         await page.locator("#main-content").waitFor();
-        // Scan the settled UI. Axe computes effective alpha while Framer
-        // opacity transitions are running, which would otherwise report a
-        // transient color that users never read as the resting state.
-        await page.waitForTimeout(1_000);
+        await waitForSettledUi(page, route);
         await page.addScriptTag({ content: axe.source });
         const result = await page.evaluate(async () => {
           return window.axe.run(document, {

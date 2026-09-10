@@ -147,7 +147,11 @@ function getScrollFixturePdf() {
 async function makeScrollFixture(page: Page) {
   await installSourceMock(page, "pdf", await getScrollFixturePdf(), scrollFixtureTexts);
   await page.goto("/materials?meetingId=7&fileId=9&pageNumber=2");
-  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num="2"] canvas')).toBeVisible();
+  // PDF.js rasterization can exceed Playwright's assertion default in a busy
+  // WebKit worker even though the document and its stable page anchors load.
+  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num="2"] canvas')).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num]')).toHaveCount(
     scrollFixtureTexts.length,
   );
@@ -318,8 +322,10 @@ test("the Materials comparison entry uses the same bidirectional sync behavior",
   await makeScrollFixture(page);
   await page.goto("/materials?meetingId=7");
   await page.getByRole("button", { name: "View document", exact: true }).click();
-  await expect(page.getByText("PDF Comparison — source.pdf")).toBeVisible();
-  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num="1"] canvas')).toBeVisible();
+  await expect(page.getByText("PDF Comparison — source.pdf")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-pdf-pane="pdf"] [data-page-num="1"] canvas')).toBeVisible({
+    timeout: 15_000,
+  });
   // Keep real modal animations: a transformed first measurement used to stick
   // at ~20% width even after the animation completed (until closing/reopening).
   await expect

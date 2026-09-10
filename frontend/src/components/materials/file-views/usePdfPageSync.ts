@@ -134,6 +134,7 @@ export default function usePdfPageSync({
   const expectedLayout = useRef<Partial<Record<SyncSource, string>>>({});
   const frame = useRef<number | null>(null);
   const pendingUserScroll = useRef<SyncSource | null>(null);
+  const layoutChangePending = useRef(false);
 
   const writeAnchor = useCallback(
     (source: SyncSource) => {
@@ -192,39 +193,47 @@ export default function usePdfPageSync({
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = null;
+      const layoutChanged = layoutChangePending.current;
+      layoutChangePending.current = false;
       const source = pendingUserScroll.current;
       pendingUserScroll.current = null;
-      if (source && source === owner.current) {
-        const container = containers.current[source];
-        const position = container ? readAnchor(container) : null;
-        if (position) {
-          anchor.current = semanticAnchor(position, source, containers.current);
-          setCurrentPage(position.page);
-          // The user's pane is never moved by its follower.
-          if (enabled) writeAnchor(source === "pdf" ? "parsed" : "pdf");
-        }
+      if (layoutChanged) {
+        // A user position captured before this frame remains authoritative.
+        // Reapply it to both panes after late PDF metadata, zoom or resize has
+        // changed their geometry.
+        if (enabled) SOURCES.forEach(writeAnchor);
+      } else if (source && source === owner.current) {
+        // The user's pane is never moved by its follower.
+        if (enabled) writeAnchor(source === "pdf" ? "parsed" : "pdf");
       } else {
-        // Zoom, late images and remounts preserve the logical reading position.
+        // Remounts and explicit page jumps preserve the logical position.
         if (enabled) SOURCES.forEach(writeAnchor);
       }
     });
   }, [writeAnchor, enabled]);
 
-  const prepareForLayoutChange = useCallback(() => {
-    const source = owner.current;
-    const container = source ? containers.current[source] : undefined;
-    const position = container ? readAnchor(container) : null;
-    if (source && position) {
-      anchor.current = semanticAnchor(position, source, containers.current);
-    }
-    // WebKit may emit scroll events before ResizeObserver when zoom or viewport
-    // changes clamp scrollTop. They are layout corrections, not user input.
-    owner.current = null;
-    pendingUserScroll.current = null;
-    expectedScroll.current = {};
-    expectedLayout.current = {};
-    schedule();
-  }, [schedule]);
+  const prepareForLayoutChange = useCallback(
+    (event?: Event) => {
+      const source = owner.current;
+      const container = source ? containers.current[source] : undefined;
+      // Explicit callers run before changing zoom and can still read the old
+      // geometry. A window resize event arrives after layout, so retain the last
+      // stable anchor instead of deriving a new one from shifted pixels.
+      const position = event ? null : container ? readAnchor(container) : null;
+      if (source && position) {
+        anchor.current = semanticAnchor(position, source, containers.current);
+        setCurrentPage(position.page);
+      }
+      // WebKit may emit scroll events before ResizeObserver when zoom or viewport
+      // changes clamp scrollTop. They are layout corrections, not user input.
+      layoutChangePending.current = true;
+      pendingUserScroll.current = null;
+      expectedScroll.current = {};
+      expectedLayout.current = {};
+      schedule();
+    },
+    [schedule],
+  );
 
   useEffect(() => {
     window.addEventListener("resize", prepareForLayoutChange);
@@ -253,18 +262,36 @@ export default function usePdfPageSync({
       };
       const onScroll = () => {
         const expected = expectedScroll.current[source];
-        if (expected !== undefined && Math.abs(container.scrollTop - expected) < 1) return;
+        if (expected !== undefined && Math.abs(container.scrollTop - expected) < 1) {
+          delete expectedScroll.current[source];
+          return;
+        }
+        delete expectedScroll.current[source];
         if (owner.current !== source) return;
         if (expectedLayout.current[source] !== layoutSignature(container)) {
           // Shrinking the document can clamp scrollTop before ResizeObserver
-          // runs. That is a layout correction, not a new user reading anchor.
+          // runs. Restore the last stable anchor rather than interpreting the
+          // shifted pixels as a new user position.
+          layoutChangePending.current = true;
+          pendingUserScroll.current = null;
           schedule();
           return;
         }
+        const position = readAnchor(container);
+        if (!position) return;
+        // Capture synchronously. Deferring this read until animation frame lets
+        // late page-size metadata replace the geometry underneath the event.
+        anchor.current = semanticAnchor(position, source, containers.current);
+        setCurrentPage(position.page);
         pendingUserScroll.current = source;
         schedule();
       };
-      const resize = new ResizeObserver(schedule);
+      const onResize = () => {
+        layoutChangePending.current = true;
+        pendingUserScroll.current = null;
+        schedule();
+      };
+      const resize = new ResizeObserver(onResize);
       const observed = new Set<Element>();
       const observePages = () => {
         const next = new Set<Element>([container, ...pageNodes(container)]);
@@ -311,6 +338,7 @@ export default function usePdfPageSync({
       if (!Number.isInteger(page) || page < 1 || page > totalPages) return;
       owner.current = null;
       pendingUserScroll.current = null;
+      layoutChangePending.current = false;
       anchor.current = { page, progress: 0, citation };
       setCurrentPage(page);
       setSyncSource(null);
